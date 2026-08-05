@@ -1,0 +1,243 @@
+{
+  "monsters": {
+    "goblin": {
+      "name": "Goblin",
+      "size": "Small",
+      "type": "humanoid (goblinoid)",
+      "ac": 15,
+      "hp": "7 (2d6)",
+      "speed": "30 ft.",
+      "stats": {"str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8},
+      "skills": "Stealth +6",
+      "senses": "darkvision 60 ft., passive Perception 9",
+      "cr": "1/4",
+      "traits": [
+        "Nimble Escape: The goblin can take the Disengage or Hide action as a bonus action on each of its turns."
+      ],
+      "actions": [
+        "Scimitar: Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 5 (1d6+2) slashing damage.",
+        "Shortbow: Ranged Weapon Attack: +4 to hit, range 80/320 ft., one target. Hit: 5 (1d6+2) piercing damage."
+      ]
+    },
+    "wolf": {
+      "name": "Wolf",
+      "size": "Medium",
+      "type": "beast",
+      "ac": 13,
+      "hp": "11 (2d8+2)",
+      "speed": "40 ft.",
+      "stats": {"str": 12, "dex": 15, "con": 12, "int": 3, "wis": 12, "cha": 6},
+      "skills": "Perception +3, Stealth +4",
+      "senses": "passive Perception 13",
+      "cr": "1/4",
+      "traits": [
+        "Keen Hearing and Smell: The wolf has advantage on Wisdom (Perception) checks that rely on hearing or smell.",
+        "Pack Tactics: The wolf has advantage on an attack roll against a creature if at least one of the wolf's allies is within 5 feet of the creature and the ally isn't incapacitated."
+      ],
+      "actions": [
+        "Bite: Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 7 (2d4+2) piercing damage. If the target is a creature, it must succeed on a DC 11 Strength saving throw or be knocked prone."
+      ]
+    },
+    "skeleton": {
+      "name": "Skeleton",
+      "size": "Medium",
+      "type": "undead",
+      "ac": 13,
+      "hp": "13 (2d8+4)",
+      "speed": "30 ft.",
+      "stats": {"str": 10, "dex": 14, "con": 15, "int": 6, "wis": 8, "cha": 5},
+      "vulnerabilities": "bludgeoning",
+      "immunities": "poison",
+      "senses": "darkvision 60 ft., passive Perception 9",
+      "cr": "1/4",
+      "actions": [
+        "Shortsword: Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 5 (1d6+2) piercing damage.",
+        "Shortbow: Ranged Weapon Attack: +4 to hit, range 80/320 ft., one target. Hit: 5 (1d6+2) piercing damage."
+      ]
+    },
+    "orc": {
+      "name": "Orc",
+      "size": "Medium",
+      "type": "humanoid (orc)",
+      "ac": 13,
+      "hp": "15 (2d8+6)",
+      "speed": "30 ft.",
+      "stats": {"str": 16, "dex": 12, "con": 16, "int": 7, "wis": 11, "cha": 10},
+      "skills": "Intimidation +2",
+      "senses": "darkvision 60 ft., passive Perception 10",
+      "cr": "1/2",
+      "traits": [
+        "Aggressive: As a bonus action, the orc can move up to its speed toward a hostile creature that it can see."
+      ],
+      "actions": [
+        "Greataxe: Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 9 (1d12+3) slashing damage.",
+        "Javelin: Melee or Ranged Weapon Attack: +5 to hit, reach 5 ft. or range 30/120 ft., one target. Hit: 6 (1d6+3) piercing damage."
+      ]
+    },
+    "zombie": {
+      "name": "Zombie",
+      "size": "Medium",
+      "type": "undead",
+      "ac": 8,
+      "hp": "22 (3d8+9)",
+      "speed": "20 ft.",
+      "stats": {"str": 13, "dex": 6, "con": 16, "int": 3, "wis": 6, "cha": 5},
+      "immunities": "poison",
+      "senses": "darkvision 60 ft., passive Perception 8",
+      "cr": "1/4",
+      "traits": [
+        "Undead Fortitude: If damage reduces the zombie to 0 hit points, it must make a Constitution saving throw with a DC of 5 + the damage taken, unless the damage is radiant or from a critical hit. On a success, the zombie drops to 1 hit point instead."
+      ],
+      "actions": [
+        "Slam: Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 4 (1d6+1) bludgeoning damage."
+      ]
+    }
+  },
+  "spells": {
+    "fireball": {
+      "name": "Fireball",
+      "level": 3,
+      "school": "Evocation",
+      "casting_time": "1 action",
+      "range": "150 feet",
+      "components": "V, S, M (a tiny ball of bat guano and sulfur)",
+      "duration": "Instantaneous",
+      "description": "A bright streak flashes from you to a point you choose within range and then blossoms with a low roar into an explosion of flame. Each creature in a 20-foot-radius sphere centered on that point must make a Dexterity saving throw, taking 8d6 fire damage on a failed save, or half as much on a successful one.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 4th level or higher, the damage increases by 1d6 for each slot level above 3rd."
+    },
+    "magic_missile": {
+      "name": "Magic Missile",
+      "level": 1,
+      "school": "Evocation",
+      "casting_time": "1 action",
+      "range": "120 feet",
+      "components": "V, S",
+      "duration": "Instantaneous",
+      "description": "You create three glowing darts of magical force. Each dart hits a creature of your choice that you can see within range. A dart deals 1d4+1 force damage to its target. The darts all strike simultaneously.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, the spell creates one more dart for each slot level above 1st."
+    },
+    "cure_wounds": {
+      "name": "Cure Wounds",
+      "level": 1,
+      "school": "Evocation",
+      "casting_time": "1 action",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "Instantaneous",
+      "description": "A creature you touch regains a number of hit points equal to 1d8 + your spellcasting ability modifier. This spell has no effect on undead or constructs.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, the healing increases by 1d8 for each slot level above 1st."
+    },
+    "mage_armor": {
+      "name": "Mage Armor",
+      "level": 1,
+      "school": "Abjuration",
+      "casting_time": "1 action",
+      "range": "Touch",
+      "components": "V, S, M (a piece of cured leather)",
+      "duration": "8 hours",
+      "description": "You touch a willing creature who isn't wearing armor, and a protective magical force surrounds it until the spell ends. The target's base AC becomes 13 + its Dexterity modifier."
+    },
+    "shield": {
+      "name": "Shield",
+      "level": 1,
+      "school": "Abjuration",
+      "casting_time": "1 reaction, which you take when you are hit by an attack or targeted by the magic missile spell",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "1 round",
+      "description": "An invisible barrier of magical force appears and protects you. Until the start of your next turn, you have a +5 bonus to AC, including against the triggering attack, and you take no damage from magic missile."
+    }
+  },
+  "conditions": {
+    "poisoned": {
+      "name": "Poisoned",
+      "description": "A poisoned creature has disadvantage on attack rolls and ability checks."
+    },
+    "prone": {
+      "name": "Prone",
+      "description": "A prone creature's only movement option is to crawl, unless it stands up. The creature has disadvantage on attack rolls. An attack roll against the creature has advantage if the attacker is within 5 feet; otherwise disadvantage."
+    },
+    "grappled": {
+      "name": "Grappled",
+      "description": "A grappled creature's speed becomes 0. The condition ends if the grappler is incapacitated, or if the creature is removed from the grappler's reach."
+    },
+    "frightened": {
+      "name": "Frightened",
+      "description": "A frightened creature has disadvantage on ability checks and attack rolls while the source of its fear is within line of sight. The creature can't willingly move closer to the source of its fear."
+    },
+    "stunned": {
+      "name": "Stunned",
+      "description": "A stunned creature is incapacitated, can't move, and can speak only falteringly. It automatically fails Strength and Dexterity saving throws. Attack rolls against the creature have advantage."
+    }
+  },
+  "classes": {
+    "fighter": {
+      "name": "Fighter",
+      "hit_die": "d10",
+      "level_1_features": [
+        "Fighting Style: Choose a fighting style specialty.",
+        "Second Wind: On your turn, you can use a bonus action to regain hit points equal to 1d10 + your fighter level. Once used, you must finish a short or long rest before using it again."
+      ],
+      "saving_throws": "Strength, Constitution"
+    },
+    "wizard": {
+      "name": "Wizard",
+      "hit_die": "d6",
+      "level_1_features": [
+        "Spellcasting: You can cast wizard spells using Intelligence as your spellcasting ability.",
+        "Arcane Recovery: Once per day when you finish a short rest, you can recover expended spell slots with a combined level equal to or less than half your wizard level (rounded up)."
+      ],
+      "saving_throws": "Intelligence, Wisdom"
+    },
+    "rogue": {
+      "name": "Rogue",
+      "hit_die": "d8",
+      "level_1_features": [
+        "Expertise: Choose two of your skill proficiencies; your proficiency bonus is doubled for checks using them.",
+        "Sneak Attack: Once per turn, deal an extra 1d6 damage to a creature you hit with an attack if you have advantage, or another enemy of the target is within 5 feet of it.",
+        "Thieves' Cant: You know this secret mix of dialect, jargon, and code."
+      ],
+      "saving_throws": "Dexterity, Intelligence"
+    },
+    "cleric": {
+      "name": "Cleric",
+      "hit_die": "d8",
+      "level_1_features": [
+        "Spellcasting: You can cast cleric spells using Wisdom as your spellcasting ability.",
+        "Divine Domain: Choose a domain related to your deity, granting domain spells and features."
+      ],
+      "saving_throws": "Wisdom, Charisma"
+    }
+  },
+  "equipment": {
+    "longsword": {
+      "name": "Longsword",
+      "category": "Martial Melee Weapon",
+      "cost": "15 gp",
+      "damage": "1d8 slashing",
+      "weight": "3 lb.",
+      "properties": "Versatile (1d10)"
+    },
+    "shortbow": {
+      "name": "Shortbow",
+      "category": "Simple Ranged Weapon",
+      "cost": "25 gp",
+      "damage": "1d6 piercing",
+      "weight": "2 lb.",
+      "properties": "Ammunition (range 80/320), two-handed"
+    },
+    "leather_armor": {
+      "name": "Leather Armor",
+      "category": "Light Armor",
+      "cost": "10 gp",
+      "ac": "11 + Dex modifier",
+      "weight": "10 lb."
+    },
+    "potion_of_healing": {
+      "name": "Potion of Healing",
+      "category": "Potion",
+      "rarity": "Common",
+      "description": "You regain 2d4 + 2 hit points when you drink this potion."
+    }
+  }
+}
