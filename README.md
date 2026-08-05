@@ -1,33 +1,41 @@
-# AI Dungeon Master
+# Oracle
 
-A real-time, multiplayer tabletop RPG engine where an LLM acts as the Dungeon Master — adjudicating rules, narrating the world, and managing campaign state for multiple concurrent players.
+[![CI](https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml)
+
+An AI Dungeon Master that runs a real-time tabletop RPG session over a terminal UI — an LLM sitting in the GM seat, adjudicating rules, narrating the world, and managing campaign state.
 
 ## Concept
 
-Instead of a single-player chatbot, this is a game engine with an LLM sitting in the GM seat:
+Instead of a single-player chatbot, Oracle is a game engine with an LLM in the GM seat:
 
-- **Multiplayer, two ways**: players can share one terminal and take turns (hotseat), or connect from their own terminals over the network — same engine underneath, different transport.
+- **Multiplayer, two ways** (architecture in place, not yet exercised with 2+ players): players share one terminal and take turns (hotseat), or connect from their own terminals over the network — same engine underneath, different transport.
 - **Persistent character view**: each player's client always shows two regions — their character sheet, and a scrolling log of turn actions, DM narration, and prompts.
 - **LLM as adjudicator/narrator**: the server owns the source of truth (character sheets, world state, turn order, session log) and calls the LLM to resolve actions and narrate outcomes.
+- **Grounded in real rules, not just vibes**: the DM can look up official D&D 5e SRD data (monster stats, spells, conditions) before improvising mechanics, and can reach for general web search when it needs outside inspiration.
 
-## Planned (later, not v1)
+## Planned (later)
 
 - Image generation for scene/character art, triggered off narration beats.
 - Text-to-speech for DM narration, for a more immersive session.
+- A local-model narrator backend, as an alternative to the hosted Claude API.
 
-The narrator output path is designed as a pluggable hook from the start so these can slot in later without restructuring the engine.
+The narrator sits behind a swappable interface from the start (see Architecture below) specifically so these can slot in without restructuring the engine.
 
 ## Architecture
 
-- **Engine/server**: owns game state (character sheets, world/campaign state, turn order, session log), talks to the LLM for rule adjudication and narration, broadcasts updates to connected clients.
-- **Clients (Textual TUI)**: thin — render the character sheet pane + narrative/input log, send player actions to the engine. Hotseat and networked play are the same client/engine pair with different transports (local I/O vs. sockets).
+- **Engine/server** (`server/`): owns game state (character sheets, world/campaign state, turn order, session log), enforces a strict turn queue, and calls the LLM for rule adjudication and narration.
+- **Narrator** (`server/narrator.py`): the LLM call sits behind a `NarratorBackend` interface, selected via `DM_BACKEND`. The only implementation today is `AnthropicNarrator`, which streams narration and can call two tools mid-turn — a local `lookup_rule` tool backed by a small SRD dataset (`server/rules/`, CC-BY-4.0-licensed — see `server/rules/ATTRIBUTION.md`), and Anthropic's hosted `web_search` for general inspiration only.
+- **Persistence** (`server/persistence.py`): session state is saved to disk via a swappable `SessionStore`, same pattern as the narrator.
+- **Clients** (`client/`, Textual TUI): thin — render the character sheet pane + narrative/input log, send player actions to the engine. Hotseat and networked play are the same client/engine pair with different transports (local I/O vs. sockets).
+- **Protocol** (`docs/protocol.md`): the client/server event contract — this and the networked-from-day-one split exist so multiplayer, image generation, and TTS can be added later without a rewrite.
 
 ## Tech stack
 
 - **Python** + **[Textual](https://textual.textualize.io/)** for the terminal UI.
-- Networked client/server architecture from day one (not hotseat-first, retrofitted later).
+- **[websockets](https://websockets.readthedocs.io/)** for the client/server transport.
+- **[Anthropic Claude](https://www.anthropic.com/claude)** (`claude-sonnet-5`) as the narrator, with tool use for grounded rules lookups.
 
-## Running (single-player v1)
+## Running
 
 ```bash
 pip install -e .
@@ -42,9 +50,18 @@ python -m client.main
 
 Game state (characters, world, turn order, log) is saved to `sessions/<SESSION_ID>.json` after every join and every resolved action, so stopping and restarting the server resumes where you left off. The client remembers its own player ID in a local `.player_id` file, so restarting the client reconnects you to the same character rather than creating a new one — delete that file to start as a fresh character. Delete a session's JSON file under `sessions/` to reset the world itself.
 
+## Testing
+
+```bash
+pip install -e ".[dev]"
+pytest -v
+```
+
+CI (`.github/workflows/ci.yml`) runs the same suite on every push/PR.
+
 ## Status
 
-Single-player skeleton in place: WebSocket server (`server/`) running the game engine and strict turn queue, calling Claude for narration; Textual client (`client/`) with a character sheet pane and narrative log pane. The narration call sits behind a `NarratorBackend` interface (`server/narrator.py`, selected via `DM_BACKEND`) so a local-model backend can be added later without touching the engine — using the hosted Claude API for now since dev-scale usage is cheap, though currently unverified end-to-end pending Anthropic account credits. Session state persists to disk via a swappable `SessionStore` (`server/persistence.py`), same pattern as the narrator backend. Multiplayer, image generation, and TTS are deliberately not built yet — the client/server split and event protocol (`docs/protocol.md`) exist specifically so those can be added without a rewrite. CI (`.github/workflows/ci.yml`) runs the test suite (`tests/`) on every push/PR.
+Working single-player skeleton, verified live: join, character sheet rendering, turn prompts, action submission, graceful error handling on API failures, and full-restart persistence all confirmed via manual testing plus an automated suite. The narrator's tool-use loop (SRD lookup + web search) is structurally verified against mocked responses but not yet confirmed against a live Claude response — pending Anthropic account credits. Multiplayer, a local-model backend, image generation, and TTS are deliberately not built yet.
 
 ## License
 
