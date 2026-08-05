@@ -63,6 +63,10 @@ CI (`.github/workflows/ci.yml`) runs the same suite on every push/PR.
 
 Working single-player skeleton, verified live: join, character sheet rendering, turn prompts, action submission, graceful error handling on API failures, and full-restart persistence all confirmed via manual testing plus an automated suite. The narrator's tool-use loop (SRD lookup + web search) is structurally verified against mocked responses but not yet confirmed against a live Claude response — pending Anthropic account credits. Multiplayer, a local-model backend, image generation, and TTS are deliberately not built yet.
 
+## Contributing
+
+Solo portfolio project, not actively seeking contributions, but issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
-TBD.
+[MIT](LICENSE), except the SRD game data under `server/rules/`, which is CC-BY-4.0 — see [server/rules/ATTRIBUTION.md](server/rules/ATTRIBUTION.md).
