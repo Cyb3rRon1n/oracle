@@ -17,3 +17,7 @@ build/
 
 # OS
 .DS_Store
+
+# Runtime state (not source)
+sessions/
+.player_id

@@ -86,6 +86,22 @@ async def test_action_streams_narration_and_advances_turn():
     assert session.current_turn == player_id  # only player seated, turn cycles back to them
 
 
+async def test_rejoin_uses_existing_character_name_not_new_input():
+    """Regression test: rejoining with a name typed differently than the
+    original (e.g. a fresh client run before .player_id existed, or a stale
+    prompt) must not rename the character or misreport it in the join
+    broadcast."""
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+
+    await join(engine, player_id, name="SomeoneElse")
+
+    assert session.characters[player_id].name == "Thrain"
+    joins = [r for r in received if r[0] == "broadcast" and r[1] == "system_message"]
+    assert joins[-1][2]["text"] == "Thrain joined the session."
+
+
 async def test_narrator_failure_notifies_player_and_keeps_their_turn():
     """Regression test: a narrator exception used to crash the whole connection
     (see docs/protocol.md history / README) instead of surfacing an error."""

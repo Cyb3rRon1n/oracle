@@ -40,9 +40,11 @@ python -m server.main
 python -m client.main
 ```
 
+Game state (characters, world, turn order, log) is saved to `sessions/<SESSION_ID>.json` after every join and every resolved action, so stopping and restarting the server resumes where you left off. The client remembers its own player ID in a local `.player_id` file, so restarting the client reconnects you to the same character rather than creating a new one — delete that file to start as a fresh character. Delete a session's JSON file under `sessions/` to reset the world itself.
+
 ## Status
 
-Single-player skeleton in place: WebSocket server (`server/`) running the game engine and strict turn queue, calling Claude for narration; Textual client (`client/`) with a character sheet pane and narrative log pane. The narration call sits behind a `NarratorBackend` interface (`server/narrator.py`, selected via `DM_BACKEND`) so a local-model backend can be added later without touching the engine — using the hosted Claude API for now since dev-scale usage is cheap. Multiplayer, persistence, image generation, and TTS are deliberately not built yet — the client/server split and event protocol (`docs/protocol.md`) exist specifically so those can be added without a rewrite.
+Single-player skeleton in place: WebSocket server (`server/`) running the game engine and strict turn queue, calling Claude for narration; Textual client (`client/`) with a character sheet pane and narrative log pane. The narration call sits behind a `NarratorBackend` interface (`server/narrator.py`, selected via `DM_BACKEND`) so a local-model backend can be added later without touching the engine — using the hosted Claude API for now since dev-scale usage is cheap, though currently unverified end-to-end pending Anthropic account credits. Session state persists to disk via a swappable `SessionStore` (`server/persistence.py`), same pattern as the narrator backend. Multiplayer, image generation, and TTS are deliberately not built yet — the client/server split and event protocol (`docs/protocol.md`) exist specifically so those can be added without a rewrite. CI (`.github/workflows/ci.yml`) runs the test suite (`tests/`) on every push/PR.
 
 ## License
 

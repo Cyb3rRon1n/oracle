@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from shared.protocol import Envelope
 
 from .narrator import NarratorBackend
+from .persistence import SessionStore
 from .state import CharacterSheet, Session
 
 Broadcast = Callable[[Envelope], Awaitable[None]]
@@ -14,11 +15,23 @@ SendTo = Callable[[str, Envelope], Awaitable[None]]
 class GameEngine:
     """Owns session state and enforces the strict turn queue (docs/protocol.md)."""
 
-    def __init__(self, session: Session, dm: NarratorBackend, broadcast: Broadcast, send_to: SendTo):
+    def __init__(
+        self,
+        session: Session,
+        dm: NarratorBackend,
+        broadcast: Broadcast,
+        send_to: SendTo,
+        store: SessionStore | None = None,
+    ):
         self._session = session
         self._dm = dm
         self._broadcast = broadcast
         self._send_to = send_to
+        self._store = store
+
+    def _save(self) -> None:
+        if self._store is not None:
+            self._store.save(self._session)
 
     async def handle(self, envelope: Envelope) -> None:
         handler = getattr(self, f"_on_{envelope.type}", None)
@@ -27,15 +40,17 @@ class GameEngine:
 
     async def _on_join_session(self, envelope: Envelope) -> None:
         player_id = envelope.sender_id
-        name = envelope.payload.get("player_name", player_id)
         if player_id not in self._session.characters:
+            name = envelope.payload.get("player_name", player_id)
             self._session.characters[player_id] = CharacterSheet(
                 player_id=player_id, name=name, hp=10, max_hp=10
             )
             self._session.turn_order.append(player_id)
+            self._save()
 
+        character_name = self._session.characters[player_id].name
         await self._send_to(player_id, self._state_sync_envelope())
-        await self._broadcast(self._system_envelope(f"{name} joined the session.", level="info"))
+        await self._broadcast(self._system_envelope(f"{character_name} joined the session.", level="info"))
         if self._session.current_turn == player_id:
             await self._broadcast(self._turn_prompt_envelope())
 
@@ -69,6 +84,7 @@ class GameEngine:
         self._session.world.summary = buffer
 
         self._session.advance_turn()
+        self._save()
         await self._broadcast(self._turn_prompt_envelope())
 
     async def _on_chat_message(self, envelope: Envelope) -> None:
