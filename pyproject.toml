@@ -1,0 +1,21 @@
+[project]
+name = "ai-dungeon-master"
+version = "0.1.0"
+description = "An LLM-driven Dungeon Master, played over a terminal UI."
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=0.58",
+    "websockets>=13.0",
+    "anthropic>=0.34",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["shared", "server", "client"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
