@@ -172,10 +172,13 @@ class AnthropicNarrator:
 
 
 def create_narrator(backend: str | None = None) -> NarratorBackend:
-    """Backend selector. Add new NarratorBackend implementations here (e.g. an
-    Ollama-backed local narrator) and register them by name to keep the
-    engine and transport layers unaware of which one is in use."""
+    """Backend selector — keeps the engine and transport layers unaware of
+    which backend is in use."""
     backend = backend or os.environ.get("DM_BACKEND", "anthropic")
     if backend == "anthropic":
         return AnthropicNarrator(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    raise ValueError(f"Unknown DM_BACKEND {backend!r}. Only 'anthropic' is implemented so far.")
+    if backend == "ollama":
+        from .narrator_ollama import create_ollama_narrator  # optional dependency
+
+        return create_ollama_narrator()
+    raise ValueError(f"Unknown DM_BACKEND {backend!r}. Valid backends: 'anthropic', 'ollama'.")

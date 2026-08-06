@@ -12,6 +12,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
+ollama = ["ollama>=0.6"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["shared", "server", "client"]
