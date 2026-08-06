@@ -48,7 +48,7 @@ class DungeonMasterApp(App):
         with Horizontal():
             yield CharacterSheetPanel(id="sheet")
             yield RichLog(id="log", wrap=True, markup=True)
-        yield Input(placeholder="What do you do?", id="input")
+        yield Input(placeholder="What do you do? (/roll 1d20, /chat hello)", id="input")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -100,4 +100,11 @@ class DungeonMasterApp(App):
         event.input.value = ""
         if not text:
             return
-        await self._transport.send("player_action", {"text": text})
+
+        if text.startswith("/roll "):
+            dice, _, reason = text[len("/roll "):].strip().partition(" ")
+            await self._transport.send("dice_roll", {"dice": dice, "reason": reason})
+        elif text.startswith("/chat "):
+            await self._transport.send("chat_message", {"text": text[len("/chat "):].strip()})
+        else:
+            await self._transport.send("player_action", {"text": text})

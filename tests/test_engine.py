@@ -102,6 +102,48 @@ async def test_rejoin_uses_existing_character_name_not_new_input():
     assert joins[-1][2]["text"] == "Thrain joined the session."
 
 
+async def test_dice_roll_broadcasts_result_regardless_of_turn():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    other_id = str(uuid.uuid4())
+    await join(engine, player_id)  # player_id now holds the only turn
+
+    # other_id never joined and isn't the seated player — dice rolling is
+    # exempt from turn order, unlike player_action.
+    await engine.handle(Envelope(
+        type="dice_roll", session_id="test-session", sender_id=other_id,
+        payload={"dice": "1d20", "reason": "stealth check"},
+    ))
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert dice_logs, "dice roll should produce a log entry"
+    assert "stealth check" in dice_logs[-1][2]["text"]
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results, "dice roll should broadcast a dice_result"
+    payload = results[-1][2]
+    assert payload["roller_id"] == other_id
+    assert 1 <= payload["result"] <= 20
+
+
+async def test_invalid_dice_notation_warns_sender_only():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="dice_roll", session_id="test-session", sender_id=player_id,
+        payload={"dice": "not-dice"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "broadcast" and r[1] == "dice_result" for r in received)
+
+
 async def test_narrator_failure_notifies_player_and_keeps_their_turn():
     """Regression test: a narrator exception used to crash the whole connection
     (see docs/protocol.md history / README) instead of surfacing an error."""

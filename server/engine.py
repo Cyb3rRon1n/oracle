@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 
 from shared.protocol import Envelope
 
+from . import dice
 from .narrator import NarratorBackend
 from .persistence import SessionStore
 from .state import CharacterSheet, Session
@@ -89,6 +90,38 @@ class GameEngine:
 
     async def _on_chat_message(self, envelope: Envelope) -> None:
         await self._broadcast(self._log_envelope("chat", envelope.payload.get("text", "")))
+
+    async def _on_dice_roll(self, envelope: Envelope) -> None:
+        player_id = envelope.sender_id
+        character = self._session.characters.get(player_id)
+        name = character.name if character else player_id
+        notation = envelope.payload.get("dice", "")
+        reason = envelope.payload.get("reason", "")
+
+        try:
+            total, rolls = dice.roll(notation)
+        except dice.InvalidDiceNotation as exc:
+            await self._send_to(player_id, self._system_envelope(str(exc), level="warning"))
+            return
+
+        label = f" ({reason})" if reason else ""
+        await self._broadcast(
+            self._log_envelope("dice", f"{name} rolls {notation}{label}: {total} {rolls}")
+        )
+        await self._broadcast(
+            Envelope(
+                type="dice_result",
+                session_id=self._session.session_id,
+                sender_id="server",
+                payload={
+                    "roller_id": player_id,
+                    "dice": notation,
+                    "result": total,
+                    "rolls": rolls,
+                    "purpose": reason,
+                },
+            )
+        )
 
     def _state_sync_envelope(self) -> Envelope:
         return Envelope(

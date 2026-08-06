@@ -48,7 +48,7 @@ Decided: strict turn queue, not free-for-all with DM-narrated simultaneity.
 - Server holds `turn_order` (list of player ids) and `current_turn` (whose turn it is now).
 - Only a `player_action` from the player matching `current_turn` is accepted and forwarded to the LLM for adjudication.
 - A `player_action` from anyone else is rejected with a `system_message` (`level: "warning"`), and dropped — it does not queue up for later.
-- `chat_message` and `character_edit` are exempt from turn order — always allowed, since they don't touch adjudicated game state.
+- `chat_message`, `dice_roll`, and `character_edit` are exempt from turn order — always allowed, since they don't touch adjudicated game state.
 - On resolving an action: server applies state changes, emits `log_entry`/`character_update`/`dice_result` as needed, advances `current_turn` to the next player in `turn_order`, and broadcasts a new `turn_prompt`.
 
 ## Streaming narration
@@ -59,8 +59,14 @@ Decided: strict turn queue, not free-for-all with DM-narrated simultaneity.
 
 `character_update` payloads are routed only to the owning player's connection (plus the DM/server-side state). If other players should see the effect narratively (e.g. "Alice takes 4 damage"), that's a separate `log_entry` of `kind: "action"` broadcast to everyone, alongside the private `character_update`.
 
+## Implementation status
+
+- **Implemented**: `join_session`, `player_action`, `chat_message`, `dice_roll` (client-side commands `/chat <text>` and `/roll <NdM[+/-K]> [reason]` in the Textual client's input bar), `state_sync`, `log_entry`, `turn_prompt`, `system_message`, `dice_result`.
+- **Not yet implemented** (defined here, no server handler): `character_edit`, `reconnect` as a distinct event — today, reconnecting is just calling `join_session` again with the same `player_id`, which the engine already treats as resuming an existing character rather than creating a new one. A dedicated `reconnect` event may turn out to be unnecessary; revisit before building it.
+- `character_update` and `player_joined`/`player_left` are defined but not yet emitted by the engine.
+
 ## Open questions
 
-- Transport: leaning WebSockets (JSON envelopes over `websockets` or Textual's async support) — not yet finalized.
-- Reconnection semantics beyond `last_event_id` resync (e.g. how long a disconnected player's turn is held before skipping).
+- Transport: WebSockets, finalized (`websockets.asyncio`).
+- Reconnection semantics beyond identity resume (e.g. how long a disconnected player's turn is held before skipping) — relevant once multiplayer is exercised.
 - Whether DM-initiated events (e.g. random encounters between turns) need their own trigger outside the player action cycle.
