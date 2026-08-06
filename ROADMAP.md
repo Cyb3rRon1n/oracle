@@ -20,6 +20,7 @@ A status snapshot and prioritized next steps — not a promise or a schedule, ju
   - Sample size is still small (3 turns for qwen2.5:7b, 2 for llama3.1:8b) — not a rigorous benchmark, just enough signal to change the default. `qwen2.5:7b` is now `OllamaNarrator`'s default model (`server/narrator_ollama.py`, and `.env.example`'s `OLLAMA_MODEL`).
   - CPU-only inference (no GPU on the dev machine — 12 cores, 125GB RAM, integrated Intel graphics only) is slow either way: roughly 30-90s per turn.
   - The hosted Claude backend (`AnthropicNarrator`) shares the identical engine/tool-loop code path but hasn't been run live yet — still pending account credits.
+- **Prompt tweak**: both `DM_SYSTEM_PROMPT` (`server/narrator.py`) and `OLLAMA_SYSTEM_PROMPT` (`server/narrator_ollama.py`) now explicitly say narration should end in open-ended prose, never a numbered/bulleted list of options — closes the turn-5 menu quirk noted above. Not yet re-verified live; watch for recurrence next play session.
 
 ## Next — highest priority, in rough order
 
@@ -28,8 +29,6 @@ A status snapshot and prioritized next steps — not a promise or a schedule, ju
 2. **Verify the hosted Claude path live too**, once there's a way to (credits, or just to compare narration quality against the local models side by side) — the code path is identical to Ollama's. Would also be useful as a reliability baseline: Claude is specifically trained for reliable tool use in a way small local models aren't always, so this comparison would show whether `llama3.1:8b`'s turn-2 flakiness (see above) was purely a small-local-model thing or something more general.
 
 3. **`qwen2.5:7b` is now 3-for-3 but still needs a bigger sample before it's fully trusted.** If a future session sees it fail to call `update_character` when it should (or call it when it shouldn't), that's worth logging here the same way the `llama3.1:8b` failure was — don't just quietly patch it. If it keeps checking out over more turns, this item can be closed.
-
-4. **Optional prompt tweak**: discourage numbered multiple-choice menus in narration (see turn 5 above) if it keeps happening — not urgent, just noted while it's fresh.
 
 ## Later — planned, lower priority
 

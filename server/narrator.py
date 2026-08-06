@@ -11,7 +11,8 @@ from .rules import RulesIndex
 DM_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 Narrate outcomes vividly but concisely (3-5 sentences per turn). Track consequences
 of the player's actions, introduce complications, and always end by implicitly or
-explicitly inviting the player's next action. Never break character.
+explicitly inviting the player's next action, in open-ended prose — never as a
+numbered or bulleted list of options to choose from. Never break character.
 
 You have three tools available:
 - lookup_rule: use before improvising crunchy mechanics (monster stats, spell details,
