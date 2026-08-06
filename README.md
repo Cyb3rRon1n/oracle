@@ -75,7 +75,7 @@ CI (`.github/workflows/ci.yml`) runs the same suite on every push/PR.
 
 ## Status
 
-Working single-player game, verified live end-to-end — including a real DM turn. Join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, full-restart persistence, and streamed narration with real `update_character` tool calls have all been observed working against a live model (`llama3.1:8b` via Ollama). The hosted Claude backend shares the exact same engine/tool-loop code path and is structurally verified against mocked responses, but hasn't been run live yet — pending Anthropic account credits. Multiplayer, image generation, and TTS are deliberately not built yet.
+Working single-player game, verified live end-to-end across two real turns. Join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, full-restart persistence, and streamed narration with a real `update_character` tool call have all been observed working against a live model (`llama3.1:8b` via Ollama). That same second turn also exposed a real limitation worth knowing about: the local model doesn't call tools reliably — it can lapse into narrating its own reasoning about a tool call instead of actually invoking it (see [ROADMAP.md](ROADMAP.md) for the specific case). The hosted Claude backend shares the exact same engine/tool-loop code path and is structurally verified against mocked responses, but hasn't been run live yet — pending Anthropic account credits. Multiplayer, image generation, and TTS are deliberately not built yet.
 
 See [ROADMAP.md](ROADMAP.md) for what's next and why, in priority order.
 
