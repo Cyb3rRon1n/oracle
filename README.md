@@ -61,7 +61,9 @@ CI (`.github/workflows/ci.yml`) runs the same suite on every push/PR.
 
 ## Status
 
-Working single-player skeleton, verified live: join, character sheet rendering, turn prompts, action submission, graceful error handling on API failures, and full-restart persistence all confirmed via manual testing plus an automated suite. The narrator's tool-use loop (SRD lookup + web search) is structurally verified against mocked responses but not yet confirmed against a live Claude response — pending Anthropic account credits. Multiplayer, a local-model backend, image generation, and TTS are deliberately not built yet.
+Working single-player skeleton, verified live: join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, and full-restart persistence all confirmed via manual testing plus an automated suite. The narrator's tool-use loop (SRD lookup + web search) is structurally verified against mocked responses but not yet confirmed against a live Claude response — pending Anthropic account credits. Multiplayer, a local-model backend, image generation, and TTS are deliberately not built yet.
+
+See [ROADMAP.md](ROADMAP.md) for what's next and why, in priority order — including two known gaps worth reading before extending this further: the DM currently has no memory beyond the previous turn, and narrated outcomes don't yet mechanically affect the character sheet.
 
 ## Contributing
 
