@@ -55,9 +55,14 @@ MAX_TOOL_ROUNDS = 4
 
 class NarratorBackend(Protocol):
     def narrate(
-        self, world_summary: str, character_summary: str, action_text: str
+        self, history: list[dict], character_summary: str, action_text: str
     ) -> AsyncIterator[str]:
-        """Stream narration text in response to a player's action."""
+        """Stream narration text in response to a player's action.
+
+        `history` is the rolling window of prior turns as plain
+        {"role": "user"/"assistant", "content": str} messages — the DM's own
+        past narration, not the tool calls it made to produce them.
+        """
 
 
 class AnthropicNarrator:
@@ -72,14 +77,10 @@ class AnthropicNarrator:
         self._rules = rules or RulesIndex.load_default()
 
     async def narrate(
-        self, world_summary: str, character_summary: str, action_text: str
+        self, history: list[dict], character_summary: str, action_text: str
     ) -> AsyncIterator[str]:
-        prompt = (
-            f"World state:\n{world_summary or '(session just started)'}\n\n"
-            f"Character:\n{character_summary}\n\n"
-            f"Player action: {action_text}"
-        )
-        messages: list[dict] = [{"role": "user", "content": prompt}]
+        prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
+        messages: list[dict] = [*history, {"role": "user", "content": prompt}]
 
         for _ in range(MAX_TOOL_ROUNDS):
             async with self._client.messages.stream(

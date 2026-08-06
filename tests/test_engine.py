@@ -10,13 +10,17 @@ from shared.protocol import Envelope
 
 
 class StubDM:
-    async def narrate(self, world_summary, character_summary, action_text):
+    def __init__(self):
+        self.calls: list[list[dict]] = []
+
+    async def narrate(self, history, character_summary, action_text):
+        self.calls.append(list(history))  # snapshot — engine mutates session.history in place after this call
         for word in ["You ", "swing ", "your ", "sword."]:
             yield word
 
 
 class FailingDM:
-    async def narrate(self, world_summary, character_summary, action_text):
+    async def narrate(self, history, character_summary, action_text):
         raise RuntimeError("boom")
         yield  # pragma: no cover - makes this an async generator
 
@@ -84,6 +88,35 @@ async def test_action_streams_narration_and_advances_turn():
     assert full_text == "You swing your sword."
     assert session.log[-1]["text"] == full_text
     assert session.current_turn == player_id  # only player seated, turn cycles back to them
+
+
+async def test_action_updates_history_and_passes_it_to_next_narrate_call():
+    dm = StubDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin"},
+    ))
+    assert dm.calls[0] == [], "first turn should see an empty rolling window"
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I check my inventory"},
+    ))
+    assert dm.calls[1] == [
+        {"role": "user", "content": "I attack the goblin"},
+        {"role": "assistant", "content": "You swing your sword."},
+    ], "second turn should see the first turn's exchange as history"
+
+    assert session.history == [
+        {"role": "user", "content": "I attack the goblin"},
+        {"role": "assistant", "content": "You swing your sword."},
+        {"role": "user", "content": "I check my inventory"},
+        {"role": "assistant", "content": "You swing your sword."},
+    ]
 
 
 async def test_rejoin_uses_existing_character_name_not_new_input():

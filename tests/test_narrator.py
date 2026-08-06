@@ -79,10 +79,27 @@ async def test_narrate_streams_text_when_no_tool_use():
     final = FakeMessage(stop_reason="end_turn", content=[])
     narrator._client = FakeClient([(["You ", "enter ", "the tavern."], final)])
 
-    chunks = [c async for c in narrator.narrate("", "{}", "I enter the tavern")]
+    chunks = [c async for c in narrator.narrate([], "{}", "I enter the tavern")]
 
     assert "".join(chunks) == "You enter the tavern."
     assert len(narrator._client.messages.calls) == 1
+
+
+async def test_narrate_prepends_rolling_history_to_the_request():
+    narrator = make_narrator()
+    final = FakeMessage(stop_reason="end_turn", content=[])
+    narrator._client = FakeClient([(["Okay."], final)])
+    history = [
+        {"role": "user", "content": "I attack the goblin"},
+        {"role": "assistant", "content": "You swing your sword."},
+    ]
+
+    [c async for c in narrator.narrate(history, "{}", "I check my inventory")]
+
+    sent_messages = narrator._client.messages.calls[0]["messages"]
+    assert sent_messages[0] == history[0]
+    assert sent_messages[1] == history[1]
+    assert "I check my inventory" in sent_messages[2]["content"]
 
 
 async def test_narrate_executes_lookup_rule_tool_and_continues():
@@ -99,7 +116,7 @@ async def test_narrate_executes_lookup_rule_tool_and_continues():
         ]
     )
 
-    chunks = [c async for c in narrator.narrate("", "{}", "I open the door")]
+    chunks = [c async for c in narrator.narrate([], "{}", "I open the door")]
 
     assert "".join(chunks) == "A goblin leaps out and attacks!"
     assert len(narrator._client.messages.calls) == 2
@@ -118,7 +135,7 @@ async def test_narrate_stops_after_max_tool_rounds_without_hanging():
     always_calls_tool = FakeMessage(stop_reason="tool_use", content=[tool_call])
     narrator._client = FakeClient([([], always_calls_tool) for _ in range(4)])
 
-    chunks = [c async for c in narrator.narrate("", "{}", "I keep fighting")]
+    chunks = [c async for c in narrator.narrate([], "{}", "I keep fighting")]
 
     assert chunks == []
     assert len(narrator._client.messages.calls) == 4

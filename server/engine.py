@@ -68,7 +68,7 @@ class GameEngine:
         buffer = ""
         try:
             async for chunk in self._dm.narrate(
-                world_summary=self._session.world.summary,
+                history=self._session.history,
                 character_summary=character.model_dump_json(),
                 action_text=text,
             ):
@@ -82,7 +82,7 @@ class GameEngine:
             return
 
         self._session.log.append({"kind": "narration", "text": buffer})
-        self._session.world.summary = buffer
+        self._session.append_turn(text, buffer)
 
         self._session.advance_turn()
         self._save()

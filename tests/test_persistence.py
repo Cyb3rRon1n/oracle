@@ -9,7 +9,7 @@ from shared.protocol import Envelope
 
 
 class StubDM:
-    async def narrate(self, world_summary, character_summary, action_text):
+    async def narrate(self, history, character_summary, action_text):
         yield "You see nothing of note."
 
 
