@@ -63,6 +63,10 @@ def make_narrator() -> AnthropicNarrator:
     return AnthropicNarrator(api_key="test-key", rules=RulesIndex.load_default())
 
 
+def noop_apply_update(update: dict) -> str:
+    return "unexpected call"
+
+
 def test_rules_index_lookup_known_and_unknown():
     idx = RulesIndex.load_default()
 
@@ -79,7 +83,7 @@ async def test_narrate_streams_text_when_no_tool_use():
     final = FakeMessage(stop_reason="end_turn", content=[])
     narrator._client = FakeClient([(["You ", "enter ", "the tavern."], final)])
 
-    chunks = [c async for c in narrator.narrate([], "{}", "I enter the tavern")]
+    chunks = [c async for c in narrator.narrate([], "{}", "I enter the tavern", noop_apply_update)]
 
     assert "".join(chunks) == "You enter the tavern."
     assert len(narrator._client.messages.calls) == 1
@@ -94,7 +98,7 @@ async def test_narrate_prepends_rolling_history_to_the_request():
         {"role": "assistant", "content": "You swing your sword."},
     ]
 
-    [c async for c in narrator.narrate(history, "{}", "I check my inventory")]
+    [c async for c in narrator.narrate(history, "{}", "I check my inventory", noop_apply_update)]
 
     sent_messages = narrator._client.messages.calls[0]["messages"]
     assert sent_messages[0] == history[0]
@@ -116,7 +120,7 @@ async def test_narrate_executes_lookup_rule_tool_and_continues():
         ]
     )
 
-    chunks = [c async for c in narrator.narrate([], "{}", "I open the door")]
+    chunks = [c async for c in narrator.narrate([], "{}", "I open the door", noop_apply_update)]
 
     assert "".join(chunks) == "A goblin leaps out and attacks!"
     assert len(narrator._client.messages.calls) == 2
@@ -127,6 +131,38 @@ async def test_narrate_executes_lookup_rule_tool_and_continues():
     assert '"ac": 15' in tool_result_content
 
 
+async def test_narrate_routes_update_character_tool_to_callback():
+    narrator = make_narrator()
+    tool_call = FakeToolUseBlock(
+        id="tu_2", name="update_character", input={"hp_delta": -4}
+    )
+    first = FakeMessage(stop_reason="tool_use", content=[tool_call])
+    second = FakeMessage(stop_reason="end_turn", content=[])
+    narrator._client = FakeClient(
+        [
+            (["You take a hit."], first),
+            ([" You reel."], second),
+        ]
+    )
+
+    received_updates = []
+
+    def apply_update(update: dict) -> str:
+        received_updates.append(update)
+        return "Applied: HP -4 (now 6/10)."
+
+    chunks = [
+        c async for c in narrator.narrate([], "{}", "I stand my ground", apply_update)
+    ]
+
+    assert "".join(chunks) == "You take a hit. You reel."
+    assert received_updates == [{"hp_delta": -4}]
+
+    second_call_messages = narrator._client.messages.calls[1]["messages"]
+    tool_result_content = second_call_messages[-1]["content"][0]["content"]
+    assert tool_result_content == "Applied: HP -4 (now 6/10)."
+
+
 async def test_narrate_stops_after_max_tool_rounds_without_hanging():
     narrator = make_narrator()
     tool_call = FakeToolUseBlock(
@@ -135,7 +171,7 @@ async def test_narrate_stops_after_max_tool_rounds_without_hanging():
     always_calls_tool = FakeMessage(stop_reason="tool_use", content=[tool_call])
     narrator._client = FakeClient([([], always_calls_tool) for _ in range(4)])
 
-    chunks = [c async for c in narrator.narrate([], "{}", "I keep fighting")]
+    chunks = [c async for c in narrator.narrate([], "{}", "I keep fighting", noop_apply_update)]
 
     assert chunks == []
     assert len(narrator._client.messages.calls) == 4

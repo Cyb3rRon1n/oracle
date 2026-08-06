@@ -65,12 +65,22 @@ class GameEngine:
         text = envelope.payload.get("text", "")
         await self._broadcast(self._log_envelope("action", f"{character.name}: {text}"))
 
+        sheet_changed = False
+
+        def apply_update(update: dict) -> str:
+            nonlocal sheet_changed
+            result = character.apply_update(update)
+            if not result.startswith("No changes applied"):
+                sheet_changed = True
+            return result
+
         buffer = ""
         try:
             async for chunk in self._dm.narrate(
                 history=self._session.history,
                 character_summary=character.model_dump_json(),
                 action_text=text,
+                apply_update=apply_update,
             ):
                 buffer += chunk
                 await self._broadcast(self._log_envelope("narration", chunk, done=False))
@@ -83,6 +93,9 @@ class GameEngine:
 
         self._session.log.append({"kind": "narration", "text": buffer})
         self._session.append_turn(text, buffer)
+
+        if sheet_changed:
+            await self._send_to(player_id, self._character_update_envelope(player_id, character))
 
         self._session.advance_turn()
         self._save()
@@ -135,6 +148,14 @@ class GameEngine:
                 "current_turn": self._session.current_turn,
                 "log_tail": self._session.log[-20:],
             },
+        )
+
+    def _character_update_envelope(self, player_id: str, character: CharacterSheet) -> Envelope:
+        return Envelope(
+            type="character_update",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload={"player_id": player_id, "sheet_delta": character.model_dump()},
         )
 
     def _turn_prompt_envelope(self) -> Envelope:

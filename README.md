@@ -24,7 +24,7 @@ The narrator sits behind a swappable interface from the start (see Architecture 
 ## Architecture
 
 - **Engine/server** (`server/`): owns game state (character sheets, world/campaign state, turn order, session log), enforces a strict turn queue, and calls the LLM for rule adjudication and narration.
-- **Narrator** (`server/narrator.py`): the LLM call sits behind a `NarratorBackend` interface, selected via `DM_BACKEND`. The only implementation today is `AnthropicNarrator`, which streams narration and can call two tools mid-turn — a local `lookup_rule` tool backed by a small SRD dataset (`server/rules/`, CC-BY-4.0-licensed — see `server/rules/ATTRIBUTION.md`), and Anthropic's hosted `web_search` for general inspiration only.
+- **Narrator** (`server/narrator.py`): the LLM call sits behind a `NarratorBackend` interface, selected via `DM_BACKEND`. The only implementation today is `AnthropicNarrator`, which streams narration and can call three tools mid-turn — a local `lookup_rule` tool backed by a small SRD dataset (`server/rules/`, CC-BY-4.0-licensed — see `server/rules/ATTRIBUTION.md`), `update_character` to apply real HP/inventory/condition changes to the acting character's sheet, and Anthropic's hosted `web_search` for general inspiration only.
 - **Persistence** (`server/persistence.py`): session state is saved to disk via a swappable `SessionStore`, same pattern as the narrator.
 - **Clients** (`client/`, Textual TUI): thin — render the character sheet pane + narrative/input log, send player actions to the engine. Hotseat and networked play are the same client/engine pair with different transports (local I/O vs. sockets).
 - **Protocol** (`docs/protocol.md`): the client/server event contract — this and the networked-from-day-one split exist so multiplayer, image generation, and TTS can be added later without a rewrite.
@@ -61,9 +61,9 @@ CI (`.github/workflows/ci.yml`) runs the same suite on every push/PR.
 
 ## Status
 
-Working single-player skeleton, verified live: join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, and full-restart persistence all confirmed via manual testing plus an automated suite. The narrator's tool-use loop (SRD lookup + web search) is structurally verified against mocked responses but not yet confirmed against a live Claude response — pending Anthropic account credits. Multiplayer, a local-model backend, image generation, and TTS are deliberately not built yet.
+Working single-player skeleton, verified live: join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, and full-restart persistence all confirmed via manual testing plus an automated suite. The narrator's tool-use loop (SRD lookup, `update_character`, web search) and the rolling-window conversation memory are structurally verified against mocked responses but not yet confirmed against a live Claude response — pending Anthropic account credits. Multiplayer, a local-model backend, image generation, and TTS are deliberately not built yet.
 
-See [ROADMAP.md](ROADMAP.md) for what's next and why, in priority order — including two known gaps worth reading before extending this further: the DM currently has no memory beyond the previous turn, and narrated outcomes don't yet mechanically affect the character sheet.
+See [ROADMAP.md](ROADMAP.md) for what's next and why, in priority order.
 
 ## Contributing
 

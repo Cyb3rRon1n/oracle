@@ -13,16 +13,29 @@ class StubDM:
     def __init__(self):
         self.calls: list[list[dict]] = []
 
-    async def narrate(self, history, character_summary, action_text):
+    async def narrate(self, history, character_summary, action_text, apply_update):
         self.calls.append(list(history))  # snapshot — engine mutates session.history in place after this call
         for word in ["You ", "swing ", "your ", "sword."]:
             yield word
 
 
 class FailingDM:
-    async def narrate(self, history, character_summary, action_text):
+    async def narrate(self, history, character_summary, action_text, apply_update):
         raise RuntimeError("boom")
         yield  # pragma: no cover - makes this an async generator
+
+
+class UpdateCharacterDM:
+    """Narrates a fixed line and calls apply_update with the given tool input,
+    simulating the DM invoking the update_character tool mid-turn."""
+
+    def __init__(self, update: dict):
+        self._update = update
+        self.tool_result: str | None = None
+
+    async def narrate(self, history, character_summary, action_text, apply_update):
+        self.tool_result = apply_update(self._update)
+        yield "You feel the effects immediately."
 
 
 def make_engine(dm):
@@ -117,6 +130,45 @@ async def test_action_updates_history_and_passes_it_to_next_narrate_call():
         {"role": "user", "content": "I check my inventory"},
         {"role": "assistant", "content": "You swing your sword."},
     ]
+
+
+async def test_update_character_tool_call_applies_and_pushes_character_update():
+    dm = UpdateCharacterDM({"hp_delta": -4, "add_item": "torch"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I grab a torch as the trap fires"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.hp == 6  # 10 - 4
+    assert "torch" in character.inventory
+    assert "HP -4" in dm.tool_result
+
+    updates = [
+        r for r in received
+        if r[0] == "send_to" and r[2] == "character_update" and r[1] == player_id
+    ]
+    assert updates, "a real sheet change should push a character_update to the player"
+    assert updates[-1][3]["sheet_delta"]["hp"] == 6
+    assert updates[-1][3]["sheet_delta"]["inventory"] == ["torch"]
+
+
+async def test_update_character_no_op_does_not_push_character_update():
+    dm = UpdateCharacterDM({"hp_delta": 0})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I do something inconsequential"},
+    ))
+
+    assert not any(r[0] == "send_to" and r[2] == "character_update" for r in received)
 
 
 async def test_rejoin_uses_existing_character_name_not_new_input():

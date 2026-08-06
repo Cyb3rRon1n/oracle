@@ -61,9 +61,9 @@ Decided: strict turn queue, not free-for-all with DM-narrated simultaneity.
 
 ## Implementation status
 
-- **Implemented**: `join_session`, `player_action`, `chat_message`, `dice_roll` (client-side commands `/chat <text>` and `/roll <NdM[+/-K]> [reason]` in the Textual client's input bar), `state_sync`, `log_entry`, `turn_prompt`, `system_message`, `dice_result`.
+- **Implemented**: `join_session`, `player_action`, `chat_message`, `dice_roll` (client-side commands `/chat <text>` and `/roll <NdM[+/-K]> [reason]` in the Textual client's input bar), `state_sync`, `log_entry`, `turn_prompt`, `system_message`, `dice_result`, `character_update` (pushed to the acting player whenever the DM's `update_character` tool call actually changes something — HP, inventory, or conditions).
 - **Not yet implemented** (defined here, no server handler): `character_edit`, `reconnect` as a distinct event — today, reconnecting is just calling `join_session` again with the same `player_id`, which the engine already treats as resuming an existing character rather than creating a new one. A dedicated `reconnect` event may turn out to be unnecessary; revisit before building it.
-- `character_update` and `player_joined`/`player_left` are defined but not yet emitted by the engine.
+- `player_joined`/`player_left` are defined but not yet emitted by the engine.
 
 ## Open questions
 

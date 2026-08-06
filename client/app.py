@@ -26,6 +26,11 @@ class CharacterSheetPanel(Static):
             lines.append("")
             lines.append("[b]Inventory[/b]")
             lines.extend(f"- {item}" for item in inventory)
+        conditions = character.get("conditions") or []
+        if conditions:
+            lines.append("")
+            lines.append("[b]Conditions[/b]")
+            lines.extend(f"- {c}" for c in conditions)
         self.update("\n".join(lines))
 
 

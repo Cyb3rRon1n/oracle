@@ -10,7 +10,44 @@ class CharacterSheet(BaseModel):
     max_hp: int
     stats: dict[str, int] = Field(default_factory=dict)
     inventory: list[str] = Field(default_factory=list)
+    conditions: list[str] = Field(default_factory=list)
     notes: str = ""
+
+    def apply_update(self, update: dict) -> str:
+        """Apply a DM-issued mechanical update (the update_character tool).
+        Returns a human-readable summary of what changed, for the tool_result
+        the DM sees back."""
+        changes: list[str] = []
+
+        hp_delta = update.get("hp_delta")
+        if hp_delta:
+            self.hp = max(0, min(self.max_hp, self.hp + int(hp_delta)))
+            sign = "+" if hp_delta > 0 else ""
+            changes.append(f"HP {sign}{hp_delta} (now {self.hp}/{self.max_hp})")
+
+        add_item = update.get("add_item")
+        if add_item:
+            self.inventory.append(add_item)
+            changes.append(f"gained '{add_item}'")
+
+        remove_item = update.get("remove_item")
+        if remove_item and remove_item in self.inventory:
+            self.inventory.remove(remove_item)
+            changes.append(f"lost '{remove_item}'")
+
+        add_condition = update.get("add_condition")
+        if add_condition and add_condition not in self.conditions:
+            self.conditions.append(add_condition)
+            changes.append(f"now {add_condition}")
+
+        remove_condition = update.get("remove_condition")
+        if remove_condition and remove_condition in self.conditions:
+            self.conditions.remove(remove_condition)
+            changes.append(f"no longer {remove_condition}")
+
+        if not changes:
+            return "No changes applied (nothing matched, or all deltas were zero)."
+        return "Applied: " + "; ".join(changes) + "."
 
 
 class WorldState(BaseModel):
