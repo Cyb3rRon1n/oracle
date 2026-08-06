@@ -49,7 +49,7 @@ class OllamaNarrator:
 
     def __init__(
         self,
-        model: str = "llama3.1:8b",
+        model: str = "qwen2.5:7b",
         host: str | None = None,
         rules: RulesIndex | None = None,
     ):
@@ -114,6 +114,6 @@ class OllamaNarrator:
 
 def create_ollama_narrator() -> OllamaNarrator:
     return OllamaNarrator(
-        model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
+        model=os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
         host=os.environ.get("OLLAMA_HOST"),
     )

@@ -51,14 +51,14 @@ python -m server.main
 python -m client.main
 ```
 
-With a local model instead (free, no API key — tested with `llama3.1:8b`; CPU-only inference is slow, expect 30-90s per turn):
+With a local model instead (free, no API key — default/tested model is `qwen2.5:7b`; CPU-only inference is slow, expect 30-90s per turn):
 
 ```bash
 pip install -e ".[ollama]"
 # install Ollama (https://ollama.com), then:
-ollama pull llama3.1:8b
+ollama pull qwen2.5:7b
 
-# in .env: DM_BACKEND=ollama, OLLAMA_MODEL=llama3.1:8b
+# in .env: DM_BACKEND=ollama (OLLAMA_MODEL defaults to qwen2.5:7b)
 # same two-terminal run as above
 ```
 
@@ -75,7 +75,7 @@ CI (`.github/workflows/ci.yml`) runs the same suite on every push/PR.
 
 ## Status
 
-Working single-player game, verified live end-to-end across two real turns. Join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, full-restart persistence, and streamed narration with a real `update_character` tool call have all been observed working against a live model (`llama3.1:8b` via Ollama). That same second turn also exposed a real limitation worth knowing about: the local model doesn't call tools reliably — it can lapse into narrating its own reasoning about a tool call instead of actually invoking it (see [ROADMAP.md](ROADMAP.md) for the specific case). The hosted Claude backend shares the exact same engine/tool-loop code path and is structurally verified against mocked responses, but hasn't been run live yet — pending Anthropic account credits. Multiplayer, image generation, and TTS are deliberately not built yet.
+Working single-player game, verified live end-to-end across multiple real turns. Join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, full-restart persistence, and streamed narration with real `update_character` tool calls have all been observed working against live local models via Ollama. Two models were compared head to head on the same session: `llama3.1:8b` made a real tool call on turn 1 but lapsed into narrating a fake tool call as plain text on turn 2 (breaking character in the process); `qwen2.5:7b`, tried afterward, correctly called the tool when damage occurred and correctly *didn't* call it when nothing mechanical happened, across two clean turns — see [ROADMAP.md](ROADMAP.md) for the specifics. `qwen2.5:7b` is now the default local model for that reason, though this is still a small sample, not a rigorous benchmark. The hosted Claude backend shares the exact same engine/tool-loop code path and is structurally verified against mocked responses, but hasn't been run live yet — pending Anthropic account credits. Multiplayer, image generation, and TTS are deliberately not built yet.
 
 See [ROADMAP.md](ROADMAP.md) for what's next and why, in priority order.
 
