@@ -38,29 +38,104 @@ The narrator sits behind a swappable interface from the start (see Architecture 
 
 ## Running
 
-With Claude (needs API credits):
+A full session is two long-running programs talking to each other over a local network connection — the **server** (the game engine + DM) and the **client** (the terminal UI you actually type into). You'll need two separate terminal windows/tabs open at the same time: one stays running the server the whole session, the other runs the client you interact with. Closing either one ends that half of the session; the server can keep running with nobody connected, and you can reconnect a client to it later.
+
+### 0. Before you start
+
+You need:
+
+- **Python 3.11 or newer** already installed (check with `python3 --version`).
+- A terminal you're comfortable opening two windows/tabs of.
+- Either a free [Ollama](https://ollama.com) install (no account, no cost, runs the AI locally on your own machine — slower, see the note below) **or** an [Anthropic API key](https://console.anthropic.com/) with billing set up (faster, hosted, costs real money per session). You only need one of these, not both.
+
+### 1. Get the code and set up a virtual environment
+
+If you haven't already cloned it:
 
 ```bash
-pip install -e .
-cp .env.example .env   # fill in ANTHROPIC_API_KEY
-
-# terminal 1
-python -m server.main
-
-# terminal 2
-python -m client.main
+git clone https://github.com/Cyb3rRon1n/oracle.git
+cd oracle
 ```
 
-With a local model instead (free, no API key — default/tested model is `qwen2.5:7b`; CPU-only inference is slow, expect 30-90s per turn):
+A [virtual environment](https://docs.python.org/3/library/venv.html) keeps this project's Python packages separate from everything else on your system — create and activate one:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate   # on Windows: .venv\Scripts\activate
+```
+
+You'll know it worked if your terminal prompt now starts with `(.venv)`. You'll need to run that `source`/`activate` line again any time you open a new terminal to work in this project.
+
+### 2. Choose how the DM will think, and install accordingly
+
+**Option A — Ollama (free, runs on your own computer, recommended for just trying it out):**
 
 ```bash
 pip install -e ".[ollama]"
-# install Ollama (https://ollama.com), then:
-ollama pull qwen2.5:7b
-
-# in .env: DM_BACKEND=ollama (OLLAMA_MODEL defaults to qwen2.5:7b)
-# same two-terminal run as above
 ```
+
+Then, separately, install Ollama itself from [ollama.com](https://ollama.com) if you don't have it yet, and pull the model Oracle defaults to:
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+**Option B — Anthropic Claude (hosted, needs a paid API key):**
+
+```bash
+pip install -e .
+```
+
+You'll need an `ANTHROPIC_API_KEY` from [console.anthropic.com](https://console.anthropic.com/) with billing/credits set up — Oracle never generates or stores this key for you, you provide your own.
+
+### 3. Configure
+
+```bash
+cp .env.example .env
+```
+
+Then open the new `.env` file in any text editor and fill in the one or two lines that matter for the option you picked in step 2:
+
+- **Ollama**: set `DM_BACKEND=ollama`. `OLLAMA_MODEL` already defaults to `qwen2.5:7b`, matching what you pulled above — leave it as-is unless you want to try a different model.
+- **Anthropic**: set `DM_BACKEND=anthropic` and put your real key on the `ANTHROPIC_API_KEY=` line.
+
+Everything else in `.env` (`SESSION_ID`, `SESSION_STORE_DIR`) can stay at its default for a first run.
+
+### 4. Start it — two terminals
+
+**Terminal 1** — start the server and leave it running (this is the game engine; it won't print much beyond a startup line, that's normal):
+
+```bash
+python -m server.main
+```
+
+**Terminal 2** — start the client, which is what you'll actually see and type into:
+
+```bash
+python -m client.main
+```
+
+The client will ask you two quick questions right in the terminal before the game screen appears:
+
+- `Character name:` — type anything, e.g. `Torvin`
+- `Session ID (blank for default):` — just press Enter to use the default session
+
+After that, a full-screen terminal interface opens: your character sheet on one side, a scrolling narrative log on the other, and an input bar at the bottom.
+
+### 5. Play
+
+Type what your character does in plain English and press Enter — e.g. `I open the door` or `I attack the goblin with my sword`. The DM (Ollama or Claude, whichever you configured) responds with narration, streamed in as it's generated.
+
+A couple of special commands, typed into that same input bar:
+
+- `/roll 1d20` (or `/roll 2d6+3 stealth check`) — roll dice yourself, outside the DM's narration.
+- `/chat hello` — out-of-character chat, doesn't affect the story.
+
+**If you're using Ollama on CPU (no dedicated GPU), be patient** — each DM response can genuinely take 30-90 seconds to generate. This is normal, not a hang; the client will show the response streaming in once it starts.
+
+To quit, close the client terminal (`Ctrl+C` works) — the server can stay running for next time, or you can stop it the same way.
+
+### Stopping and picking back up later
 
 Game state (characters, world, turn order, log) is saved to `sessions/<SESSION_ID>.json` after every join and every resolved action, so stopping and restarting the server resumes where you left off. The client remembers its own player ID in a local `.player_id` file, so restarting the client reconnects you to the same character rather than creating a new one — delete that file to start as a fresh character. Delete a session's JSON file under `sessions/` to reset the world itself.
 
