@@ -75,12 +75,18 @@ class DungeonMasterApp(App):
             mine = characters.get(self._player_id)
             if mine:
                 sheet.render_sheet(mine)
+            for name, npc in envelope.payload.get("npcs", {}).items():
+                log.write(self._npc_status_line(name, npc))
             for entry in envelope.payload.get("log_tail", []):
                 log.write(entry.get("text", ""))
 
         elif envelope.type == "character_update":
             if envelope.payload.get("player_id") == self._player_id:
                 sheet.render_sheet(envelope.payload.get("sheet_delta", {}))
+
+        elif envelope.type == "npc_update":
+            name = envelope.payload.get("name", "?")
+            log.write(self._npc_status_line(name, envelope.payload.get("sheet_delta", {})))
 
         elif envelope.type == "log_entry":
             text = envelope.payload.get("text", "")
@@ -99,6 +105,14 @@ class DungeonMasterApp(App):
 
         elif envelope.type == "system_message":
             log.write(f"[dim]{envelope.payload.get('text', '')}[/dim]")
+
+    @staticmethod
+    def _npc_status_line(name: str, npc: dict) -> str:
+        line = f"[dim]{name}: HP {npc.get('hp')}/{npc.get('max_hp')}"
+        conditions = npc.get("conditions") or []
+        if conditions:
+            line += f" ({', '.join(conditions)})"
+        return line + "[/dim]"
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()

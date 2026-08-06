@@ -62,6 +62,7 @@ MAX_HISTORY_MESSAGES = 12  # 6 player-action/DM-narration exchanges
 class Session(BaseModel):
     session_id: str
     characters: dict[str, CharacterSheet] = Field(default_factory=dict)
+    npcs: dict[str, CharacterSheet] = Field(default_factory=dict)
     world: WorldState = Field(default_factory=WorldState)
     turn_order: list[str] = Field(default_factory=list)
     current_turn_index: int = 0

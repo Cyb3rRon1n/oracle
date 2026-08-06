@@ -18,9 +18,12 @@ You have three tools available:
 - lookup_rule: use before improvising crunchy mechanics (monster stats, spell details,
   class features, equipment, conditions) so numbers stay consistent from turn to turn.
 - update_character: call this whenever your narration describes something that should
-  mechanically change the acting character — damage, healing, gaining or losing an item,
-  or applying/clearing a condition. Narration alone doesn't change the sheet; this tool
-  does. Call it after you've decided the outcome, in the same turn you narrate it.
+  mechanically change the acting character OR a named NPC/monster — damage, healing,
+  gaining or losing an item, or applying/clearing a condition. Narration alone doesn't
+  change a sheet; this tool does. Omit target (or use 'self') for the acting character;
+  pass an NPC's name as target to introduce or update its own tracked sheet, so its
+  wounds and conditions persist turn to turn instead of being forgotten. Call it after
+  you've decided the outcome, in the same turn you narrate it.
 - web_search: use sparingly, only for general inspiration or real-world reference (e.g.
   period-appropriate detail for a setting) — never to look up or reproduce copyrighted
   D&D sourcebook content verbatim. For anything not covered by lookup_rule, invent
@@ -57,14 +60,35 @@ LOOKUP_RULE_TOOL = {
 UPDATE_CHARACTER_TOOL = {
     "name": "update_character",
     "description": (
-        "Apply a mechanical change to the acting character's sheet as a result of "
-        "narrated events — damage, healing, gaining or losing an item, or a new or "
-        "cleared condition. All fields are optional; include only what actually "
-        "changed. This only affects the character taking their turn right now."
+        "Apply a mechanical change to a sheet as a result of narrated events — "
+        "damage, healing, gaining or losing an item, or a new or cleared condition. "
+        "All fields are optional; include only what actually changed. Omit target "
+        "(or use 'self') for the acting character. For an NPC or monster, pass its "
+        "name as target instead: the first call for a given name creates a tracked "
+        "sheet for it (set max_hp to its real max HP from lookup_rule if you know "
+        "it), and every later call with that same name updates the same tracked "
+        "NPC, so its wounds and conditions persist turn to turn instead of being "
+        "forgotten."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
+            "target": {
+                "type": "string",
+                "description": (
+                    "Who this update applies to. Omit or use 'self' for the acting "
+                    "character. Otherwise, the name of an NPC/monster in the scene — "
+                    "creates a new tracked NPC on first use, updates it afterward."
+                ),
+            },
+            "max_hp": {
+                "type": "integer",
+                "description": (
+                    "Starting/maximum HP for a new NPC target, from lookup_rule if "
+                    "possible. Only meaningful the first time that name is used; "
+                    "ignored for 'self' and for an NPC already being tracked."
+                ),
+            },
             "hp_delta": {
                 "type": "integer",
                 "description": "Change in hit points. Negative for damage, positive for healing.",
@@ -109,7 +133,8 @@ class NarratorBackend(Protocol):
 
         `apply_update` is called with the update_character tool's input
         whenever the DM decides a narrated outcome should mechanically
-        change the acting character's sheet; it returns a description of
+        change a sheet — the acting character's own, or a named NPC's
+        (via the input's `target` field); it returns a description of
         what changed, which becomes that tool call's result.
         """
 

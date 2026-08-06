@@ -33,9 +33,10 @@ Every message, both directions, uses the same wrapper:
 
 | type | payload | purpose |
 |---|---|---|
-| `state_sync` | `{characters[], world_state, turn_order, current_turn, log_tail[]}` | full snapshot on join/reconnect |
+| `state_sync` | `{characters[], npcs[], world_state, turn_order, current_turn, log_tail[]}` | full snapshot on join/reconnect |
 | `log_entry` | `{kind: narration\|action\|dice\|chat\|system, text, chunk?, done?}` | append to the shared log pane; `chunk`/`done` support streaming DM narration token-by-token |
 | `character_update` | `{player_id, sheet_delta}` | partial sheet push (HP change, item gained) — routed only to that player (and DM) |
+| `npc_update` | `{name, sheet_delta}` | partial NPC/monster sheet push (HP change, condition) — broadcast to everyone, unlike `character_update`, since an NPC's wounds are shared observable fiction, not one player's private sheet |
 | `turn_prompt` | `{player_id, prompt_text}` | whose turn it is, what's expected of them |
 | `dice_result` | `{roller_id, dice, result, purpose}` | outcome of any roll, DM- or player-initiated |
 | `player_joined` / `player_left` | `{player_id, name}` | presence updates |
@@ -59,9 +60,11 @@ Decided: strict turn queue, not free-for-all with DM-narrated simultaneity.
 
 `character_update` payloads are routed only to the owning player's connection (plus the DM/server-side state). If other players should see the effect narratively (e.g. "Alice takes 4 damage"), that's a separate `log_entry` of `kind: "action"` broadcast to everyone, alongside the private `character_update`.
 
+NPCs/monsters have no private owner, so `npc_update` is broadcast outright — no separate `log_entry` needed for other players to see it. The DM's `update_character` tool call now takes an optional `target` field: omitted (or `"self"`) means the acting character's own private sheet as before; a name means an NPC — the first call for a given name creates its tracked sheet server-side (in `Session.npcs`, alongside `Session.characters`), and every later call with that name updates the same tracked NPC, so wounds/conditions persist turn to turn instead of only ever existing in that turn's prose.
+
 ## Implementation status
 
-- **Implemented**: `join_session`, `player_action`, `chat_message`, `dice_roll` (client-side commands `/chat <text>` and `/roll <NdM[+/-K]> [reason]` in the Textual client's input bar), `state_sync`, `log_entry`, `turn_prompt`, `system_message`, `dice_result`, `character_update` (pushed to the acting player whenever the DM's `update_character` tool call actually changes something — HP, inventory, or conditions).
+- **Implemented**: `join_session`, `player_action`, `chat_message`, `dice_roll` (client-side commands `/chat <text>` and `/roll <NdM[+/-K]> [reason]` in the Textual client's input bar), `state_sync`, `log_entry`, `turn_prompt`, `system_message`, `dice_result`, `character_update` (pushed to the acting player whenever the DM's `update_character` tool call actually changes something — HP, inventory, or conditions), `npc_update` (broadcast to everyone whenever `update_character` targets a named NPC and something actually changed, including the NPC's own introduction).
 - **Not yet implemented** (defined here, no server handler): `character_edit`, `reconnect` as a distinct event — today, reconnecting is just calling `join_session` again with the same `player_id`, which the engine already treats as resuming an existing character rather than creating a new one. A dedicated `reconnect` event may turn out to be unnecessary; revisit before building it.
 - `player_joined`/`player_left` are defined but not yet emitted by the engine.
 

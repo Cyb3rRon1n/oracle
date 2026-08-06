@@ -12,6 +12,11 @@ from .state import CharacterSheet, Session
 Broadcast = Callable[[Envelope], Awaitable[None]]
 SendTo = Callable[[str, Envelope], Awaitable[None]]
 
+# Mirrors _on_join_session's own hp=10, max_hp=10 fallback for a fresh
+# player character - the safety net for an NPC introduced without a
+# real max_hp from lookup_rule, not the intended path.
+DEFAULT_NPC_HP = 10
+
 
 class GameEngine:
     """Owns session state and enforces the strict turn queue (docs/protocol.md)."""
@@ -66,13 +71,47 @@ class GameEngine:
         await self._broadcast(self._log_envelope("action", f"{character.name}: {text}"))
 
         sheet_changed = False
+        npcs_touched: set[str] = set()
 
         def apply_update(update: dict) -> str:
             nonlocal sheet_changed
-            result = character.apply_update(update)
-            if not result.startswith("No changes applied"):
-                sheet_changed = True
-            return result
+
+            target = update.get("target") or "self"
+
+            if target == "self":
+                result = character.apply_update(update)
+                if not result.startswith("No changes applied"):
+                    sheet_changed = True
+                return result
+
+            npc = self._session.npcs.get(target)
+            introduced = npc is None
+
+            if introduced:
+                # Same default-HP fallback join_session already uses for a
+                # fresh player character - a safety net for when the DM
+                # forgets to pass a real max_hp from lookup_rule, not the
+                # intended path.
+                max_hp = update.get("max_hp") or DEFAULT_NPC_HP
+                npc = CharacterSheet(player_id=target, name=target, hp=max_hp, max_hp=max_hp)
+                self._session.npcs[target] = npc
+
+            delta_result = npc.apply_update(update)
+            changed = not delta_result.startswith("No changes applied")
+
+            # Introducing a new NPC is itself a real change worth
+            # broadcasting even if this same call's deltas were a no-op
+            # (e.g. just naming it with no damage yet) - matches the
+            # player-character path's own "only broadcast on a real
+            # change" rule otherwise.
+            if introduced or changed:
+                npcs_touched.add(target)
+
+            if introduced:
+                intro = f"Introduced {target} (HP {npc.hp}/{npc.max_hp})."
+                return f"{intro} {delta_result}" if changed else intro
+
+            return delta_result
 
         buffer = ""
         try:
@@ -96,6 +135,9 @@ class GameEngine:
 
         if sheet_changed:
             await self._send_to(player_id, self._character_update_envelope(player_id, character))
+
+        for name in npcs_touched:
+            await self._broadcast(self._npc_update_envelope(name, self._session.npcs[name]))
 
         self._session.advance_turn()
         self._save()
@@ -143,6 +185,7 @@ class GameEngine:
             sender_id="server",
             payload={
                 "characters": {pid: c.model_dump() for pid, c in self._session.characters.items()},
+                "npcs": {name: npc.model_dump() for name, npc in self._session.npcs.items()},
                 "world_state": self._session.world.model_dump(),
                 "turn_order": self._session.turn_order,
                 "current_turn": self._session.current_turn,
@@ -156,6 +199,17 @@ class GameEngine:
             session_id=self._session.session_id,
             sender_id="server",
             payload={"player_id": player_id, "sheet_delta": character.model_dump()},
+        )
+
+    def _npc_update_envelope(self, name: str, npc: CharacterSheet) -> Envelope:
+        # Broadcast, not routed privately like _character_update_envelope -
+        # an NPC's wounds/conditions are shared observable fiction, not a
+        # single player's own private sheet.
+        return Envelope(
+            type="npc_update",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload={"name": name, "sheet_delta": npc.model_dump()},
         )
 
     def _turn_prompt_envelope(self) -> Envelope:

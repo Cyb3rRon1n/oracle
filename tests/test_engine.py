@@ -38,6 +38,21 @@ class UpdateCharacterDM:
         yield "You feel the effects immediately."
 
 
+class UpdateSequenceDM:
+    """Calls apply_update once per dict in updates, in order, simulating
+    several update_character tool calls within a single DM turn (or, across
+    separate .handle() calls, across separate turns)."""
+
+    def __init__(self, updates: list[dict]):
+        self._updates = updates
+        self.tool_results: list[str] = []
+
+    async def narrate(self, history, character_summary, action_text, apply_update):
+        for update in self._updates:
+            self.tool_results.append(apply_update(update))
+        yield "Something happens."
+
+
 def make_engine(dm):
     session = Session(session_id="test-session")
     received: list[tuple] = []
@@ -169,6 +184,144 @@ async def test_update_character_no_op_does_not_push_character_update():
     ))
 
     assert not any(r[0] == "send_to" and r[2] == "character_update" for r in received)
+
+
+async def test_update_character_npc_target_creates_tracked_npc_with_given_max_hp():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin"},
+    ))
+
+    assert "goblin" in session.npcs
+    goblin = session.npcs["goblin"]
+    assert goblin.hp == 3  # 7 - 4
+    assert goblin.max_hp == 7
+    assert "Introduced goblin" in dm.tool_results[0]
+    assert "HP -4" in dm.tool_results[0]
+
+    # session.characters (the player's own sheet) must be untouched.
+    assert player_id in session.characters
+    assert "goblin" not in session.characters
+
+
+async def test_update_character_npc_target_defaults_max_hp_when_omitted():
+    dm = UpdateSequenceDM([{"target": "rat", "hp_delta": -2}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I stomp the rat"},
+    ))
+
+    rat = session.npcs["rat"]
+    assert rat.max_hp == 10  # DEFAULT_NPC_HP, same fallback join_session uses
+    assert rat.hp == 8
+
+
+async def test_npc_introduction_broadcasts_npc_update():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin"},
+    ))
+
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert updates, "introducing an NPC should broadcast npc_update"
+    assert updates[-1][2]["name"] == "goblin"
+    assert updates[-1][2]["sheet_delta"]["hp"] == 3
+    assert updates[-1][2]["sheet_delta"]["max_hp"] == 7
+
+
+async def test_npc_state_persists_and_accumulates_across_turns():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin"},
+    ))
+    assert session.npcs["goblin"].hp == 3
+
+    dm._updates = [{"target": "goblin", "hp_delta": -3}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin again"},
+    ))
+
+    assert len(session.npcs) == 1, "same-named NPC must be updated, not duplicated"
+    assert session.npcs["goblin"].hp == 0  # 3 - 3, clamped at 0 not negative
+    assert "Introduced" not in dm.tool_results[-1], "second call updates, doesn't re-introduce"
+
+
+async def test_npc_no_op_update_does_not_broadcast_again():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin"},
+    ))
+
+    dm._updates = [{"target": "goblin", "hp_delta": 0}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I glance at the goblin"},
+    ))
+
+    npc_updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert len(npc_updates) == 1, "a no-op update to an already-tracked NPC shouldn't rebroadcast"
+
+
+async def test_update_character_explicit_self_target_still_updates_own_sheet():
+    dm = UpdateCharacterDM({"target": "self", "hp_delta": -1})
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I stub my toe"},
+    ))
+
+    assert session.characters[player_id].hp == 9
+    assert session.npcs == {}
+
+
+async def test_state_sync_includes_npcs_for_a_later_joining_player():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin"},
+    ))
+
+    second_player_id = str(uuid.uuid4())
+    await join(engine, second_player_id, name="Rowan")
+
+    syncs = [
+        r for r in received
+        if r[0] == "send_to" and r[1] == second_player_id and r[2] == "state_sync"
+    ]
+    assert syncs, "the second player should get a state_sync on join"
+    assert syncs[-1][3]["npcs"]["goblin"]["hp"] == 3
 
 
 async def test_rejoin_uses_existing_character_name_not_new_input():

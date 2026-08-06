@@ -18,9 +18,12 @@ You have two tools available:
 - lookup_rule: use before improvising crunchy mechanics (monster stats, spell details,
   class features, equipment, conditions) so numbers stay consistent from turn to turn.
 - update_character: call this whenever your narration describes something that should
-  mechanically change the acting character — damage, healing, gaining or losing an item,
-  or applying/clearing a condition. Narration alone doesn't change the sheet; this tool
-  does. Call it after you've decided the outcome, in the same turn you narrate it.
+  mechanically change the acting character OR a named NPC/monster — damage, healing,
+  gaining or losing an item, or applying/clearing a condition. Narration alone doesn't
+  change a sheet; this tool does. Omit target (or use 'self') for the acting character;
+  pass an NPC's name as target to introduce or update its own tracked sheet, so its
+  wounds and conditions persist turn to turn instead of being forgotten. Call it after
+  you've decided the outcome, in the same turn you narrate it.
 
 For anything not covered by lookup_rule, invent original content in the spirit of the
 genre rather than claiming to search for real published material — you have no way to
