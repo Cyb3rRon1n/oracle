@@ -19,13 +19,21 @@ class CharacterSheetPanel(Static):
 
     def render_sheet(self, character: dict) -> None:
         self._character = character
-        self._render()
+        self._refresh_display()
 
     def render_world(self, world: dict) -> None:
         self._world = world
-        self._render()
+        self._refresh_display()
 
-    def _render(self) -> None:
+    def _refresh_display(self) -> None:
+        # Deliberately not named _render - Textual's own Widget._render() is
+        # a real internal method (returns a Visual for the content-height
+        # pipeline), and a same-named subclass method silently shadows it
+        # instead of erroring at definition time. That collision is exactly
+        # what crashed this app on startup against Textual 8.2.8's newer
+        # internals (pyproject.toml only pins textual>=0.58, no upper bound)
+        # - self._render() returning None broke get_content_height()'s
+        # visual.get_height() call.
         character = self._character
         lines = [
             f"[b]{character.get('name', '?')}[/b]",
