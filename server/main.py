@@ -5,6 +5,8 @@ import logging
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from .engine import Broadcast, GameEngine, SendTo
 from .narrator import create_narrator
 from .persistence import JSONFileSessionStore, SessionStoreUnwritable
@@ -13,6 +15,14 @@ from .transport import Transport
 
 
 def main() -> None:
+    # README's setup flow ("cp .env.example .env", then fill it in) only
+    # works if something actually reads .env - nothing did, so DM_BACKEND/
+    # ANTHROPIC_API_KEY/etc. silently fell back to os.environ's (unset)
+    # values every time, regardless of what .env said. load_dotenv() does
+    # NOT override real, already-exported env vars by default, so this is
+    # additive: .env fills gaps, a real `export` still wins.
+    load_dotenv()
+
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 

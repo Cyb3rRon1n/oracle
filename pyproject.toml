@@ -8,6 +8,7 @@ dependencies = [
     "websockets>=13.0",
     "anthropic>=0.34",
     "pydantic>=2.7",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

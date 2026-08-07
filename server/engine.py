@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Awaitable, Callable
 
@@ -9,6 +10,8 @@ from . import dice
 from .narrator import NarratorBackend
 from .persistence import SessionStore
 from .state import CharacterSheet, Session
+
+logger = logging.getLogger(__name__)
 
 Broadcast = Callable[[Envelope], Awaitable[None]]
 SendTo = Callable[[str, Envelope], Awaitable[None]]
@@ -109,6 +112,7 @@ class GameEngine:
                 check_for_missed_changes=False,
             )
         except Exception:
+            logger.exception("Opening scene narration failed for player_id=%s", character.player_id)
             await self._send_to(
                 character.player_id,
                 self._system_envelope("Couldn't generate an opening scene.", level="warning"),
@@ -132,6 +136,7 @@ class GameEngine:
         try:
             buffer = await self._narrate_and_apply(character, text)
         except Exception as exc:
+            logger.exception("Turn narration failed for player_id=%s", player_id)
             await self._send_to(
                 player_id, self._system_envelope(f"The DM couldn't respond: {exc}", level="error")
             )
