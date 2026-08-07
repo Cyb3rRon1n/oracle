@@ -1,8 +1,12 @@
 # Oracle
 
 [![CI](https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
 An AI Dungeon Master that runs a real-time tabletop RPG session over a terminal UI — an LLM sitting in the GM seat, adjudicating rules, narrating the world, and managing campaign state.
+
+A solo engineering project built around one central, unglamorous question: when you hand an LLM a real tool to change game state, how often does it actually use it, and why not? The [README status](#status) and [ROADMAP.md](ROADMAP.md) log that investigation — including a live, reproducible tool-call reliability harness, real percentages across two local models, a candidate fix that was tried and reverted after it didn't hold up under real-engine testing, and a genuine correctness bug the harness itself surfaced — rather than smoothing it into a simple "it works" claim.
 
 ## Concept
 
@@ -161,7 +165,11 @@ See [ROADMAP.md](ROADMAP.md) item 6 for why this exists and what it's found so f
 
 ## Status
 
+**TL;DR**: the game engine, persistence, and both narrator backends work end-to-end and are covered by CI; the open question is tool-call reliability on small local models, actively being measured rather than assumed — see below and [ROADMAP.md](ROADMAP.md) for the full log.
+
 Working single-player game, verified live end-to-end across multiple real turns. Join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, full-restart persistence, and streamed narration with real `update_character` tool calls have all been observed working against live local models via Ollama. Two models were compared head to head early on: `llama3.1:8b` made a real tool call on turn 1 but lapsed into narrating a fake tool call as plain text on turn 2 (breaking character in the process); `qwen2.5:7b`, tried afterward, looked cleaner in that first short session (3 clean turns) and became the default local model on that basis. **A much bigger live sample since then found that impression didn't hold up**: `update_character` can now also target a named NPC/monster instead of only the acting character, so a wounded goblin's HP persists turn to turn instead of only existing in that turn's prose — the *mechanism* works (verified end-to-end), but across 13 total live turns spanning three sessions, only 2 of the clearly-warranted tool calls actually happened, including an 8-turn run with real, unambiguous, eventually-lethal combat that produced *zero* calls. Logged in full in [ROADMAP.md](ROADMAP.md) rather than smoothed over — this is a real, unresolved reliability question about the current default local model, not a rigorous benchmark either way yet. A follow-up investigation ruled out streaming as the cause (confirmed empirically against this project's real installed `ollama` version — the same drop happens with `stream=False` too) and confirmed accumulated conversation history as the real driver; a candidate prompt-level fix for a related mistargeting bug looked promising in isolated testing but, tested for real against the identical 8-turn scenario through the actual engine, didn't improve the real success rate and introduced a new visible defect (leaked pseudo-tool-call text in the narration) — so it was reverted rather than shipped. Root cause is narrowed, not solved. The hosted Claude backend shares the exact same engine/tool-loop code path and is structurally verified against mocked responses, but hasn't been run live yet — pending Anthropic account credits. Multiplayer, image generation, and TTS are deliberately not built yet.
+
+That investigation is now backed by a reusable, version-controlled harness (`scripts/live_reliability_check.py`) instead of one-off scratchpad scripts. Re-running it against `llama3.1:8b` found the same-size-class "bigger model" didn't help (14% vs. `qwen2.5:7b`'s 29% on the identical scenario) and surfaced a genuine, independent correctness bug along the way — the model sometimes echoed its own `player_id` back as `target` instead of `"self"`, which the engine misrouted into creating a phantom NPC sheet. That's now fixed and regression-tested. Full numbers and detail in [ROADMAP.md](ROADMAP.md) item 6.
 
 See [ROADMAP.md](ROADMAP.md) for what's next and why, in priority order.
 
