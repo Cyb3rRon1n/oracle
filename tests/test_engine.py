@@ -13,14 +13,14 @@ class StubDM:
     def __init__(self):
         self.calls: list[list[dict]] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
         self.calls.append(list(history))  # snapshot — engine mutates session.history in place after this call
         for word in ["You ", "swing ", "your ", "sword."]:
             yield word
 
 
 class FailingDM:
-    async def narrate(self, history, character_summary, action_text, apply_update):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
         raise RuntimeError("boom")
         yield  # pragma: no cover - makes this an async generator
 
@@ -33,7 +33,7 @@ class UpdateCharacterDM:
         self._update = update
         self.tool_result: str | None = None
 
-    async def narrate(self, history, character_summary, action_text, apply_update):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
         self.tool_result = apply_update(self._update)
         yield "You feel the effects immediately."
 
@@ -47,10 +47,23 @@ class UpdateSequenceDM:
         self._updates = updates
         self.tool_results: list[str] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
         for update in self._updates:
             self.tool_results.append(apply_update(update))
         yield "Something happens."
+
+
+class RequestRollDM:
+    """Calls request_roll with the given tool input, simulating the DM
+    invoking request_roll mid-turn, then narrates."""
+
+    def __init__(self, roll_input: dict):
+        self._roll_input = roll_input
+        self.tool_result: str | None = None
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
+        self.tool_result = request_roll(self._roll_input)
+        yield "You attempt it."
 
 
 def make_engine(dm):
@@ -418,6 +431,76 @@ async def test_invalid_dice_notation_warns_sender_only():
     warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
     assert warnings
     assert not any(r[0] == "broadcast" and r[1] == "dice_result" for r in received)
+
+
+async def test_dm_requested_roll_with_dc_broadcasts_success_verdict():
+    dm = RequestRollDM({"dice": "1d20+2", "dc": 12, "reason": "attack roll"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results, "a DM-requested roll should broadcast a dice_result"
+    payload = results[-1][2]
+    assert payload["roller_id"] == player_id
+    assert payload["dc"] == 12
+    assert payload["success"] in (True, False)
+    assert payload["success"] == (payload["result"] >= 12)
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert dice_logs, "a DM-requested roll should also produce a visible log line"
+    assert "vs DC 12" in dice_logs[-1][2]["text"]
+    assert ("success" in dice_logs[-1][2]["text"]) or ("failure" in dice_logs[-1][2]["text"])
+
+    assert dm.tool_result is not None and "DC 12" in dm.tool_result
+
+
+async def test_dm_requested_roll_without_dc_has_no_success_verdict():
+    dm = RequestRollDM({"dice": "2d6", "reason": "damage roll"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I roll damage"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert "dc" not in payload
+    assert "success" not in payload
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "vs DC" not in dice_logs[-1][2]["text"]
+
+
+async def test_dm_requested_roll_with_invalid_notation_reports_error_without_crashing_turn():
+    dm = RequestRollDM({"dice": "not-dice"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try something"},
+    ))
+
+    assert dm.tool_result is not None and "Invalid dice notation" in dm.tool_result
+    assert not any(r[0] == "broadcast" and r[1] == "dice_result" for r in received)
+    narration_chunks = [r for r in received if r[0] == "broadcast" and r[2].get("kind") == "narration"]
+    assert narration_chunks, "the turn should still narrate and complete normally"
 
 
 async def test_narrator_failure_notifies_player_and_keeps_their_turn():

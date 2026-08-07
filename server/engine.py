@@ -72,6 +72,26 @@ class GameEngine:
 
         sheet_changed = False
         npcs_touched: set[str] = set()
+        rolls_made: list[dict] = []
+
+        def request_roll(update: dict) -> str:
+            notation = update.get("dice", "1d20")
+            dc = update.get("dc")
+            reason = update.get("reason", "")
+
+            try:
+                total, rolls = dice.roll(notation)
+            except dice.InvalidDiceNotation as exc:
+                return f"Invalid dice notation: {exc}"
+
+            success = None if dc is None else total >= dc
+            rolls_made.append(
+                {"dice": notation, "total": total, "rolls": rolls, "dc": dc, "success": success, "reason": reason}
+            )
+
+            if dc is None:
+                return f"Rolled {notation}: {total} {rolls}."
+            return f"Rolled {notation}: {total} {rolls} vs DC {dc} — {'success' if success else 'failure'}."
 
         def apply_update(update: dict) -> str:
             nonlocal sheet_changed
@@ -125,6 +145,7 @@ class GameEngine:
                 character_summary=character.model_dump_json(),
                 action_text=text,
                 apply_update=apply_update,
+                request_roll=request_roll,
             ):
                 buffer += chunk
                 await self._broadcast(self._log_envelope("narration", chunk, done=False))
@@ -137,6 +158,10 @@ class GameEngine:
 
         self._session.log.append({"kind": "narration", "text": buffer})
         self._session.append_turn(text, buffer)
+
+        for roll in rolls_made:
+            await self._broadcast(self._log_envelope("dice", self._dice_log_text(character.name, roll)))
+            await self._broadcast(self._dice_result_envelope(player_id, roll))
 
         if sheet_changed:
             await self._send_to(player_id, self._character_update_envelope(player_id, character))
@@ -164,23 +189,33 @@ class GameEngine:
             await self._send_to(player_id, self._system_envelope(str(exc), level="warning"))
             return
 
-        label = f" ({reason})" if reason else ""
-        await self._broadcast(
-            self._log_envelope("dice", f"{name} rolls {notation}{label}: {total} {rolls}")
-        )
-        await self._broadcast(
-            Envelope(
-                type="dice_result",
-                session_id=self._session.session_id,
-                sender_id="server",
-                payload={
-                    "roller_id": player_id,
-                    "dice": notation,
-                    "result": total,
-                    "rolls": rolls,
-                    "purpose": reason,
-                },
-            )
+        roll = {"dice": notation, "total": total, "rolls": rolls, "dc": None, "success": None, "reason": reason}
+        await self._broadcast(self._log_envelope("dice", self._dice_log_text(name, roll)))
+        await self._broadcast(self._dice_result_envelope(player_id, roll))
+
+    @staticmethod
+    def _dice_log_text(name: str, roll: dict) -> str:
+        label = f" ({roll['reason']})" if roll["reason"] else ""
+        text = f"{name} rolls {roll['dice']}{label}: {roll['total']} {roll['rolls']}"
+        if roll["dc"] is not None:
+            text += f" vs DC {roll['dc']}"
+        if roll["success"] is not None:
+            text += " — success" if roll["success"] else " — failure"
+        return text
+
+    def _dice_result_envelope(self, roller_id: str, roll: dict) -> Envelope:
+        payload = {
+            "roller_id": roller_id,
+            "dice": roll["dice"],
+            "result": roll["total"],
+            "rolls": roll["rolls"],
+            "purpose": roll["reason"],
+        }
+        if roll["dc"] is not None:
+            payload["dc"] = roll["dc"]
+            payload["success"] = roll["success"]
+        return Envelope(
+            type="dice_result", session_id=self._session.session_id, sender_id="server", payload=payload
         )
 
     def _state_sync_envelope(self) -> Envelope:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from server.narrator_ollama import OllamaNarrator
+from server.narrator_ollama import OLLAMA_TOOLS, OllamaNarrator
 from server.rules import RulesIndex
 
 
@@ -159,3 +159,32 @@ async def test_narrate_stops_after_max_tool_rounds_without_hanging():
 
     assert chunks == []
     assert len(narrator._client.calls) == 4
+
+
+def test_request_roll_is_not_exposed_to_ollama_models():
+    # Deliberate scoping (ROADMAP.md item 6): this session's investigation
+    # found qwen2.5:7b/llama3.1:8b already miss the one existing tool on most
+    # clearly-warranted turns, so request_roll is Anthropic-only for now
+    # rather than adding a second required call on top of that.
+    tool_names = {tool["function"]["name"] for tool in OLLAMA_TOOLS}
+    assert tool_names == {"lookup_rule", "update_character"}
+    assert "request_roll" not in tool_names
+
+
+async def test_narrate_accepts_but_ignores_request_roll_callback():
+    narrator = make_narrator()
+    narrator._client = FakeOllamaClient(
+        [[FakeChunk(content="You wait.", done=True)]]
+    )
+
+    def unexpected_request_roll(update: dict) -> str:
+        raise AssertionError("request_roll should never be invoked by OllamaNarrator yet")
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I wait", noop_apply_update, request_roll=unexpected_request_roll
+        )
+    ]
+
+    assert "".join(chunks) == "You wait."

@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 import ollama
 
-from .narrator import LOOKUP_RULE_TOOL, UPDATE_CHARACTER_TOOL, ApplyUpdate
+from .narrator import LOOKUP_RULE_TOOL, UPDATE_CHARACTER_TOOL, ApplyUpdate, RequestRoll
 from .rules import RulesIndex
 
 OLLAMA_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
@@ -67,7 +67,16 @@ class OllamaNarrator:
         character_summary: str,
         action_text: str,
         apply_update: ApplyUpdate,
+        request_roll: RequestRoll | None = None,
     ) -> AsyncIterator[str]:
+        # request_roll is accepted for NarratorBackend interface parity but
+        # deliberately unused: request_roll isn't in OLLAMA_TOOLS, so local
+        # models can't call it yet. See ROADMAP.md item 6 - this session's
+        # investigation found small local models already miss the one
+        # existing tool on most clearly-warranted turns; adding a second
+        # required tool call before narration would only compound that.
+        # Scoped to AnthropicNarrator first; local support is a deliberate
+        # follow-up, not an oversight.
         prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
         messages: list[dict] = [
             {"role": "system", "content": OLLAMA_SYSTEM_PROMPT},

@@ -13,7 +13,7 @@ from shared.protocol import Envelope
 
 
 class StubDM:
-    async def narrate(self, history, character_summary, action_text, apply_update):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
         yield "ok."
 
 

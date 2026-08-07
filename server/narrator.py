@@ -14,7 +14,12 @@ of the player's actions, introduce complications, and always end by implicitly o
 explicitly inviting the player's next action, in open-ended prose — never as a
 numbered or bulleted list of options to choose from. Never break character.
 
-You have three tools available:
+You have four tools available:
+- request_roll: call this BEFORE narrating the outcome of an action whose success is
+  genuinely uncertain — an attack, a skill check, a saving throw. Don't call it for
+  actions with an obvious, certain outcome. It returns the roll, and a success/failure
+  verdict if you gave it a dc. Narrate the outcome to match what it returns — don't
+  decide success or failure yourself and then narrate a roll that would contradict it.
 - lookup_rule: use before improvising crunchy mechanics (monster stats, spell details,
   class features, equipment, conditions) so numbers stay consistent from turn to turn.
 - update_character: call this whenever your narration describes something that should
@@ -23,7 +28,8 @@ You have three tools available:
   change a sheet; this tool does. Omit target (or use 'self') for the acting character;
   pass an NPC's name as target to introduce or update its own tracked sheet, so its
   wounds and conditions persist turn to turn instead of being forgotten. Call it after
-  you've decided the outcome, in the same turn you narrate it.
+  you've decided the outcome (including after a request_roll result, if one was needed),
+  in the same turn you narrate it.
 - web_search: use sparingly, only for general inspiration or real-world reference (e.g.
   period-appropriate detail for a setting) — never to look up or reproduce copyrighted
   D&D sourcebook content verbatim. For anything not covered by lookup_rule, invent
@@ -112,9 +118,43 @@ UPDATE_CHARACTER_TOOL = {
 
 WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search"}
 
+REQUEST_ROLL_TOOL = {
+    "name": "request_roll",
+    "description": (
+        "Roll dice to resolve an action whose outcome is genuinely uncertain - an "
+        "attack, a skill check, a saving throw, or similar. Call this before narrating "
+        "the outcome, then narrate the result to match what's returned: a success/"
+        "failure verdict if dc was given, or just the rolled total otherwise (e.g. for "
+        "a damage roll with no pass/fail threshold). Don't call this for actions with "
+        "an obvious, certain outcome - only when success is genuinely in doubt."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "dice": {
+                "type": "string",
+                "description": "Dice notation, e.g. '1d20+3' for an attack or ability check.",
+            },
+            "dc": {
+                "type": "integer",
+                "description": (
+                    "The difficulty class the roll must meet or beat to succeed. Omit "
+                    "for a roll with no pass/fail threshold, e.g. a damage roll."
+                ),
+            },
+            "reason": {
+                "type": "string",
+                "description": "Brief description of what's being attempted, e.g. 'attack roll vs the goblin'.",
+            },
+        },
+        "required": ["dice"],
+    },
+}
+
 MAX_TOOL_ROUNDS = 4
 
 ApplyUpdate = Callable[[dict], str]
+RequestRoll = Callable[[dict], str]
 
 
 class NarratorBackend(Protocol):
@@ -124,6 +164,7 @@ class NarratorBackend(Protocol):
         character_summary: str,
         action_text: str,
         apply_update: ApplyUpdate,
+        request_roll: RequestRoll,
     ) -> AsyncIterator[str]:
         """Stream narration text in response to a player's action.
 
@@ -136,6 +177,11 @@ class NarratorBackend(Protocol):
         change a sheet — the acting character's own, or a named NPC's
         (via the input's `target` field); it returns a description of
         what changed, which becomes that tool call's result.
+
+        `request_roll` is called with the request_roll tool's input whenever
+        the DM needs to resolve a genuinely uncertain action; it returns the
+        roll result (and success/failure verdict, if a dc was given) as that
+        tool call's result, for the DM to narrate against.
         """
 
 
@@ -156,6 +202,7 @@ class AnthropicNarrator:
         character_summary: str,
         action_text: str,
         apply_update: ApplyUpdate,
+        request_roll: RequestRoll | None = None,
     ) -> AsyncIterator[str]:
         prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
         messages: list[dict] = [*history, {"role": "user", "content": prompt}]
@@ -165,7 +212,7 @@ class AnthropicNarrator:
                 model=self._model,
                 max_tokens=1024,
                 system=DM_SYSTEM_PROMPT,
-                tools=[LOOKUP_RULE_TOOL, UPDATE_CHARACTER_TOOL, WEB_SEARCH_TOOL],
+                tools=[REQUEST_ROLL_TOOL, LOOKUP_RULE_TOOL, UPDATE_CHARACTER_TOOL, WEB_SEARCH_TOOL],
                 messages=messages,
             ) as stream:
                 async for chunk in stream.text_stream:
@@ -180,20 +227,24 @@ class AnthropicNarrator:
                 {
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": self._run_tool(block, apply_update),
+                    "content": self._run_tool(block, apply_update, request_roll),
                 }
                 for block in response.content
-                if block.type == "tool_use" and block.name in ("lookup_rule", "update_character")
+                if block.type == "tool_use" and block.name in ("lookup_rule", "update_character", "request_roll")
             ]
             if not tool_results:
                 return
             messages.append({"role": "user", "content": tool_results})
 
-    def _run_tool(self, block, apply_update: ApplyUpdate) -> str:
+    def _run_tool(self, block, apply_update: ApplyUpdate, request_roll: RequestRoll | None) -> str:
         if block.name == "lookup_rule":
             return self._rules.lookup(
                 block.input.get("category", ""), block.input.get("name", "")
             )
+        if block.name == "request_roll":
+            if request_roll is None:
+                return "Rolling isn't available right now."
+            return request_roll(block.input)
         return apply_update(block.input)
 
 

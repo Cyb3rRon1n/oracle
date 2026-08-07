@@ -163,6 +163,51 @@ async def test_narrate_routes_update_character_tool_to_callback():
     assert tool_result_content == "Applied: HP -4 (now 6/10)."
 
 
+async def test_narrate_routes_request_roll_tool_to_callback():
+    narrator = make_narrator()
+    tool_call = FakeToolUseBlock(
+        id="tu_3", name="request_roll", input={"dice": "1d20+2", "dc": 12, "reason": "attack"}
+    )
+    first = FakeMessage(stop_reason="tool_use", content=[tool_call])
+    second = FakeMessage(stop_reason="end_turn", content=[])
+    narrator._client = FakeClient(
+        [
+            (["You swing."], first),
+            ([" It connects!"], second),
+        ]
+    )
+
+    received_rolls = []
+
+    def request_roll(update: dict) -> str:
+        received_rolls.append(update)
+        return "Rolled 1d20+2: 15 [13] vs DC 12 — success."
+
+    chunks = [
+        c async for c in narrator.narrate([], "{}", "I attack", noop_apply_update, request_roll)
+    ]
+
+    assert "".join(chunks) == "You swing. It connects!"
+    assert received_rolls == [{"dice": "1d20+2", "dc": 12, "reason": "attack"}]
+
+    second_call_messages = narrator._client.messages.calls[1]["messages"]
+    tool_result_content = second_call_messages[-1]["content"][0]["content"]
+    assert tool_result_content == "Rolled 1d20+2: 15 [13] vs DC 12 — success."
+
+
+async def test_narrate_without_request_roll_callback_still_completes():
+    # Existing callers (including every other test in this file) don't pass
+    # request_roll - the default must not break narration for models/tests
+    # that never call the tool.
+    narrator = make_narrator()
+    final = FakeMessage(stop_reason="end_turn", content=[])
+    narrator._client = FakeClient([(["Fine."], final)])
+
+    chunks = [c async for c in narrator.narrate([], "{}", "I wait", noop_apply_update)]
+
+    assert "".join(chunks) == "Fine."
+
+
 async def test_narrate_stops_after_max_tool_rounds_without_hanging():
     narrator = make_narrator()
     tool_call = FakeToolUseBlock(
