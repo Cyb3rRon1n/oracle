@@ -148,6 +148,17 @@ pytest -v
 
 CI (`.github/workflows/ci.yml`) runs the same suite on every push/PR.
 
+### Live tool-call reliability check
+
+`scripts/live_reliability_check.py` runs a fixed 8-turn combat scenario through the real engine against a real, live narrator backend — not mocked — and reports whether `update_character` fired when it should have, whether it targeted the right sheet, and whether the model leaked pseudo-tool-call text into narration instead of actually invoking the tool:
+
+```bash
+python -m scripts.live_reliability_check --backend ollama --model qwen2.5:7b
+python -m scripts.live_reliability_check --backend anthropic --out results.json
+```
+
+See [ROADMAP.md](ROADMAP.md) item 6 for why this exists and what it's found so far.
+
 ## Status
 
 Working single-player game, verified live end-to-end across multiple real turns. Join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, full-restart persistence, and streamed narration with real `update_character` tool calls have all been observed working against live local models via Ollama. Two models were compared head to head early on: `llama3.1:8b` made a real tool call on turn 1 but lapsed into narrating a fake tool call as plain text on turn 2 (breaking character in the process); `qwen2.5:7b`, tried afterward, looked cleaner in that first short session (3 clean turns) and became the default local model on that basis. **A much bigger live sample since then found that impression didn't hold up**: `update_character` can now also target a named NPC/monster instead of only the acting character, so a wounded goblin's HP persists turn to turn instead of only existing in that turn's prose — the *mechanism* works (verified end-to-end), but across 13 total live turns spanning three sessions, only 2 of the clearly-warranted tool calls actually happened, including an 8-turn run with real, unambiguous, eventually-lethal combat that produced *zero* calls. Logged in full in [ROADMAP.md](ROADMAP.md) rather than smoothed over — this is a real, unresolved reliability question about the current default local model, not a rigorous benchmark either way yet. A follow-up investigation ruled out streaming as the cause (confirmed empirically against this project's real installed `ollama` version — the same drop happens with `stream=False` too) and confirmed accumulated conversation history as the real driver; a candidate prompt-level fix for a related mistargeting bug looked promising in isolated testing but, tested for real against the identical 8-turn scenario through the actual engine, didn't improve the real success rate and introduced a new visible defect (leaked pseudo-tool-call text in the narration) — so it was reverted rather than shipped. Root cause is narrowed, not solved. The hosted Claude backend shares the exact same engine/tool-loop code path and is structurally verified against mocked responses, but hasn't been run live yet — pending Anthropic account credits. Multiplayer, image generation, and TTS are deliberately not built yet.
