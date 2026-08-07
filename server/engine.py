@@ -35,7 +35,16 @@ DEFAULT_NPC_HP = 10
 # signal for the player to weigh, not a verdict.
 POSSIBLE_UNTRACKED_CHANGE_PATTERN = re.compile(
     r"\b(damage|wound(?:s|ed|ing)?|bleed(?:s|ing)?|dies?|dead|death|slain|"
-    r"kills?|killed|unconscious|collapses?|hp|health)\b",
+    r"kills?|killed|unconscious|collapses?|hp|health|"
+    # Condition language was the stated intent above ("damage/death/
+    # condition") but never actually made it into the pattern - a real
+    # gap, not a hypothetical one: live-reproduced 2026-08-07 (see
+    # ROADMAP.md), a combat turn narrated a leaked `add_condition:
+    # "frozen"` pseudo-tool-call ("chilling your skin", "numbing cold")
+    # with no real tool call, and this heuristic stayed silent on it.
+    r"condition|poison(?:ed|ing)?|stun(?:s|ned|ning)?|paraly(?:zed|zing|sis)|"
+    r"frozen|freez(?:e|es|ing)|chill(?:s|ed|ing)?|numb(?:s|ed|ing)?|"
+    r"blind(?:ed|ing)?|burn(?:s|ed|ing)?|prone|restrained)\b",
     re.IGNORECASE,
 )
 

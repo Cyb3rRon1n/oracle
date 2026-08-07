@@ -704,6 +704,32 @@ async def test_missed_change_heuristic_silent_when_a_real_tool_call_fired():
     )
 
 
+async def test_missed_change_heuristic_warns_on_condition_language_with_no_tool_call():
+    # Reconstructs a real failure live-reproduced 2026-08-07 (see
+    # ROADMAP.md's GPU-migration entry): a combat turn narrated a leaked
+    # `add_condition: "frozen"` pseudo-tool-call as plain text ("chilling
+    # your skin", "numbing cold spreading") with zero real update_character
+    # call - and this heuristic stayed silent, since its pattern's stated
+    # intent ("damage/death/condition") had no actual condition keywords in
+    # it. Guards against that regression now that they've been added.
+    dm = NarratesFixedTextDM(
+        "The shadow's icy breath washes over you, chilling your skin. You feel a numbing "
+        "cold spreading through you, and your limbs grow stiff as if frozen in place."
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the shadowy figure"},
+    ))
+
+    assert _missed_change_warnings(received, player_id), (
+        "narration describing a condition change with no tool call should warn the player their sheet may be stale"
+    )
+
+
 async def test_missed_change_heuristic_silent_when_narration_has_no_trigger_language():
     # A plain narrated miss/no-op shouldn't trip the heuristic just because
     # no tool call happened - most turns correctly involve no mechanical change.
