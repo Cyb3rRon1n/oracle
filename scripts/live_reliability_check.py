@@ -21,6 +21,7 @@ replay of that session.
 Usage:
     python -m scripts.live_reliability_check --backend ollama --model qwen2.5:7b
     python -m scripts.live_reliability_check --backend anthropic --out results.json
+    python -m scripts.live_reliability_check --model qwen3:8b --repeat 3  # aggregate over 3 runs
 """
 
 from __future__ import annotations
@@ -244,6 +245,87 @@ def write_json(
     print(f"wrote {out_path}")
 
 
+def run_stats(results: list[TurnResult]) -> dict:
+    """Single-run stats reused by both the per-run summary line in repeat
+    mode and the aggregate across all repeats."""
+    scored = [r for r in results if r.correct is not None]
+    passed = [r for r in scored if r.correct]
+    return {
+        "scored": len(scored),
+        "correct": len(passed),
+        "rate": (len(passed) / len(scored)) if scored else None,
+        "real_calls": sum(1 for r in results if r.called),
+        "leaked": sum(1 for r in results if r.leaked_text),
+        "total_turns": len(results),
+    }
+
+
+def aggregate_stats(all_results: list[list[TurnResult]]) -> dict:
+    """Combines run_stats() across repeated runs of the identical scenario -
+    see ROADMAP.md item 6's qwen3:8b entries for why this matters: a single
+    run's result can look like a real signal and just be favorable sampling,
+    something only visible once you have more than one run to compare."""
+    per_run = [run_stats(results) for results in all_results]
+    rates = [s["rate"] for s in per_run if s["rate"] is not None]
+    total_scored = sum(s["scored"] for s in per_run)
+    total_correct = sum(s["correct"] for s in per_run)
+    return {
+        "per_run": per_run,
+        "mean_rate": (sum(rates) / len(rates)) if rates else None,
+        "pooled_rate": (total_correct / total_scored) if total_scored else None,
+        "total_scored": total_scored,
+        "total_correct": total_correct,
+    }
+
+
+def print_repeat_report(
+    all_results: list[list[TurnResult]], model_label: str, backend: str, max_history_messages: int | None
+) -> None:
+    history_label = "default" if max_history_messages is None else f"{max_history_messages} messages"
+    print(
+        f"\n=== Live reliability check: {backend}/{model_label} "
+        f"(max_history={history_label}, {len(all_results)} repeats) ===\n"
+    )
+
+    agg = aggregate_stats(all_results)
+    for i, (results, stats) in enumerate(zip(all_results, agg["per_run"]), start=1):
+        rate_label = f"{100 * stats['rate']:.0f}%" if stats["rate"] is not None else "n/a"
+        print(
+            f"run {i}/{len(all_results)}: {stats['correct']}/{stats['scored']} correct ({rate_label}), "
+            f"{stats['real_calls']}/{stats['total_turns']} real tool calls, "
+            f"{stats['leaked']}/{stats['total_turns']} leaked"
+        )
+
+    print("\n--- aggregate ---")
+    if agg["mean_rate"] is not None:
+        print(f"mean of per-run rates: {100 * agg['mean_rate']:.0f}%")
+        print(f"pooled: {agg['total_correct']}/{agg['total_scored']} ({100 * agg['pooled_rate']:.0f}%)")
+        rates = [s["rate"] for s in agg["per_run"] if s["rate"] is not None]
+        print(f"per-run spread: {', '.join(f'{100 * r:.0f}%' for r in rates)}")
+    else:
+        print("correct: n/a (no scored turns in any run)")
+
+
+def write_json_repeat(
+    all_results: list[list[TurnResult]],
+    model_label: str,
+    backend: str,
+    max_history_messages: int | None,
+    out_path: Path,
+) -> None:
+    report = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "backend": backend,
+        "model": model_label,
+        "max_history_messages": max_history_messages,
+        "repeat": len(all_results),
+        "aggregate": aggregate_stats(all_results),
+        "runs": [[asdict(r) for r in results] for results in all_results],
+    }
+    out_path.write_text(json.dumps(report, indent=2))
+    print(f"wrote {out_path}")
+
+
 async def main_async(args: argparse.Namespace) -> None:
     if args.backend == "ollama":
         from server.narrator_ollama import OllamaNarrator
@@ -257,11 +339,21 @@ async def main_async(args: argparse.Namespace) -> None:
         model_label = args.model or "claude-sonnet-5"
         narrator = AnthropicNarrator(model=model_label)
 
-    results = await run_scenario(narrator, max_history_messages=args.max_history_messages)
-    print_report(results, model_label, args.backend, args.max_history_messages)
+    if args.repeat == 1:
+        results = await run_scenario(narrator, max_history_messages=args.max_history_messages)
+        print_report(results, model_label, args.backend, args.max_history_messages)
+        if args.out:
+            write_json(results, model_label, args.backend, args.max_history_messages, Path(args.out))
+        return
 
+    all_results = []
+    for i in range(args.repeat):
+        print(f"running {i + 1}/{args.repeat}...", flush=True)
+        all_results.append(await run_scenario(narrator, max_history_messages=args.max_history_messages))
+
+    print_repeat_report(all_results, model_label, args.backend, args.max_history_messages)
     if args.out:
-        write_json(results, model_label, args.backend, args.max_history_messages, Path(args.out))
+        write_json_repeat(all_results, model_label, args.backend, args.max_history_messages, Path(args.out))
 
 
 def main() -> None:
@@ -278,6 +370,18 @@ def main() -> None:
             "Override Session.max_history_messages (default: the production default, 12 - "
             "6 turns). 2 messages = 1 turn of memory. Use 0 for no history at all. For "
             "quantifying the history-window tradeoff - see ROADMAP.md item 6."
+        ),
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help=(
+            "Run the scenario this many times against the same model and report an "
+            "aggregate (mean/pooled rate, per-run spread) instead of one sample. A single "
+            "run can look like a real signal and just be favorable sampling - see the "
+            "qwen3:8b entries in ROADMAP.md item 6 for a real example. Each repeat costs "
+            "as much time as one run, so this is expensive on CPU-only inference."
         ),
     )
     args = parser.parse_args()

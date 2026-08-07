@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from scripts.live_reliability_check import SCENARIO, run_scenario, write_json
+from scripts.live_reliability_check import (
+    SCENARIO,
+    aggregate_stats,
+    run_scenario,
+    run_stats,
+    write_json,
+    write_json_repeat,
+)
 
 
 class ScriptedNarrator:
@@ -130,3 +137,66 @@ async def test_run_scenario_passes_through_custom_max_history_messages():
     results = await run_scenario(narrator, max_history_messages=4)
 
     assert len(results) == len(SCENARIO)
+
+
+async def test_run_stats_on_all_correct_scenario():
+    narrator = ScriptedNarrator(_all_correct_behaviors())
+    results = await run_scenario(narrator)
+
+    stats = run_stats(results)
+
+    scored_turns = [t for t in SCENARIO if t["expected"] != "ambiguous"]
+    assert stats["scored"] == len(scored_turns)
+    assert stats["correct"] == len(scored_turns)
+    assert stats["rate"] == 1.0
+    assert stats["total_turns"] == len(SCENARIO)
+    assert stats["leaked"] == 0
+
+
+async def test_aggregate_stats_across_mixed_runs():
+    # One perfect run, one run that misses every "call" turn - a fresh
+    # ScriptedNarrator per run, since a single instance's behavior list is
+    # only long enough for one pass through the 8-turn scenario.
+    perfect = await run_scenario(ScriptedNarrator(_all_correct_behaviors()))
+    all_missed = await run_scenario(
+        ScriptedNarrator([{"updates": [], "text_chunks": ["Nothing happens."]} for _ in SCENARIO])
+    )
+
+    agg = aggregate_stats([perfect, all_missed])
+
+    assert len(agg["per_run"]) == 2
+    assert agg["per_run"][0]["rate"] == 1.0
+    assert agg["per_run"][1]["rate"] is not None and agg["per_run"][1]["rate"] < 1.0
+    # mean of per-run rates vs. pooled rate differ in general - both should
+    # land strictly between the two runs' own rates for this mixed case.
+    assert 0.0 < agg["mean_rate"] < 1.0
+    assert 0.0 < agg["pooled_rate"] < 1.0
+    assert agg["total_scored"] == agg["per_run"][0]["scored"] + agg["per_run"][1]["scored"]
+
+
+def test_aggregate_stats_with_no_runs_reports_none():
+    # Degenerate case: no runs at all shouldn't raise a divide-by-zero -
+    # mean_rate/pooled_rate should just report None.
+    agg = aggregate_stats([])
+
+    assert agg["mean_rate"] is None
+    assert agg["pooled_rate"] is None
+    assert agg["total_scored"] == 0
+
+
+async def test_write_json_repeat_round_trips(tmp_path):
+    narrator1 = ScriptedNarrator(_all_correct_behaviors())
+    narrator2 = ScriptedNarrator(_all_correct_behaviors())
+    results1 = await run_scenario(narrator1)
+    results2 = await run_scenario(narrator2)
+
+    out_path = tmp_path / "repeat_report.json"
+    write_json_repeat([results1, results2], "qwen3:8b", "ollama", None, out_path)
+
+    import json
+
+    report = json.loads(out_path.read_text())
+    assert report["repeat"] == 2
+    assert len(report["runs"]) == 2
+    assert len(report["runs"][0]) == len(SCENARIO)
+    assert report["aggregate"]["mean_rate"] == 1.0
