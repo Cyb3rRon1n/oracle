@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 
 from shared.protocol import Envelope
@@ -16,6 +17,24 @@ SendTo = Callable[[str, Envelope], Awaitable[None]]
 # player character - the safety net for an NPC introduced without a
 # real max_hp from lookup_rule, not the intended path.
 DEFAULT_NPC_HP = 10
+
+# A visible mitigation, not a fix (ROADMAP.md's tool-call reliability
+# investigation, item 6's remaining-candidates list) - the live qwen2.5:7b/
+# llama3.1:8b runs documented there repeatedly narrated unambiguous lethal
+# damage to an NPC with zero update_character call all turn. This doesn't
+# make the model call the tool; it only tells the player their sheet may be
+# out of sync with the fiction, so a silently-stale sheet isn't mistaken for
+# a trustworthy one. Deliberately narrow and outcome-focused (confirmed
+# damage/death/condition language) rather than any attack verb, to keep
+# false positives down - a narrated *miss* shouldn't trip this. Still
+# expect both false positives (a near-miss description using "wound" in
+# passing) and false negatives (phrasing this doesn't catch) - it's a
+# signal for the player to weigh, not a verdict.
+POSSIBLE_UNTRACKED_CHANGE_PATTERN = re.compile(
+    r"\b(damage|wound(?:s|ed|ing)?|bleed(?:s|ing)?|dies?|dead|death|slain|"
+    r"kills?|killed|unconscious|collapses?|hp|health)\b",
+    re.IGNORECASE,
+)
 
 
 class GameEngine:
@@ -77,10 +96,17 @@ class GameEngine:
         failures here are reported but don't propagate like a real turn's
         would. Reuses the exact same narrate()/tool-wiring path a real turn
         uses, via a synthetic action_text, so the DM can set an initial
-        location/objective with update_world exactly like any other turn."""
+        location/objective with update_world exactly like any other turn.
+        check_for_missed_changes=False: an opening scene routinely sets a
+        scene using words this heuristic watches for (a village recently
+        attacked, a wounded NPC met in passing) with no mechanical change
+        ever expected on turn zero - a real false-positive class, not a
+        hypothetical one."""
         try:
             buffer = await self._narrate_and_apply(
-                character, "(The adventure begins - set an opening scene to draw the player in.)"
+                character,
+                "(The adventure begins - set an opening scene to draw the player in.)",
+                check_for_missed_changes=False,
             )
         except Exception:
             await self._send_to(
@@ -117,7 +143,9 @@ class GameEngine:
         self._save()
         await self._broadcast(self._turn_prompt_envelope())
 
-    async def _narrate_and_apply(self, character: CharacterSheet, action_text: str) -> str:
+    async def _narrate_and_apply(
+        self, character: CharacterSheet, action_text: str, check_for_missed_changes: bool = True
+    ) -> str:
         """Runs one DM narrate() call for the given character/action, wiring
         up apply_update/request_roll/update_world, broadcasting narration and
         any resulting state changes exactly as a normal turn does. Returns
@@ -226,6 +254,21 @@ class GameEngine:
 
         if world_changed:
             await self._broadcast(self._world_update_envelope())
+
+        if (
+            check_for_missed_changes
+            and not sheet_changed
+            and not npcs_touched
+            and POSSIBLE_UNTRACKED_CHANGE_PATTERN.search(buffer)
+        ):
+            await self._send_to(
+                player_id,
+                self._system_envelope(
+                    "The DM's narration may describe a change that wasn't recorded - "
+                    "your sheet might be out of sync with the story.",
+                    level="warning",
+                ),
+            )
 
         return buffer
 

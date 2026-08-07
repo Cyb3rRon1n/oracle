@@ -41,7 +41,7 @@ Every message, both directions, uses the same wrapper:
 | `turn_prompt` | `{player_id, prompt_text}` | whose turn it is, what's expected of them |
 | `dice_result` | `{roller_id, dice, result, rolls, purpose, dc?, success?}` | outcome of any roll, DM- or player-initiated; `dc`/`success` present only for a DM-requested roll with a pass/fail threshold (`request_roll` tool, `AnthropicNarrator` only for now — see ROADMAP.md item 6) |
 | `player_joined` / `player_left` | `{player_id, name}` | presence updates |
-| `system_message` | `{level: info\|warning\|error, text}` | connection/errors, not part of the narrative |
+| `system_message` | `{level: info\|warning\|error, text}` | connection/errors and turn-order rejections, not part of the narrative; also used as a best-effort, deliberately imperfect heuristic warning when narration reads like it resolved damage/a death/a condition but no `update_character` call actually fired that turn (see ROADMAP.md's tool-call reliability investigation) - a nudge that the sheet may be stale, not a claim that it definitely is |
 
 ## Turn arbitration: strict queue
 

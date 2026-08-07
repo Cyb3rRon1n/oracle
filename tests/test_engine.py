@@ -638,3 +638,99 @@ async def test_opening_scene_failure_warns_but_does_not_block_join():
     assert warnings, "a failed opening scene should warn, not crash the join"
     assert session.current_turn == player_id, "the player should still be seated normally"
     assert session.log == [], "a failed opening scene shouldn't leave a partial log entry"
+
+
+class NarratesFixedTextDM:
+    """Narrates the given fixed text and, if update: a dict is provided,
+    calls apply_update with it first - simulating a DM turn that may or may
+    not actually invoke the tool, independent of what the narration says."""
+
+    def __init__(self, text: str, update: dict | None = None):
+        self._text = text
+        self._update = update
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        if self._update is not None:
+            apply_update(self._update)
+        yield self._text
+
+
+def _missed_change_warnings(received: list[tuple], player_id: str) -> list[tuple]:
+    return [
+        r for r in received
+        if r[0] == "send_to" and r[1] == player_id and r[2] == "system_message"
+        and "out of sync" in r[3]["text"]
+    ]
+
+
+async def test_missed_change_heuristic_warns_when_damage_language_has_no_tool_call():
+    # Reconstructs the exact real failure shape logged in ROADMAP.md's
+    # tool-call reliability investigation: narration confirms lethal damage
+    # to an NPC, but no update_character call fires at all that turn.
+    dm = NarratesFixedTextDM("Your blade finds its mark - the bandit staggers, bleeding, and falls dead.")
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+
+    assert _missed_change_warnings(received, player_id), (
+        "narration describing a death with no tool call should warn the player their sheet may be stale"
+    )
+
+
+async def test_missed_change_heuristic_silent_when_a_real_tool_call_fired():
+    # Same trigger language as above, but this time the DM actually called
+    # update_character - the heuristic must not double-warn on a turn that
+    # already did the right thing.
+    dm = NarratesFixedTextDM(
+        "Your blade finds its mark - the bandit staggers, bleeding, and falls dead.",
+        update={"target": "bandit", "hp_delta": -10},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+
+    assert not _missed_change_warnings(received, player_id), (
+        "a real update_character call this turn means the sheet isn't stale - no warning is warranted"
+    )
+
+
+async def test_missed_change_heuristic_silent_when_narration_has_no_trigger_language():
+    # A plain narrated miss/no-op shouldn't trip the heuristic just because
+    # no tool call happened - most turns correctly involve no mechanical change.
+    dm = NarratesFixedTextDM("You glance around the room but find nothing of note.")
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert not _missed_change_warnings(received, player_id)
+
+
+async def test_missed_change_heuristic_does_not_fire_during_opening_scene():
+    # An opening scene routinely sets flavor using this heuristic's own
+    # trigger words (a village recently attacked, a wounded NPC met in
+    # passing) with no mechanical change ever expected on turn zero - a
+    # real false-positive class this deliberately guards against.
+    dm = NarratesFixedTextDM(
+        "The village still bears the scars of a recent raid - a wounded farmer nurses a bleeding arm nearby."
+    )
+    engine, session, received = make_engine(dm, enable_opening_scene=True)
+    player_id = str(uuid.uuid4())
+
+    await join(engine, player_id)
+
+    assert not _missed_change_warnings(received, player_id)
