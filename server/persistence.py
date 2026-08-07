@@ -14,13 +14,32 @@ class SessionStore(Protocol):
         """Persist the session's current state."""
 
 
+class SessionStoreUnwritable(RuntimeError):
+    """Raised at startup when a SessionStore's backing directory can't be
+    written to - e.g. missing, wrong permissions, or (the incident that
+    prompted this check) a relative SESSION_STORE_DIR resolved against a
+    process cwd that no longer exists after the repo it was launched from
+    got moved/renamed out from under it. Meant to fail loudly at boot
+    instead of every subsequent turn's save() silently raising into an
+    unhandled exception that just kills that connection - see ROADMAP.md."""
+
+
 class JSONFileSessionStore:
     """One JSON file per session_id. Swap for a database-backed SessionStore
     later without touching the engine, same pattern as NarratorBackend."""
 
     def __init__(self, directory: Path):
         self._directory = directory
-        self._directory.mkdir(parents=True, exist_ok=True)
+        try:
+            self._directory.mkdir(parents=True, exist_ok=True)
+            probe = self._directory / ".write_check"
+            probe.write_text("")
+            probe.unlink()
+        except OSError as exc:
+            raise SessionStoreUnwritable(
+                f"Session store directory {str(self._directory)!r} is not writable ({exc}). "
+                "Game state cannot be saved - check SESSION_STORE_DIR and its permissions."
+            ) from exc
 
     def _path(self, session_id: str) -> Path:
         return self._directory / f"{session_id}.json"

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from server.engine import GameEngine
-from server.persistence import JSONFileSessionStore
+from server.persistence import JSONFileSessionStore, SessionStoreUnwritable
 from server.state import CharacterSheet, Session
 from shared.protocol import Envelope
 
@@ -33,6 +35,36 @@ def test_round_trip_preserves_state(tmp_path):
 def test_load_missing_session_returns_none(tmp_path):
     store = JSONFileSessionStore(tmp_path)
     assert store.load("nonexistent") is None
+
+
+def test_unwritable_directory_raises_at_construction(tmp_path):
+    """The startup writability check (server/main.py fails fast on this)
+    should catch a directory that exists but can't actually be written to -
+    mkdir(exist_ok=True) alone wouldn't notice this, since it's a no-op on
+    an already-existing directory regardless of permissions."""
+    readonly_dir = tmp_path / "readonly"
+    readonly_dir.mkdir()
+    readonly_dir.chmod(0o500)
+    try:
+        with pytest.raises(SessionStoreUnwritable):
+            JSONFileSessionStore(readonly_dir)
+    finally:
+        readonly_dir.chmod(0o700)  # restore so pytest can clean up tmp_path
+
+
+def test_unwritable_parent_raises_at_construction(tmp_path):
+    """The other real-world shape of this failure: the directory doesn't
+    exist yet and can't be created because its parent isn't writable -
+    covers the mkdir(parents=True) step itself failing, not just the probe
+    write after it."""
+    readonly_parent = tmp_path / "readonly_parent"
+    readonly_parent.mkdir()
+    readonly_parent.chmod(0o500)
+    try:
+        with pytest.raises(SessionStoreUnwritable):
+            JSONFileSessionStore(readonly_parent / "sessions")
+    finally:
+        readonly_parent.chmod(0o700)
 
 
 async def test_engine_saves_after_join_and_after_action(tmp_path):
