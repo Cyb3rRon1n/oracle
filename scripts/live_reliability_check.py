@@ -113,8 +113,11 @@ class TurnResult:
     correct: bool | None  # None for ambiguous turns - not scored
 
 
-async def run_scenario(narrator) -> list[TurnResult]:
-    session = Session(session_id=SESSION_ID)
+async def run_scenario(narrator, max_history_messages: int | None = None) -> list[TurnResult]:
+    session_kwargs = {"session_id": SESSION_ID}
+    if max_history_messages is not None:
+        session_kwargs["max_history_messages"] = max_history_messages
+    session = Session(**session_kwargs)
     events: list[Envelope] = []
 
     async def broadcast(envelope: Envelope) -> None:
@@ -189,8 +192,11 @@ async def run_scenario(narrator) -> list[TurnResult]:
     return results
 
 
-def print_report(results: list[TurnResult], model_label: str, backend: str) -> None:
-    print(f"\n=== Live reliability check: {backend}/{model_label} ===\n")
+def print_report(
+    results: list[TurnResult], model_label: str, backend: str, max_history_messages: int | None
+) -> None:
+    history_label = "default" if max_history_messages is None else f"{max_history_messages} messages"
+    print(f"\n=== Live reliability check: {backend}/{model_label} (max_history={history_label}) ===\n")
 
     for r in results:
         tag = {True: "PASS", False: "FAIL", None: " ?  "}[r.correct]
@@ -216,11 +222,18 @@ def print_report(results: list[TurnResult], model_label: str, backend: str) -> N
     print(f"leaked pseudo-tool-call text: {leaked_count}/{len(results)} turns")
 
 
-def write_json(results: list[TurnResult], model_label: str, backend: str, out_path: Path) -> None:
+def write_json(
+    results: list[TurnResult],
+    model_label: str,
+    backend: str,
+    max_history_messages: int | None,
+    out_path: Path,
+) -> None:
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "backend": backend,
         "model": model_label,
+        "max_history_messages": max_history_messages,
         "turns": [asdict(r) for r in results],
     }
     out_path.write_text(json.dumps(report, indent=2))
@@ -240,11 +253,11 @@ async def main_async(args: argparse.Namespace) -> None:
         model_label = args.model or "claude-sonnet-5"
         narrator = AnthropicNarrator(model=model_label)
 
-    results = await run_scenario(narrator)
-    print_report(results, model_label, args.backend)
+    results = await run_scenario(narrator, max_history_messages=args.max_history_messages)
+    print_report(results, model_label, args.backend, args.max_history_messages)
 
     if args.out:
-        write_json(results, model_label, args.backend, Path(args.out))
+        write_json(results, model_label, args.backend, args.max_history_messages, Path(args.out))
 
 
 def main() -> None:
@@ -253,6 +266,16 @@ def main() -> None:
     parser.add_argument("--model", default=None, help="Override the backend's default model.")
     parser.add_argument("--host", default=None, help="Ollama host URL, if not the default.")
     parser.add_argument("--out", default=None, help="Write a JSON report to this path for later diffing.")
+    parser.add_argument(
+        "--max-history-messages",
+        type=int,
+        default=None,
+        help=(
+            "Override Session.max_history_messages (default: the production default, 12 - "
+            "6 turns). 2 messages = 1 turn of memory. Use 0 for no history at all. For "
+            "quantifying the history-window tradeoff - see ROADMAP.md item 6."
+        ),
+    )
     args = parser.parse_args()
 
     asyncio.run(main_async(args))

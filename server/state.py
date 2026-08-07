@@ -68,6 +68,10 @@ class Session(BaseModel):
     current_turn_index: int = 0
     log: list[dict] = Field(default_factory=list)
     history: list[dict] = Field(default_factory=list)
+    # Per-instance so it can be tuned for a real production session, or
+    # varied experimentally (see scripts/live_reliability_check.py's
+    # --max-history-messages) without changing the shipped default here.
+    max_history_messages: int = MAX_HISTORY_MESSAGES
 
     @property
     def current_turn(self) -> str | None:
@@ -83,5 +87,5 @@ class Session(BaseModel):
         """Record a resolved turn in the rolling conversation window fed to the DM."""
         self.history.append({"role": "user", "content": action_text})
         self.history.append({"role": "assistant", "content": narration_text})
-        if len(self.history) > MAX_HISTORY_MESSAGES:
-            self.history = self.history[-MAX_HISTORY_MESSAGES:]
+        if len(self.history) > self.max_history_messages:
+            self.history = self.history[-self.max_history_messages :] if self.max_history_messages > 0 else []

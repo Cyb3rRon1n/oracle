@@ -113,11 +113,20 @@ async def test_write_json_round_trips(tmp_path):
     results = await run_scenario(narrator)
 
     out_path = tmp_path / "report.json"
-    write_json(results, "qwen2.5:7b", "ollama", out_path)
+    write_json(results, "qwen2.5:7b", "ollama", None, out_path)
 
     import json
 
     report = json.loads(out_path.read_text())
     assert report["backend"] == "ollama"
     assert report["model"] == "qwen2.5:7b"
+    assert report["max_history_messages"] is None
     assert len(report["turns"]) == len(SCENARIO)
+
+
+async def test_run_scenario_passes_through_custom_max_history_messages():
+    narrator = ScriptedNarrator(_all_correct_behaviors())
+
+    results = await run_scenario(narrator, max_history_messages=4)
+
+    assert len(results) == len(SCENARIO)

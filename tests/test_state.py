@@ -88,3 +88,22 @@ def test_append_turn_caps_rolling_window():
     # 10 exchanges (20 messages) capped to the last 6 (12 messages) drops
     # actions 0-3, so the oldest surviving turn is action 4.
     assert session.history[0] == {"role": "user", "content": "action 4"}
+
+
+def test_append_turn_respects_custom_max_history_messages():
+    session = Session(session_id="s", max_history_messages=4)
+    for i in range(5):
+        session.append_turn(f"action {i}", f"narration {i}")
+
+    assert len(session.history) == 4
+    assert session.history[0] == {"role": "user", "content": "action 3"}
+
+
+def test_append_turn_with_zero_max_history_keeps_no_history():
+    # A naive `history[-0:]` slice is the *whole* list in Python (no negative
+    # zero for ints) - without an explicit guard, max_history_messages=0
+    # would silently keep everything instead of nothing.
+    session = Session(session_id="s", max_history_messages=0)
+    session.append_turn("action 0", "narration 0")
+
+    assert session.history == []
