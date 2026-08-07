@@ -79,10 +79,11 @@ class GameEngine:
             target = update.get("target") or "self"
 
             # A model given the character sheet as JSON (which includes its own
-            # player_id) sometimes echoes that literal id back as target instead
-            # of "self" - without this, that misroutes into the NPC branch below
-            # and silently creates a phantom NPC sheet named after the player_id.
-            if target == "self" or target == player_id:
+            # player_id and name) sometimes echoes one of those back as target
+            # instead of "self" - without this, that misroutes into the NPC
+            # branch below and silently creates a phantom NPC sheet named after
+            # the player's own id or name.
+            if target in ("self", player_id, character.name):
                 result = character.apply_update(update)
                 if not result.startswith("No changes applied"):
                     sheet_changed = True

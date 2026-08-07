@@ -321,6 +321,25 @@ async def test_update_character_target_matching_own_player_id_treated_as_self():
     assert session.npcs == {}
 
 
+async def test_update_character_target_matching_own_name_treated_as_self():
+    # Live testing of the two-request split (ROADMAP.md item 6) found the
+    # same self-identification bug in a second shape: the model echoing the
+    # character's own *name* (also present in the character summary JSON) as
+    # target instead of "self".
+    player_id = str(uuid.uuid4())
+    dm = UpdateCharacterDM({"target": "Thrain", "hp_delta": -3})
+    engine, session, _ = make_engine(dm)
+    await join(engine, player_id, name="Thrain")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I take a hit"},
+    ))
+
+    assert session.characters[player_id].hp == 7
+    assert session.npcs == {}
+
+
 async def test_state_sync_includes_npcs_for_a_later_joining_player():
     dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
     engine, session, received = make_engine(dm)
