@@ -93,6 +93,21 @@ async def test_leaked_tool_call_text_is_flagged_even_without_a_real_call():
     assert results[0].correct is False
 
 
+async def test_leaked_lookup_rule_text_is_also_flagged():
+    # A live llama3.1:8b run leaked lookup_rule pseudo-calls, not just
+    # update_character - the leak detector needs to catch both tool names.
+    behaviors = [{"updates": [], "text_chunks": ["Something happens."]} for _ in SCENARIO]
+    behaviors[0] = {
+        "updates": [],
+        "text_chunks": ['lookup_rule(category="monster", name="Goblin")'],
+    }
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(narrator)
+
+    assert results[0].leaked_text is True
+
+
 async def test_write_json_round_trips(tmp_path):
     narrator = ScriptedNarrator(_all_correct_behaviors())
     results = await run_scenario(narrator)

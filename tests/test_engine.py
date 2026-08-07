@@ -302,6 +302,25 @@ async def test_update_character_explicit_self_target_still_updates_own_sheet():
     assert session.npcs == {}
 
 
+async def test_update_character_target_matching_own_player_id_treated_as_self():
+    # Live testing against llama3.1:8b found the model sometimes echoes the
+    # literal player_id from the character summary JSON as target instead of
+    # "self" - this should still land on the real sheet, not spawn a phantom
+    # NPC named after the player_id.
+    player_id = str(uuid.uuid4())
+    dm = UpdateCharacterDM({"target": player_id, "hp_delta": -3})
+    engine, session, _ = make_engine(dm)
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I take a hit"},
+    ))
+
+    assert session.characters[player_id].hp == 7
+    assert session.npcs == {}
+
+
 async def test_state_sync_includes_npcs_for_a_later_joining_player():
     dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
     engine, session, received = make_engine(dm)

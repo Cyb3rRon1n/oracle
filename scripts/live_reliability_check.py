@@ -90,9 +90,14 @@ SCENARIO = [
 
 # Catches the leaked-pseudo-tool-call failure mode documented in ROADMAP.md
 # item 5 stage two: the model writing its tool-call intent as visible prose
-# (e.g. `update_character {"target": "Bandit", "hp_delta": -8}`) instead of
-# invoking the real function-calling channel.
-LEAK_PATTERN = re.compile(r'update_character|\{"name"\s*:\s*"update_character"', re.IGNORECASE)
+# (e.g. `update_character {"target": "Bandit", "hp_delta": -8}` or
+# `lookup_rule(category="monster", name="Goblin")`) instead of invoking the
+# real function-calling channel. Covers both tools - a live llama3.1:8b run
+# leaked lookup_rule specifically, not just update_character.
+LEAK_PATTERN = re.compile(
+    r'update_character|lookup_rule|\{"name"\s*:\s*"(?:update_character|lookup_rule)"',
+    re.IGNORECASE,
+)
 
 
 @dataclass
