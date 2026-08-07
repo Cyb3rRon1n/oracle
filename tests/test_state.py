@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from server.state import MAX_HISTORY_MESSAGES, CharacterSheet, Session
+from server.state import MAX_HISTORY_MESSAGES, CharacterSheet, Session, WorldState
 
 
 def make_character(**overrides) -> CharacterSheet:
@@ -62,6 +62,71 @@ def test_apply_update_empty_or_zero_delta_reports_no_change():
     character = make_character(hp=8)
     result = character.apply_update({"hp_delta": 0})
     assert character.hp == 8
+    assert result.startswith("No changes applied")
+
+
+def test_apply_update_notes():
+    character = make_character()
+
+    result = character.apply_update({"notes": "Wary of strangers, owes the party a favor."})
+    assert character.notes == "Wary of strangers, owes the party a favor."
+    assert "notes updated" in result
+
+    # setting the exact same note again is a no-op
+    result = character.apply_update({"notes": "Wary of strangers, owes the party a favor."})
+    assert result.startswith("No changes applied")
+
+
+def test_world_apply_update_location_and_summary():
+    world = WorldState()
+
+    result = world.apply_update({"location": "The Rusty Anchor tavern", "summary": "A storm is coming."})
+    assert world.location == "The Rusty Anchor tavern"
+    assert world.summary == "A storm is coming."
+    assert "location now" in result and "summary updated" in result
+
+
+def test_world_apply_update_objectives_add_complete_remove():
+    world = WorldState()
+
+    result = world.apply_update({"add_objective": "Find the missing merchant"})
+    assert result.startswith("Applied")
+    assert [o.text for o in world.objectives] == ["Find the missing merchant"]
+    assert world.objectives[0].status == "active"
+
+    # adding the exact same objective text again is a no-op
+    result = world.apply_update({"add_objective": "Find the missing merchant"})
+    assert result.startswith("No changes applied")
+
+    result = world.apply_update({"complete_objective": "Find the missing merchant"})
+    assert world.objectives[0].status == "completed"
+    assert "completed" in result
+
+    world.apply_update({"add_objective": "Escort the caravan"})
+    result = world.apply_update({"remove_objective": "Escort the caravan"})
+    assert [o.text for o in world.objectives] == ["Find the missing merchant"]
+    assert "removed objective" in result
+
+
+def test_world_apply_update_flags_set_and_clear():
+    world = WorldState()
+
+    result = world.apply_update({"set_flag": "met_the_baron"})
+    assert world.flags["met_the_baron"] is True
+    assert "flag set" in result
+
+    # setting an already-true flag again is a no-op
+    result = world.apply_update({"set_flag": "met_the_baron"})
+    assert result.startswith("No changes applied")
+
+    result = world.apply_update({"clear_flag": "met_the_baron"})
+    assert world.flags["met_the_baron"] is False
+    assert "flag cleared" in result
+
+
+def test_world_apply_update_no_matching_keys_reports_no_change():
+    world = WorldState()
+    result = world.apply_update({})
     assert result.startswith("No changes applied")
 
 

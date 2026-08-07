@@ -161,14 +161,22 @@ async def test_narrate_stops_after_max_tool_rounds_without_hanging():
     assert len(narrator._client.calls) == 4
 
 
-def test_request_roll_is_not_exposed_to_ollama_models():
+def test_request_roll_and_update_world_are_not_exposed_to_ollama_models():
     # Deliberate scoping (ROADMAP.md item 6): this session's investigation
     # found qwen2.5:7b/llama3.1:8b already miss the one existing tool on most
-    # clearly-warranted turns, so request_roll is Anthropic-only for now
-    # rather than adding a second required call on top of that.
+    # clearly-warranted turns, so request_roll/update_world are Anthropic-only
+    # for now rather than adding more required calls on top of that.
     tool_names = {tool["function"]["name"] for tool in OLLAMA_TOOLS}
     assert tool_names == {"lookup_rule", "update_character"}
     assert "request_roll" not in tool_names
+    assert "update_world" not in tool_names
+
+
+def test_update_character_tool_exposes_notes_field_to_ollama_models():
+    # notes is on the *shared* UPDATE_CHARACTER_TOOL, not a new tool, so
+    # unlike request_roll/update_world it does apply to Ollama too.
+    update_character = next(t for t in OLLAMA_TOOLS if t["function"]["name"] == "update_character")
+    assert "notes" in update_character["function"]["parameters"]["properties"]
 
 
 async def test_narrate_accepts_but_ignores_request_roll_callback():
@@ -184,6 +192,25 @@ async def test_narrate_accepts_but_ignores_request_roll_callback():
         c
         async for c in narrator.narrate(
             [], "{}", "I wait", noop_apply_update, request_roll=unexpected_request_roll
+        )
+    ]
+
+    assert "".join(chunks) == "You wait."
+
+
+async def test_narrate_accepts_but_ignores_update_world_callback():
+    narrator = make_narrator()
+    narrator._client = FakeOllamaClient(
+        [[FakeChunk(content="You wait.", done=True)]]
+    )
+
+    def unexpected_update_world(update: dict) -> str:
+        raise AssertionError("update_world should never be invoked by OllamaNarrator yet")
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I wait", noop_apply_update, update_world=unexpected_update_world
         )
     ]
 

@@ -126,8 +126,12 @@ async def run_scenario(narrator, max_history_messages: int | None = None) -> lis
     async def send_to(recipient_id: str, envelope: Envelope) -> None:
         events.append(envelope)
 
-    # store=None: this is a throwaway scenario run, never touches sessions/
-    engine = GameEngine(session, narrator, broadcast, send_to, store=None)
+    # store=None: this is a throwaway scenario run, never touches sessions/.
+    # enable_opening_scene=False: the fixed SCENARIO below expects each of
+    # its 8 turns to correspond to exactly one narrate() call in order - an
+    # opening-scene call on join would shift that indexing. The opening
+    # scene is a separate, not-yet-benchmarked feature (see ROADMAP.md item 6).
+    engine = GameEngine(session, narrator, broadcast, send_to, store=None, enable_opening_scene=False)
 
     await engine.handle(
         Envelope(

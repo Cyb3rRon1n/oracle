@@ -208,6 +208,51 @@ async def test_narrate_without_request_roll_callback_still_completes():
     assert "".join(chunks) == "Fine."
 
 
+async def test_narrate_routes_update_world_tool_to_callback():
+    narrator = make_narrator()
+    tool_call = FakeToolUseBlock(
+        id="tu_4", name="update_world", input={"add_objective": "Find the missing merchant"}
+    )
+    first = FakeMessage(stop_reason="tool_use", content=[tool_call])
+    second = FakeMessage(stop_reason="end_turn", content=[])
+    narrator._client = FakeClient(
+        [
+            (["You press on."], first),
+            ([" A new lead emerges."], second),
+        ]
+    )
+
+    received_updates = []
+
+    def update_world(update: dict) -> str:
+        received_updates.append(update)
+        return "Applied: new objective: 'Find the missing merchant'."
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I ask around town", noop_apply_update, None, update_world
+        )
+    ]
+
+    assert "".join(chunks) == "You press on. A new lead emerges."
+    assert received_updates == [{"add_objective": "Find the missing merchant"}]
+
+    second_call_messages = narrator._client.messages.calls[1]["messages"]
+    tool_result_content = second_call_messages[-1]["content"][0]["content"]
+    assert tool_result_content == "Applied: new objective: 'Find the missing merchant'."
+
+
+async def test_narrate_without_update_world_callback_still_completes():
+    narrator = make_narrator()
+    final = FakeMessage(stop_reason="end_turn", content=[])
+    narrator._client = FakeClient([(["Fine."], final)])
+
+    chunks = [c async for c in narrator.narrate([], "{}", "I wait", noop_apply_update)]
+
+    assert "".join(chunks) == "Fine."
+
+
 async def test_narrate_stops_after_max_tool_rounds_without_hanging():
     narrator = make_narrator()
     tool_call = FakeToolUseBlock(

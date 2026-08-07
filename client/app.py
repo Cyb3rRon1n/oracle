@@ -12,7 +12,21 @@ from .transport import ClientTransport
 
 
 class CharacterSheetPanel(Static):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._character: dict = {}
+        self._world: dict = {}
+
     def render_sheet(self, character: dict) -> None:
+        self._character = character
+        self._render()
+
+    def render_world(self, world: dict) -> None:
+        self._world = world
+        self._render()
+
+    def _render(self) -> None:
+        character = self._character
         lines = [
             f"[b]{character.get('name', '?')}[/b]",
             f"HP: {character.get('hp')}/{character.get('max_hp')}",
@@ -31,6 +45,13 @@ class CharacterSheetPanel(Static):
             lines.append("")
             lines.append("[b]Conditions[/b]")
             lines.extend(f"- {c}" for c in conditions)
+
+        active_objectives = [o for o in (self._world.get("objectives") or []) if o.get("status") == "active"]
+        if active_objectives:
+            lines.append("")
+            lines.append("[b]Objectives[/b]")
+            lines.extend(f"- {o['text']}" for o in active_objectives)
+
         self.update("\n".join(lines))
 
 
@@ -75,6 +96,7 @@ class DungeonMasterApp(App):
             mine = characters.get(self._player_id)
             if mine:
                 sheet.render_sheet(mine)
+            sheet.render_world(envelope.payload.get("world_state", {}))
             for name, npc in envelope.payload.get("npcs", {}).items():
                 log.write(self._npc_status_line(name, npc))
             for entry in envelope.payload.get("log_tail", []):
@@ -87,6 +109,9 @@ class DungeonMasterApp(App):
         elif envelope.type == "npc_update":
             name = envelope.payload.get("name", "?")
             log.write(self._npc_status_line(name, envelope.payload.get("sheet_delta", {})))
+
+        elif envelope.type == "world_update":
+            sheet.render_world(envelope.payload)
 
         elif envelope.type == "log_entry":
             text = envelope.payload.get("text", "")

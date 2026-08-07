@@ -18,6 +18,7 @@ EventType = Literal[
     "log_entry",
     "character_update",
     "npc_update",
+    "world_update",
     "turn_prompt",
     "dice_result",
     "player_joined",

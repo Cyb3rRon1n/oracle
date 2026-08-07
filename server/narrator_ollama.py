@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 import ollama
 
-from .narrator import LOOKUP_RULE_TOOL, UPDATE_CHARACTER_TOOL, ApplyUpdate, RequestRoll
+from .narrator import LOOKUP_RULE_TOOL, UPDATE_CHARACTER_TOOL, ApplyUpdate, RequestRoll, UpdateWorld
 from .rules import RulesIndex
 
 OLLAMA_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
@@ -23,7 +23,11 @@ You have two tools available:
   change a sheet; this tool does. Omit target (or use 'self') for the acting character;
   pass an NPC's name as target to introduce or update its own tracked sheet, so its
   wounds and conditions persist turn to turn instead of being forgotten. Call it after
-  you've decided the outcome, in the same turn you narrate it.
+  you've decided the outcome, in the same turn you narrate it. When you introduce a new
+  NPC worth remembering, give it a brief notes value too (a sentence on its personality,
+  goal, or relationship to the party) — update that note later if the relationship
+  changes, so a recurring character feels continuous instead of reset each time they
+  appear.
 
 For anything not covered by lookup_rule, invent original content in the spirit of the
 genre rather than claiming to search for real published material — you have no way to
@@ -68,15 +72,16 @@ class OllamaNarrator:
         action_text: str,
         apply_update: ApplyUpdate,
         request_roll: RequestRoll | None = None,
+        update_world: UpdateWorld | None = None,
     ) -> AsyncIterator[str]:
-        # request_roll is accepted for NarratorBackend interface parity but
-        # deliberately unused: request_roll isn't in OLLAMA_TOOLS, so local
-        # models can't call it yet. See ROADMAP.md item 6 - this session's
+        # request_roll/update_world are accepted for NarratorBackend interface
+        # parity but deliberately unused: neither is in OLLAMA_TOOLS, so local
+        # models can't call them yet. See ROADMAP.md item 6 - this session's
         # investigation found small local models already miss the one
-        # existing tool on most clearly-warranted turns; adding a second
-        # required tool call before narration would only compound that.
-        # Scoped to AnthropicNarrator first; local support is a deliberate
-        # follow-up, not an oversight.
+        # existing tool on most clearly-warranted turns; adding more required
+        # tool calls before narration would only compound that. Scoped to
+        # AnthropicNarrator first; local support is a deliberate follow-up,
+        # not an oversight.
         prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
         messages: list[dict] = [
             {"role": "system", "content": OLLAMA_SYSTEM_PROMPT},

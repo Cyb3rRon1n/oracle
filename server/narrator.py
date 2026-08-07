@@ -14,7 +14,7 @@ of the player's actions, introduce complications, and always end by implicitly o
 explicitly inviting the player's next action, in open-ended prose — never as a
 numbered or bulleted list of options to choose from. Never break character.
 
-You have four tools available:
+You have five tools available:
 - request_roll: call this BEFORE narrating the outcome of an action whose success is
   genuinely uncertain — an attack, a skill check, a saving throw. Don't call it for
   actions with an obvious, certain outcome. It returns the roll, and a success/failure
@@ -29,7 +29,15 @@ You have four tools available:
   pass an NPC's name as target to introduce or update its own tracked sheet, so its
   wounds and conditions persist turn to turn instead of being forgotten. Call it after
   you've decided the outcome (including after a request_roll result, if one was needed),
-  in the same turn you narrate it.
+  in the same turn you narrate it. When you introduce a new NPC worth remembering, give
+  it a brief `notes` value too (a sentence on its personality, goal, or relationship to
+  the party) — update that note later if the relationship changes. This is what keeps a
+  recurring character feeling continuous instead of reset each time they appear.
+- update_world: call this when something should be remembered for the rest of the
+  campaign, not just this scene — a new objective or plot thread emerging, one being
+  completed or abandoned, the location changing, or a durable fact about the world. This
+  is what a player is actually following across a session; don't call it for passing
+  scene detail that doesn't need to persist.
 - web_search: use sparingly, only for general inspiration or real-world reference (e.g.
   period-appropriate detail for a setting) — never to look up or reproduce copyrighted
   D&D sourcebook content verbatim. For anything not covered by lookup_rule, invent
@@ -112,11 +120,65 @@ UPDATE_CHARACTER_TOOL = {
                 "type": "string",
                 "description": "Condition to clear, if present.",
             },
+            "notes": {
+                "type": "string",
+                "description": (
+                    "A brief standing note about this character/NPC (personality, goal, "
+                    "relationship to the party), replacing any previous note. Most useful "
+                    "on an NPC's introduction or when the relationship meaningfully changes "
+                    "- not needed every call."
+                ),
+            },
         },
     },
 }
 
 WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search"}
+
+UPDATE_WORLD_TOOL = {
+    "name": "update_world",
+    "description": (
+        "Update the campaign's persistent world state - use this when the scene changes "
+        "location, a new objective/plot thread emerges, an existing one is completed or "
+        "abandoned, or a durable fact about the world changes. This is what keeps the "
+        "story coherent beyond the immediate conversation - call it when something should "
+        "be remembered for the rest of the campaign, not for passing scene detail."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "location": {"type": "string", "description": "Update the current location, if it changed."},
+            "summary": {
+                "type": "string",
+                "description": (
+                    "A short (1-3 sentence) standing summary of the campaign's overall "
+                    "situation so far, replacing the previous one. Update this when the "
+                    "big picture changes, not every turn."
+                ),
+            },
+            "add_objective": {
+                "type": "string",
+                "description": "A new active objective/plot thread/quest hook to track, in plain language.",
+            },
+            "complete_objective": {
+                "type": "string",
+                "description": "The exact text of an existing active objective to mark completed.",
+            },
+            "remove_objective": {
+                "type": "string",
+                "description": "The exact text of an existing objective to drop entirely (abandoned, no longer relevant).",
+            },
+            "set_flag": {
+                "type": "string",
+                "description": "Name of a world flag to set true (e.g. 'met_the_baron', 'castle_gates_open').",
+            },
+            "clear_flag": {
+                "type": "string",
+                "description": "Name of a world flag to clear (set false / remove).",
+            },
+        },
+    },
+}
 
 REQUEST_ROLL_TOOL = {
     "name": "request_roll",
@@ -155,6 +217,7 @@ MAX_TOOL_ROUNDS = 4
 
 ApplyUpdate = Callable[[dict], str]
 RequestRoll = Callable[[dict], str]
+UpdateWorld = Callable[[dict], str]
 
 
 class NarratorBackend(Protocol):
@@ -165,6 +228,7 @@ class NarratorBackend(Protocol):
         action_text: str,
         apply_update: ApplyUpdate,
         request_roll: RequestRoll,
+        update_world: UpdateWorld,
     ) -> AsyncIterator[str]:
         """Stream narration text in response to a player's action.
 
@@ -182,6 +246,12 @@ class NarratorBackend(Protocol):
         the DM needs to resolve a genuinely uncertain action; it returns the
         roll result (and success/failure verdict, if a dc was given) as that
         tool call's result, for the DM to narrate against.
+
+        `update_world` is called with the update_world tool's input whenever
+        the DM decides something should persist beyond the current scene —
+        a new/completed objective, a location change, a world flag; it
+        returns a description of what changed, which becomes that tool
+        call's result.
         """
 
 
@@ -203,6 +273,7 @@ class AnthropicNarrator:
         action_text: str,
         apply_update: ApplyUpdate,
         request_roll: RequestRoll | None = None,
+        update_world: UpdateWorld | None = None,
     ) -> AsyncIterator[str]:
         prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
         messages: list[dict] = [*history, {"role": "user", "content": prompt}]
@@ -212,7 +283,13 @@ class AnthropicNarrator:
                 model=self._model,
                 max_tokens=1024,
                 system=DM_SYSTEM_PROMPT,
-                tools=[REQUEST_ROLL_TOOL, LOOKUP_RULE_TOOL, UPDATE_CHARACTER_TOOL, WEB_SEARCH_TOOL],
+                tools=[
+                    REQUEST_ROLL_TOOL,
+                    LOOKUP_RULE_TOOL,
+                    UPDATE_CHARACTER_TOOL,
+                    UPDATE_WORLD_TOOL,
+                    WEB_SEARCH_TOOL,
+                ],
                 messages=messages,
             ) as stream:
                 async for chunk in stream.text_stream:
@@ -227,16 +304,23 @@ class AnthropicNarrator:
                 {
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": self._run_tool(block, apply_update, request_roll),
+                    "content": self._run_tool(block, apply_update, request_roll, update_world),
                 }
                 for block in response.content
-                if block.type == "tool_use" and block.name in ("lookup_rule", "update_character", "request_roll")
+                if block.type == "tool_use"
+                and block.name in ("lookup_rule", "update_character", "request_roll", "update_world")
             ]
             if not tool_results:
                 return
             messages.append({"role": "user", "content": tool_results})
 
-    def _run_tool(self, block, apply_update: ApplyUpdate, request_roll: RequestRoll | None) -> str:
+    def _run_tool(
+        self,
+        block,
+        apply_update: ApplyUpdate,
+        request_roll: RequestRoll | None,
+        update_world: UpdateWorld | None,
+    ) -> str:
         if block.name == "lookup_rule":
             return self._rules.lookup(
                 block.input.get("category", ""), block.input.get("name", "")
@@ -245,6 +329,10 @@ class AnthropicNarrator:
             if request_roll is None:
                 return "Rolling isn't available right now."
             return request_roll(block.input)
+        if block.name == "update_world":
+            if update_world is None:
+                return "World-state tracking isn't available right now."
+            return update_world(block.input)
         return apply_update(block.input)
 
 

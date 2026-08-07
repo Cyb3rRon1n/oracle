@@ -28,12 +28,14 @@ class GameEngine:
         broadcast: Broadcast,
         send_to: SendTo,
         store: SessionStore | None = None,
+        enable_opening_scene: bool = True,
     ):
         self._session = session
         self._dm = dm
         self._broadcast = broadcast
         self._send_to = send_to
         self._store = store
+        self._enable_opening_scene = enable_opening_scene
 
     def _save(self) -> None:
         if self._store is not None:
@@ -46,7 +48,13 @@ class GameEngine:
 
     async def _on_join_session(self, envelope: Envelope) -> None:
         player_id = envelope.sender_id
-        if player_id not in self._session.characters:
+        is_new_character = player_id not in self._session.characters
+        # A genuine campaign start - not just this player joining an
+        # already-started session - is the only time an opening scene makes
+        # sense. Log still empty is the signal: nothing has happened yet.
+        is_campaign_start = is_new_character and not self._session.log and self._enable_opening_scene
+
+        if is_new_character:
             name = envelope.payload.get("player_name", player_id)
             self._session.characters[player_id] = CharacterSheet(
                 player_id=player_id, name=name, hp=10, max_hp=10
@@ -54,11 +62,36 @@ class GameEngine:
             self._session.turn_order.append(player_id)
             self._save()
 
-        character_name = self._session.characters[player_id].name
+        character = self._session.characters[player_id]
         await self._send_to(player_id, self._state_sync_envelope())
-        await self._broadcast(self._system_envelope(f"{character_name} joined the session.", level="info"))
+        await self._broadcast(self._system_envelope(f"{character.name} joined the session.", level="info"))
+
+        if is_campaign_start:
+            await self._narrate_opening_scene(character)
+
         if self._session.current_turn == player_id:
             await self._broadcast(self._turn_prompt_envelope())
+
+    async def _narrate_opening_scene(self, character: CharacterSheet) -> None:
+        """Best-effort: a missing opening scene shouldn't block joining, so
+        failures here are reported but don't propagate like a real turn's
+        would. Reuses the exact same narrate()/tool-wiring path a real turn
+        uses, via a synthetic action_text, so the DM can set an initial
+        location/objective with update_world exactly like any other turn."""
+        try:
+            buffer = await self._narrate_and_apply(
+                character, "(The adventure begins - set an opening scene to draw the player in.)"
+            )
+        except Exception:
+            await self._send_to(
+                character.player_id,
+                self._system_envelope("Couldn't generate an opening scene.", level="warning"),
+            )
+            return
+
+        self._session.log.append({"kind": "narration", "text": buffer})
+        self._session.append_turn("(The adventure begins.)", buffer)
+        self._save()
 
     async def _on_player_action(self, envelope: Envelope) -> None:
         player_id = envelope.sender_id
@@ -70,9 +103,32 @@ class GameEngine:
         text = envelope.payload.get("text", "")
         await self._broadcast(self._log_envelope("action", f"{character.name}: {text}"))
 
+        try:
+            buffer = await self._narrate_and_apply(character, text)
+        except Exception as exc:
+            await self._send_to(
+                player_id, self._system_envelope(f"The DM couldn't respond: {exc}", level="error")
+            )
+            return
+
+        self._session.log.append({"kind": "narration", "text": buffer})
+        self._session.append_turn(text, buffer)
+        self._session.advance_turn()
+        self._save()
+        await self._broadcast(self._turn_prompt_envelope())
+
+    async def _narrate_and_apply(self, character: CharacterSheet, action_text: str) -> str:
+        """Runs one DM narrate() call for the given character/action, wiring
+        up apply_update/request_roll/update_world, broadcasting narration and
+        any resulting state changes exactly as a normal turn does. Returns
+        the full narration text. Shared by _on_player_action (a real turn)
+        and _narrate_opening_scene (a synthetic "turn" on campaign start that
+        doesn't consume the turn queue)."""
+        player_id = character.player_id
         sheet_changed = False
         npcs_touched: set[str] = set()
         rolls_made: list[dict] = []
+        world_changed = False
 
         def request_roll(update: dict) -> str:
             notation = update.get("dice", "1d20")
@@ -138,26 +194,25 @@ class GameEngine:
 
             return delta_result
 
-        buffer = ""
-        try:
-            async for chunk in self._dm.narrate(
-                history=self._session.history,
-                character_summary=character.model_dump_json(),
-                action_text=text,
-                apply_update=apply_update,
-                request_roll=request_roll,
-            ):
-                buffer += chunk
-                await self._broadcast(self._log_envelope("narration", chunk, done=False))
-            await self._broadcast(self._log_envelope("narration", "", done=True))
-        except Exception as exc:
-            await self._send_to(
-                player_id, self._system_envelope(f"The DM couldn't respond: {exc}", level="error")
-            )
-            return
+        def update_world(update: dict) -> str:
+            nonlocal world_changed
+            result = self._session.world.apply_update(update)
+            if not result.startswith("No changes applied"):
+                world_changed = True
+            return result
 
-        self._session.log.append({"kind": "narration", "text": buffer})
-        self._session.append_turn(text, buffer)
+        buffer = ""
+        async for chunk in self._dm.narrate(
+            history=self._session.history,
+            character_summary=character.model_dump_json(),
+            action_text=action_text,
+            apply_update=apply_update,
+            request_roll=request_roll,
+            update_world=update_world,
+        ):
+            buffer += chunk
+            await self._broadcast(self._log_envelope("narration", chunk, done=False))
+        await self._broadcast(self._log_envelope("narration", "", done=True))
 
         for roll in rolls_made:
             await self._broadcast(self._log_envelope("dice", self._dice_log_text(character.name, roll)))
@@ -169,9 +224,10 @@ class GameEngine:
         for name in npcs_touched:
             await self._broadcast(self._npc_update_envelope(name, self._session.npcs[name]))
 
-        self._session.advance_turn()
-        self._save()
-        await self._broadcast(self._turn_prompt_envelope())
+        if world_changed:
+            await self._broadcast(self._world_update_envelope())
+
+        return buffer
 
     async def _on_chat_message(self, envelope: Envelope) -> None:
         await self._broadcast(self._log_envelope("chat", envelope.payload.get("text", "")))
@@ -250,6 +306,16 @@ class GameEngine:
             session_id=self._session.session_id,
             sender_id="server",
             payload={"name": name, "sheet_delta": npc.model_dump()},
+        )
+
+    def _world_update_envelope(self) -> Envelope:
+        # Broadcast, not private - world state (objectives, location, flags)
+        # is shared observable fiction, same reasoning as _npc_update_envelope.
+        return Envelope(
+            type="world_update",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload=self._session.world.model_dump(),
         )
 
     def _turn_prompt_envelope(self) -> Envelope:

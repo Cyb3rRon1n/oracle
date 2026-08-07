@@ -13,14 +13,14 @@ class StubDM:
     def __init__(self):
         self.calls: list[list[dict]] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
         self.calls.append(list(history))  # snapshot — engine mutates session.history in place after this call
         for word in ["You ", "swing ", "your ", "sword."]:
             yield word
 
 
 class FailingDM:
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
         raise RuntimeError("boom")
         yield  # pragma: no cover - makes this an async generator
 
@@ -33,7 +33,7 @@ class UpdateCharacterDM:
         self._update = update
         self.tool_result: str | None = None
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
         self.tool_result = apply_update(self._update)
         yield "You feel the effects immediately."
 
@@ -47,7 +47,7 @@ class UpdateSequenceDM:
         self._updates = updates
         self.tool_results: list[str] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
         for update in self._updates:
             self.tool_results.append(apply_update(update))
         yield "Something happens."
@@ -61,12 +61,42 @@ class RequestRollDM:
         self._roll_input = roll_input
         self.tool_result: str | None = None
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
         self.tool_result = request_roll(self._roll_input)
         yield "You attempt it."
 
 
-def make_engine(dm):
+class UpdateWorldDM:
+    """Calls update_world with the given tool input, simulating the DM
+    invoking update_world mid-turn, then narrates."""
+
+    def __init__(self, world_update: dict):
+        self._world_update = world_update
+        self.tool_result: str | None = None
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        self.tool_result = update_world(self._world_update)
+        yield "The story moves on."
+
+
+class OpeningSceneDM:
+    """Records the action_text of every narrate() call it receives, and
+    always narrates the same fixed text - used to test the opening-scene
+    hook without depending on real content."""
+
+    def __init__(self):
+        self.action_texts: list[str] = []
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        self.action_texts.append(action_text)
+        yield "Scene."
+
+
+def make_engine(dm, enable_opening_scene=False):
+    # enable_opening_scene defaults off here so the many existing tests that
+    # just call join() and don't care about the opening-scene feature keep
+    # their original "join() has no narration side effect" semantics
+    # unchanged. Tests for the feature itself opt in explicitly.
     session = Session(session_id="test-session")
     received: list[tuple] = []
 
@@ -76,7 +106,8 @@ def make_engine(dm):
     async def send_to(pid, env: Envelope):
         received.append(("send_to", pid, env.type, env.payload))
 
-    return GameEngine(session, dm, broadcast, send_to), session, received
+    engine = GameEngine(session, dm, broadcast, send_to, enable_opening_scene=enable_opening_scene)
+    return engine, session, received
 
 
 async def join(engine, player_id, name="Thrain"):
@@ -518,3 +549,92 @@ async def test_narrator_failure_notifies_player_and_keeps_their_turn():
     errors = [r for r in received if r[0] == "send_to" and r[3].get("level") == "error"]
     assert errors, "narrator failure should notify the player"
     assert session.current_turn == player_id, "turn should not advance on failure"
+
+
+async def test_update_world_tool_call_broadcasts_world_update():
+    dm = UpdateWorldDM({"add_objective": "Find the missing merchant", "location": "Market Square"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I ask around town"},
+    ))
+
+    assert session.world.location == "Market Square"
+    assert [o.text for o in session.world.objectives] == ["Find the missing merchant"]
+
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "world_update"]
+    assert updates, "a real world-state change should broadcast world_update"
+    payload = updates[-1][2]
+    assert payload["location"] == "Market Square"
+    assert payload["objectives"] == [{"text": "Find the missing merchant", "status": "active"}]
+
+
+async def test_update_world_no_op_does_not_broadcast():
+    dm = UpdateWorldDM({})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert not any(r[0] == "broadcast" and r[1] == "world_update" for r in received)
+
+
+async def test_opening_scene_fires_once_on_a_genuine_campaign_start():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm, enable_opening_scene=True)
+    player_id = str(uuid.uuid4())
+
+    await join(engine, player_id)
+
+    assert len(dm.action_texts) == 1
+    assert "adventure begins" in dm.action_texts[0]
+    narration_chunks = [r for r in received if r[0] == "broadcast" and r[2].get("kind") == "narration"]
+    assert narration_chunks, "the opening scene should stream narration like a real turn"
+    assert session.log[-1]["text"] == "Scene."
+    # doesn't consume the player's real first turn
+    assert session.current_turn == player_id
+
+
+async def test_opening_scene_does_not_fire_for_a_second_player_joining_in_progress():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm, enable_opening_scene=True)
+    first_id = str(uuid.uuid4())
+    second_id = str(uuid.uuid4())
+
+    await join(engine, first_id)  # campaign start: fires once
+    assert len(dm.action_texts) == 1
+
+    await join(engine, second_id)  # session already has log entries: should not fire again
+
+    assert len(dm.action_texts) == 1
+
+
+async def test_opening_scene_disabled_by_default_in_make_engine_helper():
+    # Regression guard for the test helper itself: most existing tests in
+    # this file rely on join() having no narration side effect.
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+
+    await join(engine, player_id)
+
+    assert dm.action_texts == []
+
+
+async def test_opening_scene_failure_warns_but_does_not_block_join():
+    engine, session, received = make_engine(FailingDM(), enable_opening_scene=True)
+    player_id = str(uuid.uuid4())
+
+    await join(engine, player_id)
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings, "a failed opening scene should warn, not crash the join"
+    assert session.current_turn == player_id, "the player should still be seated normally"
+    assert session.log == [], "a failed opening scene shouldn't leave a partial log entry"

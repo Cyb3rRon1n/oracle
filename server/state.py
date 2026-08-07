@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -45,15 +47,76 @@ class CharacterSheet(BaseModel):
             self.conditions.remove(remove_condition)
             changes.append(f"no longer {remove_condition}")
 
+        notes = update.get("notes")
+        if notes and notes != self.notes:
+            self.notes = notes
+            changes.append("notes updated")
+
         if not changes:
             return "No changes applied (nothing matched, or all deltas were zero)."
         return "Applied: " + "; ".join(changes) + "."
+
+
+class Objective(BaseModel):
+    text: str
+    status: Literal["active", "completed"] = "active"
 
 
 class WorldState(BaseModel):
     location: str = "unknown"
     summary: str = ""
     flags: dict[str, bool] = Field(default_factory=dict)
+    objectives: list[Objective] = Field(default_factory=list)
+
+    def apply_update(self, update: dict) -> str:
+        """Apply a DM-issued world-state update (the update_world tool).
+        Returns a human-readable summary of what changed, for the tool_result
+        the DM sees back. Mirrors CharacterSheet.apply_update()'s pattern."""
+        changes: list[str] = []
+
+        location = update.get("location")
+        if location and location != self.location:
+            self.location = location
+            changes.append(f"location now '{location}'")
+
+        summary = update.get("summary")
+        if summary and summary != self.summary:
+            self.summary = summary
+            changes.append("summary updated")
+
+        add_objective = update.get("add_objective")
+        if add_objective and not any(o.text == add_objective for o in self.objectives):
+            self.objectives.append(Objective(text=add_objective))
+            changes.append(f"new objective: '{add_objective}'")
+
+        complete_objective = update.get("complete_objective")
+        if complete_objective:
+            for objective in self.objectives:
+                if objective.text == complete_objective and objective.status != "completed":
+                    objective.status = "completed"
+                    changes.append(f"completed: '{complete_objective}'")
+                    break
+
+        remove_objective = update.get("remove_objective")
+        if remove_objective:
+            before = len(self.objectives)
+            self.objectives = [o for o in self.objectives if o.text != remove_objective]
+            if len(self.objectives) < before:
+                changes.append(f"removed objective: '{remove_objective}'")
+
+        set_flag = update.get("set_flag")
+        if set_flag and not self.flags.get(set_flag):
+            self.flags[set_flag] = True
+            changes.append(f"flag set: {set_flag}")
+
+        clear_flag = update.get("clear_flag")
+        if clear_flag and self.flags.get(clear_flag):
+            self.flags[clear_flag] = False
+            changes.append(f"flag cleared: {clear_flag}")
+
+        if not changes:
+            return "No changes applied (nothing matched, or all deltas were zero)."
+        return "Applied: " + "; ".join(changes) + "."
 
 
 MAX_HISTORY_MESSAGES = 12  # 6 player-action/DM-narration exchanges
