@@ -8,6 +8,18 @@ An AI Dungeon Master that runs a real-time tabletop RPG session over a terminal 
 
 A solo engineering project built around one central, unglamorous question: when you hand an LLM a real tool to change game state, how often does it actually use it, and why not? The [README status](#status) and [ROADMAP.md](ROADMAP.md) log that investigation — including a live, reproducible tool-call reliability harness, real percentages across two local models, a candidate fix that was tried and reverted after it didn't hold up under real-engine testing, and a genuine correctness bug the harness itself surfaced — rather than smoothing it into a simple "it works" claim.
 
+## Screenshots
+
+Real captures from a live session — local `qwen2.5:7b` via Ollama, no mocked output. Left panel is the persistent character sheet; right panel is the scrolling narrative log.
+
+**A fresh session's DM-generated opening scene:**
+
+![Opening scene — character sheet on the left, streamed DM narration on the right, ending on a turn prompt](docs/screenshots/opening-scene.svg)
+
+**After submitting a player action, mid-story:**
+
+![A player action echoed into the log followed by the DM's narrated response and the next turn prompt](docs/screenshots/turn-in-progress.svg)
+
 ## Concept
 
 Instead of a single-player chatbot, Oracle is a game engine with an LLM in the GM seat:
