@@ -584,6 +584,62 @@ async def test_dice_result_shows_damage_type_and_ability_together():
             assert "1d8 (slashing) +2 STR" in log_text
 
 
+async def test_dice_result_shows_disadvantage_tag_and_kept_roll():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 4, "rolls": [18, 4],
+                    "sides": 20, "purpose": "stealth check",
+                    "disadvantage": True, "disadvantage_reasons": ["poisoned"],
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "disadvantage: poisoned" in log_text
+            assert "18, 4" in log_text  # both real rolls still shown
+
+
+async def test_dice_result_disadvantage_highlight_uses_kept_roll_not_either_raw_die():
+    # A real, subtle bug this test locks against: with disadvantage,
+    # `rolls` holds both d20s ([18, 4] here) - naively checking "does
+    # *any* entry equal `sides`" would wrongly highlight this roll green
+    # off the discarded 18, even though the kept (and displayed) result is
+    # a low, unremarkable 4.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 4, "rolls": [20, 4],
+                    "sides": 20, "purpose": "stealth check",
+                    "disadvantage": True, "disadvantage_reasons": ["poisoned"],
+                },
+            ))
+            await pilot.pause()
+
+            log = app.screen.query_one("#log")
+            assert not _log_has_styled_segment(log, "green")
+
+
 async def test_dice_result_names_the_other_players_roll():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)

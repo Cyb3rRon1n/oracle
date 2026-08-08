@@ -32,6 +32,36 @@ DEFAULT_NPC_HP = 10
 # arbitrary round number.
 DEFAULT_NPC_XP = 50
 
+# Conditions that impose disadvantage on the *bearer's own* rolls, per
+# their real SRD description (server/rules/srd.json's own condition text)
+# - a real, deliberate subset of the five conditions this project tracks,
+# not all of them. grappled has no self-roll effect at all in the real
+# text (only a speed-0 movement effect, and Oracle has no speed/movement
+# system to hook that to) - correctly excluded, not a gap. stunned's real
+# effects (incapacitated, auto-fail STR/DEX saves, attacks *against* it
+# have advantage) are a structurally different kind of mechanic -
+# target-side and turn-blocking, not "the bearer rolls worse" - and
+# deliberately not modeled in this slice; a stunned character can still
+# act and rolls normally here, a real known gap, not silently pretended
+# away. Also a broader simplification than strict RAW: poisoned/
+# frightened's real text excludes saving throws specifically, but
+# request_roll has no way to distinguish a save from a check from an
+# attack roll today, so this applies disadvantage to *any* roll while the
+# condition is active rather than narrowly scoped per roll type.
+DISADVANTAGE_CONDITIONS = frozenset({"poisoned", "frightened", "prone"})
+
+
+def _has_disadvantage(character: CharacterSheet) -> list[str]:
+    """Returns which of the acting character's current conditions actually
+    trigger disadvantage (empty if none) - a list, not just a bool, so a
+    caller can name the real reason in the roll's own text rather than a
+    bare "disadvantage" with no explanation. Real 5e disadvantage never
+    stacks (multiple sources still just apply once) - callers only need
+    `bool(...)` on this to know whether to roll with disadvantage at all,
+    the list itself is purely for the human-readable reason."""
+    return [c for c in character.conditions if c.casefold() in DISADVANTAGE_CONDITIONS]
+
+
 # A real, deterministic starting sheet instead of every new character
 # beginning as a blank name+HP-10 with nothing else - the immersion gap
 # this closes: a fresh character sheet previously showed nothing but a
@@ -548,8 +578,21 @@ class GameEngine:
             ability = update.get("ability")
             ability_mod = character.stat_modifiers.get(ability) if ability else None
 
+            # Fully automatic, never a model-supplied field - the same
+            # "the engine computes this from real tracked state, not the
+            # model's judgment" reasoning every other mechanic in this
+            # file already follows. A character narrating their way into
+            # a disadvantageous circumstance the engine has no tracked
+            # state for (fighting in darkness, an ally in the way) still
+            # isn't modeled - real, deliberate future work, not silently
+            # promised here.
+            disadvantage_reasons = _has_disadvantage(character)
+            disadvantage = bool(disadvantage_reasons)
+
             try:
-                total, rolls, sides = dice.roll(notation, extra_modifier=ability_mod or 0)
+                total, rolls, sides = dice.roll(
+                    notation, extra_modifier=ability_mod or 0, disadvantage=disadvantage
+                )
             except dice.InvalidDiceNotation as exc:
                 return f"Invalid dice notation: {exc}"
 
@@ -560,12 +603,14 @@ class GameEngine:
                     "dc": dc, "success": success, "reason": reason,
                     "ability": ability, "ability_modifier": ability_mod,
                     "damage_type": damage_type,
+                    "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
                 }
             )
 
             damage_label = f" ({damage_type})" if damage_type else ""
             ability_label = f" +{ability_mod} {ability.upper()}" if ability_mod is not None else ""
-            label = damage_label + ability_label
+            disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage else ""
+            label = damage_label + ability_label + disadvantage_label
             if dc is None:
                 return f"Rolled {notation}{label}: {total} {rolls}."
             return f"Rolled {notation}{label}: {total} {rolls} vs DC {dc} — {'success' if success else 'failure'}."
@@ -770,8 +815,15 @@ class GameEngine:
         notation = envelope.payload.get("dice", "")
         reason = envelope.payload.get("reason", "")
 
+        # A manually-typed /roll is real state too, not exempt from a
+        # tracked condition just because the DM didn't request it - the
+        # same automatic, deterministic disadvantage request_roll's own
+        # closure applies.
+        disadvantage_reasons = _has_disadvantage(character) if character else []
+        disadvantage = bool(disadvantage_reasons)
+
         try:
-            total, rolls, sides = dice.roll(notation)
+            total, rolls, sides = dice.roll(notation, disadvantage=disadvantage)
         except dice.InvalidDiceNotation as exc:
             await self._send_to(player_id, self._system_envelope(str(exc), level="warning"))
             return
@@ -779,6 +831,7 @@ class GameEngine:
         roll = {
             "dice": notation, "total": total, "rolls": rolls, "sides": sides,
             "dc": None, "success": None, "reason": reason,
+            "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
         }
         await self._broadcast(self._log_envelope("dice", self._dice_log_text(name, roll)))
         await self._broadcast(self._dice_result_envelope(player_id, roll))
@@ -794,8 +847,13 @@ class GameEngine:
         ability_label = f" +{ability_mod} {roll['ability'].upper()}" if ability_mod is not None else ""
         damage_type = roll.get("damage_type")
         damage_label = f" ({damage_type})" if damage_type else ""
+        disadvantage_reasons = roll.get("disadvantage_reasons")
+        disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
         label = f" ({roll['reason']})" if roll["reason"] else ""
-        text = f"{name} rolls {roll['dice']}{damage_label}{ability_label}{label}: {roll['total']} {roll['rolls']}"
+        text = (
+            f"{name} rolls {roll['dice']}{damage_label}{ability_label}{disadvantage_label}{label}: "
+            f"{roll['total']} {roll['rolls']}"
+        )
         if roll["dc"] is not None:
             text += f" vs DC {roll['dc']}"
         if roll["success"] is not None:
@@ -819,6 +877,9 @@ class GameEngine:
             payload["ability_modifier"] = roll["ability_modifier"]
         if roll.get("damage_type"):
             payload["damage_type"] = roll["damage_type"]
+        if roll.get("disadvantage"):
+            payload["disadvantage"] = True
+            payload["disadvantage_reasons"] = roll["disadvantage_reasons"]
         return Envelope(
             type="dice_result", session_id=self._session.session_id, sender_id="server", payload=payload
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -1056,6 +1057,112 @@ async def test_dm_requested_roll_with_ability_applies_real_modifier_automaticall
     ]
     assert "+1 DEX" in dice_logs[-1][2]["text"]
     assert dm.tool_result is not None and "+1 DEX" in dm.tool_result
+
+
+async def test_dm_requested_roll_applies_disadvantage_from_a_tracked_condition():
+    dm = RequestRollDM({"dice": "1d20", "dc": 10, "reason": "stealth check"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("poisoned")
+
+    with patch("server.dice.random.randint", side_effect=[18, 4]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I try to sneak past"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["disadvantage"] is True
+    assert payload["disadvantage_reasons"] == ["poisoned"]
+    assert payload["rolls"] == [18, 4]
+    assert payload["result"] == 4  # the kept (lower) roll, not the discarded 18
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "disadvantage: poisoned" in dice_logs[-1][2]["text"]
+    assert dm.tool_result is not None and "disadvantage: poisoned" in dm.tool_result
+
+
+async def test_dm_requested_roll_matches_conditions_case_insensitively():
+    dm = RequestRollDM({"dice": "1d20"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("Frightened")  # DM-typed casing varies
+
+    with patch("server.dice.random.randint", side_effect=[18, 4]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I try to act despite my fear"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results[-1][2]["disadvantage"] is True
+
+
+async def test_dm_requested_roll_multiple_disadvantage_conditions_still_only_apply_once():
+    # Real 5e disadvantage never stacks - this locks that the mechanic
+    # itself doesn't double-roll or otherwise behave differently with two
+    # qualifying conditions present, while still naming both as the reason.
+    dm = RequestRollDM({"dice": "1d20"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.extend(["poisoned", "frightened"])
+
+    with patch("server.dice.random.randint", side_effect=[18, 4]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I push forward anyway"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["disadvantage_reasons"] == ["poisoned", "frightened"]
+    assert len(payload["rolls"]) == 2  # still just one roll-twice, not two
+
+
+async def test_dm_requested_roll_with_a_non_disadvantage_condition_is_unaffected():
+    # grappled has no self-roll effect in the real SRD text (only a
+    # speed-0 movement effect Oracle doesn't model) - a real, deliberate
+    # exclusion, not an oversight.
+    dm = RequestRollDM({"dice": "1d20"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("grappled")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try to break free"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert "disadvantage" not in payload
+    assert len(payload["rolls"]) == 1
+
+
+async def test_player_initiated_roll_also_applies_disadvantage():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("prone")
+
+    with patch("server.dice.random.randint", side_effect=[18, 4]):
+        await engine.handle(Envelope(
+            type="dice_roll", session_id="test-session", sender_id=player_id,
+            payload={"dice": "1d20", "reason": "perception check"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["disadvantage_reasons"] == ["prone"]
+    assert payload["result"] == 4
 
 
 async def test_dm_requested_roll_with_unknown_ability_key_has_no_modifier_applied():
