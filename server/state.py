@@ -130,6 +130,16 @@ class Session(BaseModel):
     world: WorldState = Field(default_factory=WorldState)
     turn_order: list[str] = Field(default_factory=list)
     current_turn_index: int = 0
+    # Whether the pre-game lobby has been left via an explicit start_session
+    # (server/engine.py's GameEngine._on_start_session) - False is the
+    # correct default for a genuinely fresh session, but also for any
+    # session saved before this field existed. GameEngine.handle() never
+    # trusts this field alone for that reason: it treats `started or
+    # bool(log)` as "has the adventure begun", so an old real save with
+    # actual narration history (this project's own real sessions/*.json,
+    # among others) is correctly still recognized as already-started even
+    # though it predates this field and would otherwise load as False.
+    started: bool = False
     log: list[dict] = Field(default_factory=list)
     history: list[dict] = Field(default_factory=list)
     # Per-instance so it can be tuned for a real production session, or

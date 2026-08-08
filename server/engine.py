@@ -148,10 +148,6 @@ class GameEngine:
     async def _on_join_session(self, envelope: Envelope) -> None:
         player_id = envelope.sender_id
         is_new_character = player_id not in self._session.characters
-        # A genuine campaign start - not just this player joining an
-        # already-started session - is the only time an opening scene makes
-        # sense. Log still empty is the signal: nothing has happened yet.
-        is_campaign_start = is_new_character and not self._session.log and self._enable_opening_scene
 
         if is_new_character:
             name = envelope.payload.get("player_name", player_id)
@@ -172,10 +168,84 @@ class GameEngine:
         # correct even after missing an earlier player_left.
         await self._broadcast(self._player_joined_envelope(character))
 
-        if is_campaign_start:
-            await self._narrate_opening_scene(character)
+        # Narration and turn-taking only become visible once the adventure
+        # has actually started (see _on_start_session below) - a fresh join
+        # lands in the client's pre-game lobby, not mid-turn-prompt. This
+        # join is a genuine reconnect into an already-started game - where
+        # the returning player should still see whose turn it is - iff
+        # _has_started() says so.
+        if self._has_started() and self._session.current_turn == player_id:
+            await self._broadcast(self._turn_prompt_envelope())
 
-        if self._session.current_turn == player_id:
+    def _has_started(self) -> bool:
+        # Session.started is the authoritative signal going forward, but a
+        # session saved before that field existed would load as False even
+        # with real narration history already in it - bool(log) is the
+        # fallback that keeps an old real save (this project's own
+        # sessions/*.json among others) correctly recognized as already
+        # started rather than getting dropped back into a pre-game lobby.
+        return self._session.started or bool(self._session.log)
+
+    async def _on_start_session(self, envelope: Envelope) -> None:
+        """The lobby's "Start Adventure" trigger - any joined player may
+        send this (Oracle has no separate host/GM role - turn order and
+        now session-starting are both symmetric across players). Decoupled
+        from _on_join_session on purpose: joining creates your character
+        and lets you review it/chat in the lobby, but the DM doesn't
+        narrate and the turn queue doesn't become visible until someone
+        explicitly starts things - see docs/protocol.md.
+
+        Idempotent via _has_started(): a second start_session (another
+        player also clicking Start around the same moment, or a retry after
+        the first one narrated fine) after the adventure has already begun
+        is a silent no-op, not a re-narrated opening scene. Session.started
+        is set True unconditionally the moment this actually proceeds - not
+        only after a successful narration - so a failed/disabled opening
+        scene doesn't leave the session re-triggerable on every future
+        start_session; see _narrate_opening_scene's own best-effort framing
+        for why a failure there still shouldn't undo this."""
+        if self._has_started() or not self._session.characters:
+            return
+
+        self._session.started = True
+        self._save()
+
+        player_id = envelope.sender_id
+        character = self._session.characters.get(player_id) or next(iter(self._session.characters.values()))
+
+        roster = list(self._session.characters.values())
+        if len(roster) > 1:
+            # A group opening scene isn't a new multi-actor tool-routing
+            # mechanism (character_summary/apply_update still anchor on one
+            # character, same as any other turn) - just a richer prompt so
+            # the DM's narration acknowledges everyone actually present
+            # instead of assuming a lone traveler. Owner's own framing was
+            # "maybe begin with players introducing themselves" - a nudge,
+            # not a hard requirement, so this stays a prompt-level note.
+            names = ", ".join(
+                f"{c.name} the {c.character_class}" if c.character_class else c.name for c in roster
+            )
+            action_text = (
+                f"(The adventure begins. Players present: {names}. Set an opening scene that draws "
+                "everyone in together - consider inviting them to introduce themselves.)"
+            )
+        else:
+            action_text = "(The adventure begins - set an opening scene to draw the player in.)"
+
+        # session_started fires BEFORE narration, not after - a real
+        # ordering bug caught before it ever shipped: _narrate_and_apply
+        # (inside _narrate_opening_scene) broadcasts log_entry narration
+        # chunks and any npc_update as it streams, and a client still on
+        # the lobby screen has nowhere to render them yet. Broadcasting
+        # session_started first lets every client transition into the real
+        # session view first, then watch the opening scene stream in live -
+        # the same experience a normal turn's narration already gives.
+        await self._broadcast(self._session_started_envelope())
+
+        if self._enable_opening_scene:
+            await self._narrate_opening_scene(character, action_text)
+
+        if self._session.current_turn is not None:
             await self._broadcast(self._turn_prompt_envelope())
 
     async def handle_disconnect(self, player_id: str) -> None:
@@ -188,23 +258,20 @@ class GameEngine:
         name = character.name if character else player_id
         await self._broadcast(self._player_left_envelope(player_id, name))
 
-    async def _narrate_opening_scene(self, character: CharacterSheet) -> None:
-        """Best-effort: a missing opening scene shouldn't block joining, so
-        failures here are reported but don't propagate like a real turn's
-        would. Reuses the exact same narrate()/tool-wiring path a real turn
-        uses, via a synthetic action_text, so the DM can set an initial
-        location/objective with update_world exactly like any other turn.
-        check_for_missed_changes=False: an opening scene routinely sets a
-        scene using words this heuristic watches for (a village recently
-        attacked, a wounded NPC met in passing) with no mechanical change
-        ever expected on turn zero - a real false-positive class, not a
-        hypothetical one."""
+    async def _narrate_opening_scene(self, character: CharacterSheet, action_text: str) -> None:
+        """Best-effort: a failed opening scene shouldn't leave the lobby
+        stuck, so failures here are reported but don't propagate like a
+        real turn's would. Reuses the exact same narrate()/tool-wiring path
+        a real turn uses, via a synthetic action_text (built by the caller,
+        _on_start_session - see there for why it varies with roster size),
+        so the DM can set an initial location/objective with update_world
+        exactly like any other turn. check_for_missed_changes=False: an
+        opening scene routinely sets a scene using words this heuristic
+        watches for (a village recently attacked, a wounded NPC met in
+        passing) with no mechanical change ever expected on turn zero - a
+        real false-positive class, not a hypothetical one."""
         try:
-            buffer = await self._narrate_and_apply(
-                character,
-                "(The adventure begins - set an opening scene to draw the player in.)",
-                check_for_missed_changes=False,
-            )
+            buffer = await self._narrate_and_apply(character, action_text, check_for_missed_changes=False)
         except Exception:
             logger.exception("Opening scene narration failed for player_id=%s", character.player_id)
             await self._send_to(
@@ -454,6 +521,11 @@ class GameEngine:
                 "turn_order": self._session.turn_order,
                 "current_turn": self._session.current_turn,
                 "log_tail": self._session.log[-20:],
+                # _has_started(), not the raw field - so a client can route
+                # correctly (lobby vs. session view) even for the disabled-
+                # or failed-narration case where log stays empty despite the
+                # adventure genuinely having started (see _has_started()).
+                "started": self._has_started(),
             },
         )
 
@@ -483,6 +555,21 @@ class GameEngine:
             session_id=self._session.session_id,
             sender_id="server",
             payload={"player_id": player_id, "name": name},
+        )
+
+    def _session_started_envelope(self) -> Envelope:
+        # Broadcast, empty payload - a pure lifecycle signal telling every
+        # client still in the pre-game lobby to transition into the real
+        # session view. Deliberately not inferred from the first narration
+        # log_entry arriving (fragile, and narration is best-effort - see
+        # _narrate_opening_scene - so it might not arrive at all); this
+        # fires unconditionally once _on_start_session has genuinely
+        # transitioned the session out of "not yet started".
+        return Envelope(
+            type="session_started",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload={},
         )
 
     def _player_update_envelope(self, character: CharacterSheet) -> Envelope:
