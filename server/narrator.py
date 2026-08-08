@@ -31,8 +31,12 @@ You have five tools available:
   their sheet (character_summary's ac); an NPC/monster target's AC is in its stat
   block via lookup_rule. For the damage roll after a hit, use request_roll's weapon
   field (the weapon's name) instead of typing its damage die into dice yourself — the
-  engine looks up the real value and reports the damage type too. If the acting
-  character is poisoned, frightened, or prone, the engine automatically rolls that
+  engine looks up the real value and reports the damage type too. Pass roll_kind
+  (attack/save/check) so the engine can apply real per-condition rules correctly —
+  poisoned/frightened don't affect saving throws, and prone only affects attack rolls;
+  without roll_kind the engine can't tell these apart and applies disadvantage more
+  broadly than the real rules do. If the acting character is poisoned, frightened, or
+  prone and the current roll_kind is affected, the engine automatically rolls that
   request_roll with disadvantage (2d20, worse kept) — you don't need to ask for this or
   account for it yourself, but do narrate the result you get back, which may come out
   lower than you'd expect for that reason.
@@ -298,6 +302,19 @@ REQUEST_ROLL_TOOL = {
                     "the same way real damage rolls add an ability modifier on top of the "
                     "weapon's own die. Omit for an attack roll or check - this is for the "
                     "follow-up damage roll after a hit, not the roll to see if it lands."
+                ),
+            },
+            "roll_kind": {
+                "type": "string",
+                "enum": ["attack", "save", "check"],
+                "description": (
+                    "What kind of roll this is - an attack roll, a saving throw, or an "
+                    "ability check. Doesn't change the roll's own math, but some tracked "
+                    "conditions only affect certain roll kinds under the real rules (e.g. "
+                    "poisoned/frightened don't affect saving throws, prone only affects "
+                    "attack rolls) - the engine applies that automatically when this is "
+                    "given. Omit for a roll this doesn't cleanly apply to, e.g. a damage "
+                    "roll after a hit already landed."
                 ),
             },
         },

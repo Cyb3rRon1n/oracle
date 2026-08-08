@@ -900,6 +900,31 @@ async def test_dice_result_shows_ability_modifier_tag_when_present():
             assert "15" in log_text
 
 
+async def test_dice_result_shows_roll_kind_tag_when_present():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 15, "rolls": [15],
+                    "sides": 20, "purpose": "resist the poison", "dc": 12, "success": True,
+                    "roll_kind": "save",
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "1d20 (save)" in log_text
+
+
 async def test_dice_result_shows_damage_type_and_ability_together():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)

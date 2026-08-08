@@ -420,6 +420,62 @@ async def test_mechanical_conditions_disadvantage_applies_over_a_real_session():
             await server_task
 
 
+class RequestsRollWhilePoisonedWithSaveKindDM:
+    """The same real poisoned-condition setup as RequestsRollWhilePoisonedDM
+    above, but this turn's roll names roll_kind="save" - real SRD text
+    never lists saving throws as affected by poisoned, so this should NOT
+    get disadvantage, unlike the roll_kind-omitted case that test already
+    covers."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        apply_update({"add_condition": "poisoned"})
+        request_roll({"dice": "1d20", "dc": 10, "reason": "resist the poison", "roll_kind": "save"})
+        yield "You grit your teeth against the venom."
+
+
+async def test_roll_kind_save_excludes_poisoned_disadvantage_over_a_real_session():
+    """Confirms the roll_kind chain works end to end over a real websocket,
+    not just at the unit level (tests/test_engine.py): a real add_condition
+    call tracks "poisoned" on the real server-side sheet, and the very next
+    request_roll in the same turn - this time naming roll_kind="save" -
+    correctly does NOT roll with disadvantage, the real per-condition
+    RAW scoping this feature exists to add."""
+    session = Session(session_id="e2e-session-12")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, RequestsRollWhilePoisonedWithSaveKindDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8811))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8811", player_id=player_id, is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I try to resist the poison coursing through me", "enter")
+            await _wait_until(lambda: "(save)" in _log_text(app.screen.query_one("#log")))
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "disadvantage" not in log_text
+
+            # A real, direct check on server state.
+            assert "poisoned" in session.characters[player_id].conditions
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_character_edit_notes_and_inventory_over_a_real_session():
     """Confirms /note and /item add/remove genuinely round-trip through a
     real websocket session, out of turn: character_edit is handled the
