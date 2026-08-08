@@ -133,6 +133,93 @@ def test_apply_update_rest_leaves_conditions_untouched():
     assert character.conditions == ["poisoned"]
 
 
+def test_apply_update_hp_drop_to_zero_begins_dying():
+    character = make_character(hp=3, max_hp=10)
+    result = character.apply_update({"hp_delta": -3})
+    assert character.hp == 0
+    assert character.dying is True
+    assert character.death_save_successes == 0
+    assert character.death_save_failures == 0
+    assert "dying" in result
+
+
+def test_apply_update_damage_while_already_down_is_an_automatic_failure():
+    character = make_character(hp=0, max_hp=10, dying=True)
+    result = character.apply_update({"hp_delta": -4})
+    assert character.hp == 0  # clamped, already at the floor
+    assert character.death_save_failures == 1
+    assert character.dying is True  # one failure alone doesn't end it
+    assert "failure" in result
+
+
+def test_apply_update_three_automatic_failures_while_down_kills():
+    character = make_character(hp=0, max_hp=10, dying=True, death_save_failures=2)
+    character.apply_update({"hp_delta": -2})
+    assert character.dead is True
+    assert character.dying is False
+
+
+def test_apply_update_healing_above_zero_clears_dying():
+    character = make_character(hp=0, max_hp=10, dying=True, death_save_successes=1, death_save_failures=1)
+    result = character.apply_update({"hp_delta": 5})
+    assert character.hp == 5
+    assert character.dying is False
+    assert character.death_save_successes == 0
+    assert character.death_save_failures == 0
+    assert "stabilizes" in result
+
+
+def test_apply_update_long_rest_also_clears_dying():
+    # Healing via rest, not just a positive hp_delta - both paths mutate
+    # self.hp, so both need to hit the same "healed above 0" check.
+    character = make_character(hp=0, max_hp=10, dying=True)
+    character.apply_update({"rest": "long"})
+    assert character.hp == 10
+    assert character.dying is False
+
+
+def test_apply_update_never_re_enters_dying_once_dead():
+    character = make_character(hp=0, max_hp=10, dead=True)
+    result = character.apply_update({"hp_delta": -1})
+    assert character.dying is False  # dead is a final state, not a re-triggerable one
+    assert "dying" not in result
+
+
+def test_record_death_save_three_successes_stabilizes():
+    character = make_character(hp=0, max_hp=10, dying=True, death_save_successes=2)
+    result = character.record_death_save(success=True)
+    assert character.dying is False
+    assert character.dead is False
+    assert character.death_save_successes == 0
+    assert "stabilizes" in result
+
+
+def test_record_death_save_three_failures_kills():
+    character = make_character(hp=0, max_hp=10, dying=True, death_save_failures=2)
+    result = character.record_death_save(success=False)
+    assert character.dead is True
+    assert character.dying is False
+    assert "died" in result
+
+
+def test_record_death_save_a_natural_one_counts_as_two_failures():
+    character = make_character(hp=0, max_hp=10, dying=True)
+    character.record_death_save(success=False, count=2)
+    assert character.death_save_failures == 2
+    assert character.dying is True
+
+
+def test_record_death_save_a_natural_one_that_would_be_the_third_failure_stops_at_death():
+    # count=2 on a nat 1 shouldn't record a phantom fourth failure once the
+    # third already ended it - failures stays at exactly 3, not 4 (death,
+    # unlike stabilize, doesn't reset the counters - they're left as the
+    # real record of what killed the character).
+    character = make_character(hp=0, max_hp=10, dying=True, death_save_failures=2)
+    character.record_death_save(success=False, count=2)
+    assert character.death_save_failures == 3
+    assert character.dead is True
+
+
 def test_apply_update_inventory_add_and_remove():
     character = make_character()
 

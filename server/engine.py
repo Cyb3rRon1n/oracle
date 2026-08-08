@@ -175,6 +175,15 @@ def _public_character_view(character: CharacterSheet) -> dict:
         "max_hp": character.max_hp,
         "ac": character.ac,
         "conditions": list(character.conditions),
+        # Whether a character is actively dying or has died is exactly the
+        # kind of urgent, visible-to-the-table fact HP/conditions already
+        # are - other players need to know "Rowan is dying!" to have any
+        # chance of reacting to it. The raw death_save_successes/failures
+        # counts stay owner-only (below, full model_dump() only) - real
+        # bookkeeping toward the outcome, the same private/public split
+        # xp/level already draws.
+        "dying": character.dying,
+        "dead": character.dead,
         # level, not xp - level is a meaningful public fact about a
         # character (like class or HP), the same way another player's
         # level is visible on their sheet at a real table. xp itself stays
@@ -515,6 +524,26 @@ class GameEngine:
             return
 
         character = self._session.characters[player_id]
+
+        # An unconscious character (hp == 0, whichever of the three real
+        # states that covers - actively dying, stabilized-but-unconscious,
+        # or dead) can't take a normal action at all under real 5e - the
+        # same "It's not your turn" rejection pattern just above, applied
+        # to a different reason a submitted action can't proceed. Doesn't
+        # advance the turn (return, not a fallthrough), so a dying player
+        # keeps getting reprompted until they resolve via /deathsave
+        # (exempt from turn order, like /roll - see _on_death_save) rather
+        # than the turn silently skipping past them.
+        if character.hp == 0:
+            if character.dead:
+                message = f"{character.name} has died and can't act."
+            elif character.dying:
+                message = f"{character.name} is unconscious and dying - use /deathsave, not a normal action."
+            else:
+                message = f"{character.name} is unconscious at 0 HP and needs healing before acting again."
+            await self._send_to(player_id, self._system_envelope(message, level="warning"))
+            return
+
         text = envelope.payload.get("text", "")
         await self._broadcast(self._log_envelope("action", f"{character.name}: {text}"))
 
@@ -543,6 +572,14 @@ class GameEngine:
         and _narrate_opening_scene (a synthetic "turn" on campaign start that
         doesn't consume the turn queue)."""
         player_id = character.player_id
+        # Captured before this turn's apply_update closure can mutate them
+        # (the acting character is the same mutable object throughout this
+        # call), the same "compare before vs. after" pattern was_alive/
+        # defeated already use for NPC XP below - so a real transition into
+        # or out of dying can be announced after narration resolves, not
+        # just silently reflected in the next character_update/player_update.
+        was_dying = character.dying
+        was_dead = character.dead
         sheet_changed = False
         npcs_touched: set[str] = set()
         rolls_made: list[dict] = []
@@ -794,6 +831,27 @@ class GameEngine:
                 text += f" {character.name} reaches level {character.level}!"
             await self._broadcast(self._system_envelope(text, level="info"))
 
+        # A dying/dead transition is already reflected in the sheet_changed
+        # character_update/player_update broadcasts above, but neither of
+        # those reads as an announcement the way the XP-award text just
+        # above does - a player watching HP tick to 0 in a redacted "Party"
+        # view shouldn't have to notice that themselves. Compared against
+        # was_dying/was_dead captured before narration started, not just
+        # "is dying now", so a character who was already dying before this
+        # turn (e.g. from the automatic damage-while-down failure inside
+        # CharacterSheet.apply_update) doesn't get re-announced every turn.
+        if character.dead and not was_dead:
+            await self._broadcast(self._system_envelope(f"{character.name} has died.", level="warning"))
+        elif character.dying and not was_dying:
+            await self._broadcast(
+                self._system_envelope(
+                    f"{character.name} drops to 0 HP and is dying! Roll a death save with /deathsave.",
+                    level="warning",
+                )
+            )
+        elif was_dying and not character.dying and not character.dead:
+            await self._broadcast(self._system_envelope(f"{character.name} is no longer dying.", level="info"))
+
         if world_changed:
             await self._broadcast(self._world_update_envelope())
 
@@ -862,6 +920,86 @@ class GameEngine:
         # unlike a mechanical sheet_changed update (_narrate_and_apply) there's
         # no public counterpart broadcast to send here.
         await self._send_to(player_id, self._character_update_envelope(player_id, character))
+        await self._save(player_id)
+
+    async def _on_death_save(self, envelope: Envelope) -> None:
+        """A dying player's own roll against death (docs/protocol.md's
+        "Death saves" section) - deliberately its own dedicated event, not
+        folded into dice_roll. A death save is always a fixed 1d20 with no
+        notation for a player to choose, and needs outcome bookkeeping
+        (successes/failures/stabilize/died) no other roll has to carry -
+        reusing dice_roll's free-text notation input would mean either a
+        player has to remember to always type "/roll 1d20" or this handler
+        special-cases dice_roll internally anyway, neither simpler than a
+        dedicated event.
+
+        Exempt from turn order, like dice_roll/character_edit - deliberately
+        not tied to "the start of the dying character's own turn" the way
+        real 5e's rule actually works. Automating that would mean hooking
+        into turn advancement/turn_prompt to roll for a dying player
+        automatically and skip their turn for them - a bigger, riskier
+        change to the core turn loop than this slice needs, so it's a real,
+        named simplification rather than a silently-dropped nuance: a
+        player can /deathsave whenever they like, not just once per their
+        own turn, and nothing here enforces a once-per-turn cap."""
+        player_id = envelope.sender_id
+        character = self._session.characters.get(player_id)
+        if character is None:
+            await self._send_to(player_id, self._system_envelope("You don't have a character yet.", level="warning"))
+            return
+        if character.dead:
+            await self._send_to(
+                player_id, self._system_envelope(f"{character.name} has already died.", level="warning")
+            )
+            return
+        if not character.dying:
+            await self._send_to(
+                player_id, self._system_envelope("You're not making death saves right now.", level="warning")
+            )
+            return
+
+        total, rolls, sides = dice.roll("1d20")
+        natural = rolls[0]
+
+        # A natural 20 is real 5e's own special case, resolved before the
+        # normal success/failure bookkeeping below rather than folded into
+        # it: the character doesn't just log a success, they regain 1 HP
+        # and wake back up immediately, ending the dying state outright
+        # regardless of however many successes/failures had already
+        # accumulated.
+        if natural == 20:
+            character.hp = 1
+            character.dying = False
+            character.death_save_successes = 0
+            character.death_save_failures = 0
+            outcome_text = f"{character.name} claws back to consciousness with 1 HP!"
+        elif natural == 1:
+            # Counts as two failures under real 5e's own rule -
+            # record_death_save's count=2 stops early if the second
+            # failure would be redundant (already dead from the first).
+            outcome_text = character.record_death_save(success=False, count=2)
+        elif natural >= 10:
+            outcome_text = character.record_death_save(success=True)
+        else:
+            outcome_text = character.record_death_save(success=False)
+
+        # dc=10 (real 5e's own death-save threshold) reuses dice_result's
+        # existing dc/success rendering wholesale - the client already
+        # shows "vs DC 10 — success/failure" and highlights a natural 20/1
+        # on any roll, so a death save needed zero new client-side
+        # rendering code for the roll itself, only the outcome text below.
+        roll = {
+            "dice": "1d20", "total": total, "rolls": rolls, "sides": sides,
+            "dc": 10, "success": total >= 10, "reason": "death save",
+            "disadvantage": False, "disadvantage_reasons": [],
+        }
+        await self._broadcast(self._log_envelope("dice", f"{character.name} rolls a death save: {total}."))
+        await self._broadcast(self._dice_result_envelope(player_id, roll))
+        await self._broadcast(
+            self._system_envelope(outcome_text, level="warning" if character.dead else "info")
+        )
+        await self._send_to(player_id, self._character_update_envelope(player_id, character))
+        await self._broadcast(self._player_update_envelope(character))
         await self._save(player_id)
 
     async def _on_dice_roll(self, envelope: Envelope) -> None:
