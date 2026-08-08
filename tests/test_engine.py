@@ -128,21 +128,32 @@ async def test_join_seats_player_and_starts_their_turn():
 
 
 @pytest.mark.parametrize(
-    "character_class,expected_hp,expected_inventory",
+    "character_class,expected_hp,expected_inventory,expected_stats",
     [
-        ("fighter", 10, ["Longsword", "Leather Armor"]),
-        ("rogue", 8, ["Shortbow", "Leather Armor"]),
-        ("cleric", 8, ["Leather Armor", "Potion of Healing"]),
-        ("wizard", 6, ["Potion of Healing"]),
+        # HP is the SRD hit_die max + a real CON modifier now (every class
+        # places CON second in its own priority order - see
+        # CLASS_ABILITY_PRIORITY - so each gets the Standard Array's 14,
+        # a +2 modifier, uniformly): fighter d10+2=12, rogue d8+2=10,
+        # cleric d8+2=10, wizard d6+2=8.
+        ("fighter", 12, ["Longsword", "Leather Armor"],
+         {"str": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "int": 8}),
+        ("rogue", 10, ["Shortbow", "Leather Armor"],
+         {"dex": 15, "con": 14, "int": 13, "wis": 12, "cha": 10, "str": 8}),
+        ("cleric", 10, ["Leather Armor", "Potion of Healing"],
+         {"wis": 15, "con": 14, "str": 13, "dex": 12, "cha": 10, "int": 8}),
+        ("wizard", 8, ["Potion of Healing"],
+         {"int": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "str": 8}),
     ],
 )
-def test_build_starting_character_gives_a_real_class_kit(character_class, expected_hp, expected_inventory):
+def test_build_starting_character_gives_a_real_class_kit(
+    character_class, expected_hp, expected_inventory, expected_stats
+):
     # Closes the "no character sheet at all" gap: previously every fresh
     # character was just name + hp=10/10 with nothing else, since stats/
     # inventory otherwise only get populated if the DM's update_character
     # tool happens to fire mid-narration - unreliable per this project's
-    # whole tool-call investigation. HP here is the SRD hit_die's max
-    # value (no ability scores/CON modifier yet - see ROADMAP.md).
+    # whole tool-call investigation. HP is the SRD hit_die's max value
+    # plus a real CON modifier (ability scores closed that gap).
     rules = RulesIndex.load_default()
     sheet = build_starting_character("p1", "Rook", character_class, rules)
 
@@ -150,6 +161,8 @@ def test_build_starting_character_gives_a_real_class_kit(character_class, expect
     assert sheet.max_hp == expected_hp
     assert sheet.inventory == expected_inventory
     assert sheet.character_class  # the SRD's display name, e.g. "Fighter"
+    assert sheet.stats == expected_stats
+    assert sheet.stat_modifiers["con"] == 2  # (14 - 10) // 2
 
 
 @pytest.mark.parametrize("character_class", ["", "bard", "not-a-real-class"])
@@ -164,6 +177,7 @@ def test_build_starting_character_falls_back_on_blank_or_unknown_class(character
     assert sheet.max_hp == 10
     assert sheet.inventory == []
     assert sheet.character_class == ""
+    assert sheet.stats == {}
 
 
 async def test_join_with_character_class_builds_real_starting_sheet_end_to_end():
@@ -176,7 +190,7 @@ async def test_join_with_character_class_builds_real_starting_sheet_end_to_end()
     ))
 
     character = session.characters[player_id]
-    assert character.hp == 10
+    assert character.hp == 12  # d10 hit die max (10) + a real CON modifier (+2)
     assert character.character_class == "Fighter"
     assert character.inventory == ["Longsword", "Leather Armor"]
 
@@ -623,7 +637,7 @@ async def test_level_up_grows_hp_by_class_hit_die_and_broadcasts_level_up():
     ))
     character = session.characters[player_id]
     assert character.level == 1
-    assert character.max_hp == 10  # fighter's hit_die is d10
+    assert character.max_hp == 12  # fighter's d10 hit die max (10) + CON modifier (+2)
 
     await engine.handle(Envelope(
         type="player_action", session_id="test-session", sender_id=player_id,
@@ -632,8 +646,8 @@ async def test_level_up_grows_hp_by_class_hit_die_and_broadcasts_level_up():
 
     assert character.xp == 300  # exactly the level-2 threshold
     assert character.level == 2
-    assert character.max_hp == 20  # +10 (fighter's d10 max) for the level gained
-    assert character.hp == 20
+    assert character.max_hp == 24  # +12 (fighter's d10 max + CON mod) for the level gained
+    assert character.hp == 24
 
     level_ups = [
         r for r in received
@@ -764,7 +778,7 @@ async def test_join_broadcasts_player_joined_with_public_view_only():
     assert payload["player_id"] == player_id
     assert payload["name"] == "Rook"
     assert payload["character_class"] == "Fighter"
-    assert payload["hp"] == payload["max_hp"] == 10
+    assert payload["hp"] == payload["max_hp"] == 12  # d10 hit die max (10) + CON modifier (+2)
     assert payload["conditions"] == []
     # A fighter starts with real inventory (Longsword, Leather Armor) - the
     # public view must never leak it, or anyone's own stats/notes.
@@ -790,7 +804,7 @@ async def test_second_players_state_sync_redacts_first_players_inventory():
     ]
     others_view = syncs[-1][3]["characters"][player_id]
     assert others_view["name"] == "Rook"
-    assert others_view["hp"] == others_view["max_hp"] == 10
+    assert others_view["hp"] == others_view["max_hp"] == 12  # d10 hit die max (10) + CON modifier (+2)
     assert "inventory" not in others_view, "another player's inventory must never reach a non-owning client"
     assert "stats" not in others_view
     assert "notes" not in others_view
@@ -960,6 +974,89 @@ async def test_dm_requested_roll_without_dc_has_no_success_verdict():
         if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
     ]
     assert "vs DC" not in dice_logs[-1][2]["text"]
+
+
+async def test_dm_requested_roll_with_ability_applies_real_modifier_automatically():
+    # fighter's real stats (see CLASS_ABILITY_PRIORITY/STANDARD_ARRAY):
+    # str 15(+2), con 14(+2), dex 13(+1), wis 12(+1), cha 10(+0), int 8(-1).
+    dm = RequestRollDM({"dice": "1d20", "dc": 12, "reason": "dexterity check", "ability": "dex"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I tumble past the guard"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["ability"] == "dex"
+    assert payload["ability_modifier"] == 1
+    # The modifier is genuinely added to the total, not just displayed -
+    # result should be exactly the raw d20 roll plus the +1 DEX modifier.
+    assert payload["result"] == sum(payload["rolls"]) + 1
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "+1 DEX" in dice_logs[-1][2]["text"]
+    assert dm.tool_result is not None and "+1 DEX" in dm.tool_result
+
+
+async def test_dm_requested_roll_with_unknown_ability_key_has_no_modifier_applied():
+    # A blank/unrecognized class has no stats at all - an ability key that
+    # doesn't exist on the sheet should be a graceful no-op (no modifier
+    # applied, "ability" omitted from the broadcast payload entirely),
+    # not a crash or a silent +0 that pretends to be a real DEX check.
+    dm = RequestRollDM({"dice": "1d20", "ability": "dex"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)  # no character_class - blank sheet, no stats
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try to dodge"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert "ability" not in payload
+    assert "ability_modifier" not in payload
+    assert payload["result"] == sum(payload["rolls"])
+
+
+async def test_npc_introduction_populates_stats_from_a_matched_srd_monster():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -1}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I size up the goblin"},
+    ))
+
+    # server/rules/srd.json's real goblin stat block.
+    assert session.npcs["goblin"].stats == {"str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8}
+
+
+async def test_npc_introduction_leaves_stats_empty_for_an_unmatched_name():
+    dm = UpdateSequenceDM([{"target": "shadow_beast", "max_hp": 5, "hp_delta": -1}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I size up the shadow beast"},
+    ))
+
+    assert session.npcs["shadow_beast"].stats == {}
 
 
 async def test_dm_requested_roll_with_invalid_notation_reports_error_without_crashing_turn():

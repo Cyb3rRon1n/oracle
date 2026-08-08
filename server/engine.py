@@ -12,7 +12,7 @@ from . import dice
 from .narrator import NarratorBackend
 from .persistence import SessionStore
 from .rules import RulesIndex
-from .state import CharacterSheet, Session
+from .state import ABILITY_KEYS, CharacterSheet, Session, ability_modifier
 
 logger = logging.getLogger(__name__)
 
@@ -38,18 +38,55 @@ DEFAULT_NPC_XP = 50
 # name and HP, since stats/inventory otherwise only get populated if the
 # DM's update_character tool happens to fire, which this project's whole
 # reliability investigation (ROADMAP.md) has shown is unreliable. This
-# stays deliberately small: a class picks starting HP (from the SRD's own
-# hit_die, no ability-score/CON-modifier system - real 5e uses hit die +
-# CON mod, this project has no ability scores at all yet) and a starting
-# item or two from the SRD's existing (limited, CC-BY-4.0) equipment list.
-# Not a full 5e character build - see ROADMAP.md for what's deliberately
-# left for later (ability scores, more classes/equipment).
+# stays deliberately small: a class picks starting HP (the SRD's own
+# hit_die max, plus a real CON modifier - see _generate_stats below) and a
+# starting item or two from the SRD's existing (limited, CC-BY-4.0)
+# equipment list. Not a full 5e character build - see ROADMAP.md for
+# what's still deliberately left for later (more classes/equipment,
+# player-chosen stat allocation instead of a fixed per-class array).
 CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
     "fighter": ["Longsword", "Leather Armor"],
     "rogue": ["Shortbow", "Leather Armor"],
     "cleric": ["Leather Armor", "Potion of Healing"],
     "wizard": ["Potion of Healing"],
 }
+
+# The SRD's own real Standard Array (Basic Rules character-creation
+# option), not an invented spread - same "use the official SRD numbers,
+# don't make one up" convention this file's XP-per-CR/XP-per-level tables
+# already follow.
+STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
+
+# Deliberately hand-written per class, not derived from a formula - same
+# style CLASS_STARTING_EQUIPMENT already uses, and grounded in real data
+# already in this dataset rather than a fresh judgment call: each class's
+# own two entries are exactly its SRD saving_throws (server/rules/srd.json
+# - e.g. fighter's "Strength, Constitution"), CON placed second for every
+# class as a universal survival stat, and the remaining three ordered by
+# ordinary class-archetype priority (a caster wants its remaining physical
+# stat over its remaining mental one, etc.). A blank/unrecognized class
+# has no entry here and gets no stats at all - the same fallback
+# build_starting_character's HP/inventory already use.
+CLASS_ABILITY_PRIORITY: dict[str, tuple[str, ...]] = {
+    "fighter": ("str", "con", "dex", "wis", "cha", "int"),
+    "wizard": ("int", "con", "dex", "wis", "cha", "str"),
+    "rogue": ("dex", "con", "int", "wis", "cha", "str"),
+    "cleric": ("wis", "con", "str", "dex", "cha", "int"),
+}
+
+
+def _generate_stats(character_class: str) -> dict[str, int]:
+    """Assigns the SRD's real Standard Array to a class's own ability
+    priority order - deterministic (the same class always gets the same
+    array), matching this project's existing "no ability-score system
+    should depend on chance" stance nowhere written down but implied by
+    every other deterministic mechanic here (XP awards, level-1 HP).
+    Player-chosen stat allocation is real future work, not attempted here
+    - see ROADMAP.md."""
+    priority = CLASS_ABILITY_PRIORITY.get(character_class.strip().lower())
+    if priority is None:
+        return {}
+    return dict(zip(priority, STANDARD_ARRAY))
 
 
 def _public_character_view(character: CharacterSheet) -> dict:
@@ -79,8 +116,12 @@ def _public_character_view(character: CharacterSheet) -> dict:
 
 
 def _hit_die_max(hit_die: str) -> int:
-    # SRD hit_die values are like "d10" - the max roll, used here as this
-    # project's level-1 HP (no ability scores yet to add a CON modifier).
+    # SRD hit_die values are like "d10" - the max roll, not an actual per-
+    # level roll (real 5e typically rolls past level 1); callers add the
+    # character's real CON modifier on top of this (see
+    # build_starting_character and the level-up HP growth in apply_update
+    # below) - the max-roll-only simplification is what's left, not the
+    # missing CON modifier this comment used to flag.
     return int(hit_die.lstrip("d"))
 
 
@@ -120,13 +161,20 @@ def build_starting_character(
     if class_entry is None:
         return CharacterSheet(player_id=player_id, name=name, hp=10, max_hp=10)
 
-    max_hp = _hit_die_max(class_entry["hit_die"])
+    stats = _generate_stats(character_class)
+    con_mod = ability_modifier(stats["con"]) if stats else 0
+    # Real 5e's level-1 HP formula: hit die max + CON modifier, floored at
+    # 1 (a character can't start with 0 or negative HP even from a bad
+    # CON score) - the CON-modifier half of the "no ability-score/CON
+    # system yet" gap this file used to flag is closed by this line.
+    max_hp = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod)
     return CharacterSheet(
         player_id=player_id,
         name=name,
         hp=max_hp,
         max_hp=max_hp,
         character_class=class_entry["name"],
+        stats=stats,
         inventory=list(CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), [])),
     )
 
@@ -436,8 +484,20 @@ class GameEngine:
             dc = update.get("dc")
             reason = update.get("reason", "")
 
+            # ability, when given, is the acting character's own ability
+            # key (e.g. "dex") - the engine looks up its real modifier
+            # (CharacterSheet.stat_modifiers, already precomputed) and adds
+            # it itself, rather than trusting the DM to compute
+            # floor((score-10)/2) correctly and splice it into the dice
+            # string by hand. dice.roll()'s notation regex only supports
+            # one signed modifier group anyway (no "1d20+3+2"), so this
+            # also sidesteps a real parsing limitation, not just a
+            # reliability one.
+            ability = update.get("ability")
+            ability_mod = character.stat_modifiers.get(ability) if ability else None
+
             try:
-                total, rolls, sides = dice.roll(notation)
+                total, rolls, sides = dice.roll(notation, extra_modifier=ability_mod or 0)
             except dice.InvalidDiceNotation as exc:
                 return f"Invalid dice notation: {exc}"
 
@@ -446,12 +506,14 @@ class GameEngine:
                 {
                     "dice": notation, "total": total, "rolls": rolls, "sides": sides,
                     "dc": dc, "success": success, "reason": reason,
+                    "ability": ability, "ability_modifier": ability_mod,
                 }
             )
 
+            label = f" +{ability_mod} {ability.upper()}" if ability_mod is not None else ""
             if dc is None:
-                return f"Rolled {notation}: {total} {rolls}."
-            return f"Rolled {notation}: {total} {rolls} vs DC {dc} — {'success' if success else 'failure'}."
+                return f"Rolled {notation}{label}: {total} {rolls}."
+            return f"Rolled {notation}{label}: {total} {rolls} vs DC {dc} — {'success' if success else 'failure'}."
 
         def apply_update(update: dict) -> str:
             nonlocal sheet_changed
@@ -487,6 +549,16 @@ class GameEngine:
                 # intended path.
                 max_hp = update.get("max_hp") or DEFAULT_NPC_HP
                 npc = CharacterSheet(player_id=target, name=target, hp=max_hp, max_hp=max_hp)
+                # A known SRD monster's real ability scores were already
+                # sitting in srd.json, just never connected to a tracked
+                # NPC before - the same target-name lookup _xp_for_npc uses
+                # for CR, applied here too so a DM introducing e.g. a real
+                # "goblin" gets its actual stat block (and therefore real
+                # modifiers on any request_roll targeting it) for free,
+                # not just for player characters.
+                monster_entry = self._rules.get_entry("monster", target)
+                if monster_entry is not None:
+                    npc.stats = dict(monster_entry.get("stats", {}))
                 self._session.npcs[npc_key] = npc
 
             # Captured before apply_update mutates hp - this is the
@@ -535,7 +607,13 @@ class GameEngine:
                         if character.character_class else None
                     )
                     if class_entry is not None:
-                        hp_gain = _hit_die_max(class_entry["hit_die"]) * levels_gained
+                        # Same real formula as level-1 HP (hit die max +
+                        # CON modifier, floored at 1 per level) - a
+                        # character with a negative CON modifier still
+                        # gains at least 1 HP per level, never 0 or
+                        # negative growth.
+                        con_mod = ability_modifier(character.stats["con"]) if character.stats else 0
+                        hp_gain = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod) * levels_gained
                         character.max_hp += hp_gain
                         character.hp += hp_gain
                 sheet_changed = True
@@ -644,8 +722,15 @@ class GameEngine:
 
     @staticmethod
     def _dice_log_text(name: str, roll: dict) -> str:
+        # ability/ability_modifier are only ever present on a DM-requested
+        # roll (request_roll) - a plain player /roll never sets them, so
+        # .get() rather than indexing keeps this one shared helper working
+        # for both call sites without every dict-building call site having
+        # to carry two always-None keys just for this function's benefit.
+        ability_mod = roll.get("ability_modifier")
+        ability_label = f" +{ability_mod} {roll['ability'].upper()}" if ability_mod is not None else ""
         label = f" ({roll['reason']})" if roll["reason"] else ""
-        text = f"{name} rolls {roll['dice']}{label}: {roll['total']} {roll['rolls']}"
+        text = f"{name} rolls {roll['dice']}{ability_label}{label}: {roll['total']} {roll['rolls']}"
         if roll["dc"] is not None:
             text += f" vs DC {roll['dc']}"
         if roll["success"] is not None:
@@ -664,6 +749,9 @@ class GameEngine:
         if roll["dc"] is not None:
             payload["dc"] = roll["dc"]
             payload["success"] = roll["success"]
+        if roll.get("ability_modifier") is not None:
+            payload["ability"] = roll["ability"]
+            payload["ability_modifier"] = roll["ability_modifier"]
         return Envelope(
             type="dice_result", session_id=self._session.session_id, sender_id="server", payload=payload
         )
