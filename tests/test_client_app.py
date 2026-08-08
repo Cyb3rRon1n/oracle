@@ -200,3 +200,45 @@ async def test_party_updates_render_in_lobby_sheet_panel_without_inventory():
             rendered = sheet._Static__content
             assert "Rowan" in rendered
             assert "inventory" not in rendered.lower()
+
+
+async def test_turn_prompt_for_another_player_names_them_not_just_your_own_turn():
+    # A real gap found only by running two real clients through a real
+    # session (ROADMAP.md): turn_prompt used to only ever write something
+    # for the player whose turn it now is - anyone else got no indication
+    # at all of whose turn it was. self.others (already populated via
+    # player_joined/state_sync) is what makes naming the other player
+    # possible without a new protocol field.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="player_joined", session_id="s", sender_id="server",
+                payload={
+                    "player_id": "p2", "name": "Rowan", "character_class": "Rogue",
+                    "hp": 8, "max_hp": 8, "conditions": [],
+                },
+            ))
+            await app._handle(Envelope(
+                type="turn_prompt", session_id="s", sender_id="server",
+                payload={"player_id": "p2", "prompt_text": "What do you do?"},
+            ))
+            await pilot.pause()
+
+            log_text = "\n".join(strip.text for strip in app.screen.query_one("#log").lines)
+            assert "Rowan's turn" in log_text
+            assert "Your turn" not in log_text
+
+            await app._handle(Envelope(
+                type="turn_prompt", session_id="s", sender_id="server",
+                payload={"player_id": "p1", "prompt_text": "What do you do?"},
+            ))
+            await pilot.pause()
+
+            log_text = "\n".join(strip.text for strip in app.screen.query_one("#log").lines)
+            assert "Your turn" in log_text

@@ -182,3 +182,92 @@ async def test_real_client_lobby_to_session_flow_over_real_websocket():
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await server_task
+
+
+class NarratesTurnDM:
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        yield f"The DM responds to: {action_text}"
+
+
+async def test_two_real_clients_trade_turns_over_a_real_session():
+    """ROADMAP.md: the architecture has always supported multiple players
+    (turn_order is a list, the transport handles multiple connections),
+    and a real 2-connection join/presence/disconnect pass exists, but
+    nobody had actually taken two real clients through a session trading
+    real player_actions yet. This is that pass - two real
+    DungeonMasterApps, real ClientTransports, one real server, no
+    ClientTransport mocking."""
+    session = Session(session_id="e2e-session-4")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, NarratesTurnDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8802))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player1 = DungeonMasterApp(uri="ws://localhost:8802", player_id=str(uuid.uuid4()), is_new_character=True)
+        player2 = DungeonMasterApp(uri="ws://localhost:8802", player_id=str(uuid.uuid4()), is_new_character=True)
+
+        async with player1.run_test() as pilot1, player2.run_test() as pilot2:
+            await pilot1.click("#name-input")
+            await pilot1.press(*"Thrain")
+            await pilot1.click("#join")
+            await _wait_until(lambda: isinstance(player1.screen, LobbyScreen))
+
+            await pilot2.click("#name-input")
+            await pilot2.press(*"Rowan")
+            await pilot2.click("#join")
+            await _wait_until(lambda: isinstance(player2.screen, LobbyScreen))
+
+            await pilot1.click("#start")
+            await _wait_until(lambda: isinstance(player1.screen, SessionScreen))
+            await _wait_until(lambda: isinstance(player2.screen, SessionScreen))
+
+            # Thrain joined first, so turn_order[0] is Thrain. Both clients
+            # get the same broadcast turn_prompt - a real, previously-
+            # unexercised gap only surfaced by running two real clients:
+            # the non-active player used to get no indication at all of
+            # whose turn it was.
+            await _wait_until(lambda: "Your turn" in _log_text(player1.screen.query_one("#log")))
+            await _wait_until(lambda: "Thrain's turn" in _log_text(player2.screen.query_one("#log")))
+
+            # Rowan acting right now is genuinely out of turn.
+            await pilot2.click("#input")
+            await pilot2.press(*"I peek through the keyhole", "enter")
+            await _wait_until(
+                lambda: "not your turn" in _log_text(player2.screen.query_one("#log")).lower()
+            )
+            assert "keyhole" not in _log_text(player1.screen.query_one("#log")), \
+                "an out-of-turn action must never reach the other player's log"
+
+            await pilot1.click("#input")
+            await pilot1.press(*"I open the door", "enter")
+            await _wait_until(lambda: "open the door" in _log_text(player2.screen.query_one("#log")))
+
+            # Both clients should see Thrain's action and the DM's response
+            # to it - action/narration broadcast to everyone, not just the
+            # acting player.
+            for screen_owner in (player1, player2):
+                log_text = _log_text(screen_owner.screen.query_one("#log"))
+                assert "Thrain: I open the door" in log_text
+                assert "The DM responds to: I open the door" in log_text
+
+            await _wait_until(lambda: "Your turn" in _log_text(player2.screen.query_one("#log")))
+            assert "Rowan's turn" in _log_text(player1.screen.query_one("#log"))
+
+            # Turn has now passed to Rowan - her real player_action should
+            # be accepted and, this time, broadcast to both.
+            await pilot2.click("#input")
+            await pilot2.press(*"I step through the doorway", "enter")
+            await _wait_until(lambda: "step through the doorway" in _log_text(player1.screen.query_one("#log")))
+
+            for screen_owner in (player1, player2):
+                log_text = _log_text(screen_owner.screen.query_one("#log"))
+                assert "Rowan: I step through the doorway" in log_text
+                assert "The DM responds to: I step through the doorway" in log_text
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task

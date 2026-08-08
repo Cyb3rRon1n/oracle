@@ -457,8 +457,22 @@ class DungeonMasterApp(App):
             return
 
         if envelope.type == "turn_prompt":
-            if session_screen is not None and envelope.payload.get("player_id") == self._player_id:
-                session_screen.write_log("[i]Your turn.[/i]")
+            # A real, previously-unexercised multiplayer gap, found only by
+            # actually running two real clients through a real session
+            # (see ROADMAP.md): turn_prompt broadcasts to everyone, but
+            # this used to only ever write something for the player whose
+            # turn it now is - anyone else got no indication at all of
+            # whose turn it was, not even at session start. Every other
+            # player's public view (name included) is already tracked in
+            # self.others from player_joined/state_sync, so this needs no
+            # new protocol field - just using data already on hand.
+            if session_screen is not None:
+                turn_player_id = envelope.payload.get("player_id")
+                if turn_player_id == self._player_id:
+                    session_screen.write_log("[i]Your turn.[/i]")
+                else:
+                    name = self.others.get(turn_player_id, {}).get("name", "Someone")
+                    session_screen.write_log(f"[i]{name}'s turn.[/i]")
             return
 
         if envelope.type == "system_message":
