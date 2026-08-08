@@ -47,45 +47,80 @@ class CharacterSheetPanel(Static):
         character_class = character.get("character_class")
         if character_class:
             name_line += f" ({character_class})"
-        lines = [
-            name_line,
-            f"HP: {character.get('hp')}/{character.get('max_hp')}",
-        ]
+        # A header block (identity + HP) set off by a divider, then
+        # everything else below it - the same shape D&D Beyond's own sheet
+        # uses (name/class up top, core combat stats grouped together and
+        # visually distinct from ability scores/equipment further down) and
+        # Roll20's paged sheet mirrors with its "Core Page" vs. the rest.
+        # Oracle has no AC/Initiative/Speed/ability-score data yet (see
+        # ROADMAP.md - not fabricating placeholder fields for those), so
+        # this only carries over the *shape*: an identity+vitals header,
+        # set apart from the sections below it.
+        lines = [name_line, self._hp_line(character.get("hp"), character.get("max_hp")), self._DIVIDER]
         stats = character.get("stats") or {}
         if stats:
-            lines.append("")
             lines.extend(f"{k}: {v}" for k, v in stats.items())
+            lines.append("")
         inventory = character.get("inventory") or []
         if inventory:
-            lines.append("")
             lines.append("[b]Inventory[/b]")
             lines.extend(f"- {item}" for item in inventory)
+            lines.append("")
         conditions = character.get("conditions") or []
         if conditions:
-            lines.append("")
             lines.append("[b]Conditions[/b]")
             lines.extend(f"- {c}" for c in conditions)
+            lines.append("")
 
         active_objectives = [o for o in (self._world.get("objectives") or []) if o.get("status") == "active"]
         if active_objectives:
-            lines.append("")
             lines.append("[b]Objectives[/b]")
             lines.extend(f"- {o['text']}" for o in active_objectives)
+            lines.append("")
 
         if self._others:
-            lines.append("")
-            lines.append("[b]Other Players[/b]")
+            # "Party", not "Other Players" - the genre-standard term both
+            # D&D Beyond's Campaign dashboard and Roll20's turn-order
+            # tracker use for this exact "everyone else, at a glance" view,
+            # as opposed to a single character's own full sheet.
+            lines.append(self._DIVIDER)
+            lines.append("[b]Party[/b]")
             lines.extend(self._other_player_line(other) for other in self._others.values())
 
-        self.update("\n".join(lines))
+        self.update("\n".join(lines).rstrip())
+
+    _DIVIDER = "[dim]" + "─" * 24 + "[/dim]"
 
     @staticmethod
-    def _other_player_line(other: dict) -> str:
+    def _hp_bar(hp: int | None, max_hp: int | None, width: int = 10) -> str:
+        # The green/yellow/red-by-fraction health bar almost every VTT uses
+        # for token HP at a glance (Roll20's token bars chief among them) -
+        # adapted here to plain block characters since this is a terminal
+        # UI with no bar widgets/images to draw on.
+        hp = hp or 0
+        max_hp = max_hp or 0
+        fraction = (hp / max_hp) if max_hp else 0
+        filled = max(0, min(width, round(fraction * width)))
+        bar = "█" * filled + "░" * (width - filled)
+        color = "green" if fraction > 0.5 else "yellow" if fraction > 0.25 else "red"
+        return f"[{color}]{bar}[/{color}]"
+
+    @classmethod
+    def _hp_line(cls, hp: int | None, max_hp: int | None) -> str:
+        return f"HP {hp or 0}/{max_hp or 0}  {cls._hp_bar(hp, max_hp)}"
+
+    @classmethod
+    def _other_player_line(cls, other: dict) -> str:
         line = f"- {other.get('name', '?')}"
         character_class = other.get("character_class")
         if character_class:
             line += f" ({character_class})"
-        line += f": HP {other.get('hp')}/{other.get('max_hp')}"
+        hp, max_hp = other.get("hp"), other.get("max_hp")
+        # A shorter bar than the main sheet's own - a party glance is meant
+        # to be compact, the same "your own sheet gets full detail, the
+        # party list gets a quick read" split Roll20's turn-order tracker
+        # (small per-token bars) makes relative to your own character sheet.
+        line += f": HP {hp}/{max_hp} {cls._hp_bar(hp, max_hp, width=6)}"
         conditions = other.get("conditions") or []
         if conditions:
             line += f" ({', '.join(conditions)})"
