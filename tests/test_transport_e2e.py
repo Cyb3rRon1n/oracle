@@ -420,6 +420,51 @@ async def test_mechanical_conditions_disadvantage_applies_over_a_real_session():
             await server_task
 
 
+async def test_character_edit_notes_and_inventory_over_a_real_session():
+    """Confirms /note and /item add/remove genuinely round-trip through a
+    real websocket session, out of turn: character_edit is handled the
+    instant it arrives (no DM/narrate() call involved at all, unlike
+    player_action), and the resulting private character_update re-renders
+    the real client's own sheet panel with no narration in the loop."""
+    session = Session(session_id="e2e-session-10")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, StubDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8808))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8808", player_id=player_id, is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"/item add a shiny rock", "enter")
+            await _wait_until(lambda: "a shiny rock" in app.screen.query_one("#sheet")._Static__content)
+
+            await pilot.click("#input")
+            await pilot.press(*"/note the old man owes me a favor", "enter")
+            await pilot.pause()
+
+            # A real, direct check on server state - notes never render
+            # client-side, so the sheet panel alone can't confirm this half.
+            assert session.characters[player_id].notes == "the old man owes me a favor"
+            assert "a shiny rock" in session.characters[player_id].inventory
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_character_import_over_a_real_session_wins_over_typed_name_and_class(tmp_path):
     """Character export is purely client-side (no server involvement, see
     DungeonMasterApp.export_character) so it doesn't need a websocket to

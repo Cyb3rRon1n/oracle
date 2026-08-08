@@ -366,7 +366,7 @@ class SessionScreen(Screen):
             yield CharacterSheetPanel(id="sheet")
             yield RichLog(id="log", wrap=True, markup=True)
         yield Static("", id="status")
-        yield Input(placeholder="What do you do? (/roll 1d20, /chat hello, /export [file])", id="input")
+        yield Input(placeholder="What do you do? (/roll 1d20, /chat hello, /note ..., /item add|remove ..., /export [file])", id="input")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -403,6 +403,21 @@ class SessionScreen(Screen):
             await self.app.transport.send("dice_roll", {"dice": dice, "reason": reason})
         elif text.startswith("/chat "):
             await self.app.transport.send("chat_message", {"text": text[len("/chat "):].strip()})
+        elif text.startswith("/note "):
+            # notes/inventory bookkeeping, not adjudicated by the DM -
+            # server/engine.py's _on_character_edit is the only handler,
+            # exempt from turn order the same as /roll and /chat.
+            await self.app.transport.send(
+                "character_edit", {"field": "notes", "value": text[len("/note "):].strip()}
+            )
+        elif text.startswith("/item add "):
+            await self.app.transport.send(
+                "character_edit", {"field": "add_item", "value": text[len("/item add "):].strip()}
+            )
+        elif text.startswith("/item remove "):
+            await self.app.transport.send(
+                "character_edit", {"field": "remove_item", "value": text[len("/item remove "):].strip()}
+            )
         elif text.startswith("/export"):
             filename = text[len("/export"):].strip() or "character"
             message = await self.app.export_character(filename)
