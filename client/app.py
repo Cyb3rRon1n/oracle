@@ -46,6 +46,18 @@ def _load_character_file(path: str) -> tuple[dict | None, str | None]:
     return data, None
 
 
+def _transcript_text(rich_log: RichLog) -> str:
+    """Plain text of everything currently in a RichLog, one line per Strip.
+    Strip.text already discards Rich markup/styling, leaving just the
+    characters a player actually reads on screen - the same technique the
+    test suite's own _log_text helper already relies on. RichLog's own
+    max_lines defaults to unbounded (none of this client's RichLog
+    instances set it), so .lines genuinely holds the whole session's
+    accumulated log for the lifetime of the widget, not just what's
+    currently scrolled into view."""
+    return "\n".join(strip.text for strip in rich_log.lines)
+
+
 class CharacterSheetPanel(Static):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -366,7 +378,10 @@ class SessionScreen(Screen):
             yield CharacterSheetPanel(id="sheet")
             yield RichLog(id="log", wrap=True, markup=True)
         yield Static("", id="status")
-        yield Input(placeholder="What do you do? (/roll 1d20, /chat hello, /note ..., /item add|remove ..., /export [file])", id="input")
+        yield Input(
+            placeholder="What do you do? (/roll, /chat, /note, /item add|remove, /export, /transcript [file])",
+            id="input",
+        )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -422,6 +437,20 @@ class SessionScreen(Screen):
             filename = text[len("/export"):].strip() or "character"
             message = await self.app.export_character(filename)
             self.write_log(f"[dim]{message}[/dim]")
+        elif text.startswith("/transcript"):
+            # Client-side only, no protocol involved at all - the running
+            # log this reads from is already everything the player has seen
+            # this session, so there's nothing to ask the server for.
+            filename = text[len("/transcript"):].strip() or "transcript"
+            path = Path(filename)
+            if path.suffix != ".txt":
+                path = path.with_suffix(".txt")
+            try:
+                path.write_text(_transcript_text(self.query_one("#log", RichLog)))
+            except OSError as exc:
+                self.write_log(f"[dim]Couldn't save transcript: {exc}[/dim]")
+            else:
+                self.write_log(f"[dim]Transcript saved to {path}[/dim]")
         else:
             # Only a real player_action triggers a DM narrate() call - /roll
             # and /chat are handled instantly server-side with no LLM in the

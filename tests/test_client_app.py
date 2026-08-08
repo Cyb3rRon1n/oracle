@@ -378,6 +378,56 @@ async def test_item_remove_command_sends_character_edit():
             assert app.transport.sent[-1] == ("character_edit", {"field": "remove_item", "value": "a torch"})
 
 
+async def test_transcript_command_writes_plain_text_log_not_sent_to_server(tmp_path):
+    transcript_path = tmp_path / "my_session"
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            # Simulates the real server's own chat_message -> broadcast
+            # log_entry round trip (FakeTransport doesn't echo anything
+            # back on its own) so there's real content in #log to export.
+            await app._handle(Envelope(
+                type="log_entry", session_id="s", sender_id="server",
+                payload={"kind": "chat", "text": "hello party"},
+            ))
+            await pilot.pause()
+
+            sent_before = len(app.transport.sent)
+            await pilot.click("#input")
+            await pilot.press(*f"/transcript {transcript_path}", "enter")
+            await pilot.pause()
+
+            # A pure client-side read of the already-rendered log - nothing
+            # about it should reach the server.
+            assert len(app.transport.sent) == sent_before
+
+            written = (tmp_path / "my_session.txt").read_text()
+            assert "hello party" in written
+            assert "Transcript saved" in _log_text(app.screen.query_one("#log"))
+
+
+async def test_transcript_command_with_no_filename_uses_default_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/transcript", "enter")
+            await pilot.pause()
+
+            assert (tmp_path / "transcript.txt").exists()
+
+
 async def test_party_updates_render_in_lobby_sheet_panel_without_inventory():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)

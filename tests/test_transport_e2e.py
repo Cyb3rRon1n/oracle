@@ -465,6 +465,45 @@ async def test_character_edit_notes_and_inventory_over_a_real_session():
             await server_task
 
 
+async def test_transcript_command_saves_a_real_session_over_a_real_websocket(tmp_path):
+    """/transcript is entirely client-side (no protocol envelope at all -
+    see docs/protocol.md), but the log it reads from is only real once a
+    real client has actually streamed real narration into it over a real
+    connection, not a FakeTransport-driven unit test."""
+    session = Session(session_id="e2e-session-11")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, NarratesOpeningDM(), broadcast, send_to, enable_opening_scene=True)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8809))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        app = DungeonMasterApp(uri="ws://localhost:8809", player_id=str(uuid.uuid4()), is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+            await _wait_until(lambda: "cold wind" in _log_text(app.screen.query_one("#log")))
+
+            transcript_path = tmp_path / "e2e-session-11"
+            await pilot.click("#input")
+            await pilot.press(*f"/transcript {transcript_path}", "enter")
+            await _wait_until(lambda: (tmp_path / "e2e-session-11.txt").exists())
+
+            written = (tmp_path / "e2e-session-11.txt").read_text()
+            assert "cold wind" in written
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_character_import_over_a_real_session_wins_over_typed_name_and_class(tmp_path):
     """Character export is purely client-side (no server involvement, see
     DungeonMasterApp.export_character) so it doesn't need a websocket to
