@@ -111,7 +111,13 @@ class CharacterSheetPanel(Static):
         # fabricating placeholder fields for those); AC joins HP in this
         # header now, ability scores populate further below, like D&D
         # Beyond's own sheet layout.
-        lines = [name_line, self._hp_line(character.get("hp"), character.get("max_hp"), character.get("ac"))]
+        lines = [
+            name_line,
+            self._hp_line(
+                character.get("hp"), character.get("max_hp"), character.get("ac"),
+                dying=character.get("dying", False), dead=character.get("dead", False),
+            ),
+        ]
         # xp is only ever present on the owner's own full sheet (never on
         # an "others"/party entry - server/engine.py's _public_character_view
         # deliberately keeps it private, same boundary inventory/stats/notes
@@ -180,15 +186,35 @@ class CharacterSheetPanel(Static):
         color = "green" if fraction > 0.5 else "yellow" if fraction > 0.25 else "red"
         return f"[{color}]{bar}[/{color}]"
 
+    @staticmethod
+    def _death_status_label(hp: int | None, dying: bool = False, dead: bool = False) -> str:
+        # hp == 0 without dying/dead means stabilized (3 death-save
+        # successes reached, or the same-turn edge case in
+        # CharacterSheet.apply_update where a heal and a drop-to-0 land in
+        # the same update) - still unconscious, just no longer at risk,
+        # a real third state distinct from both DYING and a normal 0 read
+        # as "about to die".
+        if dead:
+            return "  [b red]DEAD[/b red]"
+        if dying:
+            return "  [b red]DYING[/b red]"
+        if (hp or 0) == 0:
+            return "  [yellow]STABLE[/yellow]"
+        return ""
+
     @classmethod
-    def _hp_line(cls, hp: int | None, max_hp: int | None, ac: int | None = None) -> str:
+    def _hp_line(
+        cls, hp: int | None, max_hp: int | None, ac: int | None = None,
+        dying: bool = False, dead: bool = False,
+    ) -> str:
         # ac is optional (an NPC status line has no ac at all pre-this-
         # feature callers, and a genuinely bare/legacy dict might not
         # carry one either) - omitted rather than shown as "AC 0", a real
         # value some future all-armor-stripped character could otherwise
         # be confused with.
         ac_label = f"  AC {ac}" if ac is not None else ""
-        return f"HP {hp or 0}/{max_hp or 0}  {cls._hp_bar(hp, max_hp)}{ac_label}"
+        status_label = cls._death_status_label(hp, dying, dead)
+        return f"HP {hp or 0}/{max_hp or 0}  {cls._hp_bar(hp, max_hp)}{ac_label}{status_label}"
 
     @classmethod
     def _other_player_line(cls, other: dict) -> str:
@@ -206,6 +232,7 @@ class CharacterSheetPanel(Static):
         ac = other.get("ac")
         if ac is not None:
             line += f" AC {ac}"
+        line += cls._death_status_label(hp, other.get("dying", False), other.get("dead", False))
         conditions = other.get("conditions") or []
         if conditions:
             line += f" ({', '.join(conditions)})"
@@ -416,6 +443,12 @@ class SessionScreen(Screen):
         if text.startswith("/roll "):
             dice, _, reason = text[len("/roll "):].strip().partition(" ")
             await self.app.transport.send("dice_roll", {"dice": dice, "reason": reason})
+        elif text.startswith("/deathsave"):
+            # Empty payload - the character being rolled for is always the
+            # sender's own (server/engine.py's _on_death_save), the same
+            # "no payload needed, sender_id says who" shape start_session
+            # already uses.
+            await self.app.transport.send("death_save", {})
         elif text.startswith("/chat "):
             await self.app.transport.send("chat_message", {"text": text[len("/chat "):].strip()})
         elif text.startswith("/note "):

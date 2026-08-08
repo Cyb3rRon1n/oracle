@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from client.app import DungeonMasterApp, LobbyScreen, SessionScreen, WelcomeScreen
+from client.app import CharacterSheetPanel, DungeonMasterApp, LobbyScreen, SessionScreen, WelcomeScreen
 from shared.protocol import Envelope
 from textual.css.query import NoMatches
 
@@ -416,6 +416,42 @@ async def test_ordinary_system_message_does_not_get_advisory_styling():
             log = app.screen.query_one("#log")
             assert "not your turn" in _log_text(log)
             assert not _log_has_styled_segment(log, "yellow")
+
+
+async def test_deathsave_command_sends_death_save_with_no_payload():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/deathsave", "enter")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("death_save", {})
+
+
+def test_death_status_label_is_empty_for_a_healthy_character():
+    assert CharacterSheetPanel._death_status_label(10) == ""
+
+
+def test_death_status_label_shows_stable_at_zero_hp_with_no_flags():
+    assert "STABLE" in CharacterSheetPanel._death_status_label(0)
+
+
+def test_death_status_label_shows_dying_over_stable():
+    label = CharacterSheetPanel._death_status_label(0, dying=True)
+    assert "DYING" in label
+    assert "STABLE" not in label
+
+
+def test_death_status_label_shows_dead_over_dying():
+    label = CharacterSheetPanel._death_status_label(0, dying=True, dead=True)
+    assert "DEAD" in label
+    assert "DYING" not in label
 
 
 async def test_transcript_command_writes_plain_text_log_not_sent_to_server(tmp_path):

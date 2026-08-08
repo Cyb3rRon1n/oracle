@@ -12,6 +12,7 @@ EventType = Literal[
     "chat_message",
     "character_edit",
     "dice_roll",
+    "death_save",
     "reconnect",
     "start_session",
     # server -> client
