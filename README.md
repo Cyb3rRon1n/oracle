@@ -26,7 +26,7 @@ The first two are real captures from a live session — local `qwen2.5:7b` via O
 
 **A real level-up** — the engine-driven XP award and HP growth are exactly what a live model would trigger too; only the narration line ("Your blade finds its mark...") is a scripted stand-in, since this dev environment has no live Ollama/Anthropic access to capture from (see [ROADMAP.md](ROADMAP.md)):
 
-![Character sheet showing Lv 2, full HP after a level-up, and real ability scores with modifiers, with the log showing "Thrain defeats dire wolf and gains 300 XP! Thrain reaches level 2!"](docs/screenshots/xp-level-up.svg)
+![Character sheet showing Lv 2, full HP after a level-up, real AC, and real ability scores with modifiers, with the log showing "Thrain defeats dire wolf and gains 300 XP! Thrain reaches level 2!"](docs/screenshots/xp-level-up.svg)
 
 `scripts/generate_screenshots.py` (`python -m scripts.generate_screenshots`) regenerates the two non-live screenshots above after a TUI change — it does not and cannot touch the two live-Ollama captures, which need a real model session to recapture honestly.
 
@@ -42,6 +42,7 @@ Instead of a single-player chatbot, Oracle is a game engine with an LLM in the G
 - **Character export/import**: `/export` saves your full character (progression included — XP, level, inventory, notes) to a local file at any point; import it back in on a future Join to pick up exactly where you left off, instead of losing progress once a session ends.
 - **Real ability scores (STR/DEX/CON/INT/WIS/CHA)**, assigned deterministically from the SRD's own real Standard Array per class, driving real HP growth (a genuine CON modifier, not just a flat hit-die roll) and real modifiers on DM-requested rolls — the engine computes and applies the modifier itself rather than trusting the model to do that arithmetic correctly.
 - **Rest and recovery**: a long rest fully heals, a short rest heals about half of what's missing — the DM tells the engine a character rested, the engine does the actual math, instead of the model guessing an HP number itself.
+- **Structured equipment**: real AC (armor + DEX modifier, computed automatically at character creation) and real weapon damage dice on attack rolls — the SRD's own equipment data (a longsword's real `1d8 slashing`, leather armor's real `11 + Dex modifier`) drives the engine, not the model inventing numbers.
 
 ## Planned (later)
 
@@ -211,7 +212,7 @@ That investigation is now backed by a reusable, version-controlled harness (`scr
 
 Beyond reliability, a research-informed pass added the pieces that make a session feel like a story worth following rather than a chatbot answering one prompt at a time: a real `update_world` tool tracking persistent objectives/plot threads/location (Claude-only, same reliability reasoning as `request_roll`), NPC memory via a `notes` field the DM now actually uses (both backends), and a DM-generated opening scene on a fresh session instead of silence until the player acts first (both backends). Also not yet verified live for the same reason as `request_roll` above.
 
-Most recently: real D&D-style XP and leveling, awarded deterministically off engine-observed state (an NPC's HP hitting 0) rather than a DM tool call, so it doesn't inherit the tool-call reliability question above; character export/import, so a character's progression survives across sessions; real ability scores, with the engine — not the DM model — computing modifiers and applying them to HP growth and requested rolls; and rest/recovery, the same "engine computes the number" reasoning applied to healing. All fully verified end-to-end, including over a real websocket connection; see [ROADMAP.md](ROADMAP.md).
+Most recently: real D&D-style XP and leveling, awarded deterministically off engine-observed state (an NPC's HP hitting 0) rather than a DM tool call, so it doesn't inherit the tool-call reliability question above; character export/import, so a character's progression survives across sessions; real ability scores, with the engine — not the DM model — computing modifiers and applying them to HP growth and requested rolls; rest/recovery, the same "engine computes the number" reasoning applied to healing; and structured equipment, with real AC and weapon damage dice pulled from the SRD's own equipment data instead of invented. All fully verified end-to-end, including over a real websocket connection; see [ROADMAP.md](ROADMAP.md).
 
 See [ROADMAP.md](ROADMAP.md) for what's next and why, in priority order.
 

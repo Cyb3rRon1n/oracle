@@ -9,6 +9,15 @@ def make_character(**overrides) -> CharacterSheet:
     return CharacterSheet(**defaults)
 
 
+def test_ac_defaults_to_the_unarmored_baseline():
+    # A real, stored field (unlike stat_modifiers), so this default matters
+    # for any sheet server/engine.py's build_starting_character doesn't
+    # explicitly compute a real value for - a blank/unrecognized class, a
+    # legacy/pre-this-feature imported character, or a bare test fixture.
+    character = make_character()
+    assert character.ac == 10
+
+
 def test_ability_modifier_standard_5e_formula():
     # A handful of real reference points from the SRD's own ability
     # modifier table - even scores are exact, odd scores round down.

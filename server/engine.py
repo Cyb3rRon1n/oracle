@@ -89,6 +89,37 @@ def _generate_stats(character_class: str) -> dict[str, int]:
     return dict(zip(priority, STANDARD_ARRAY))
 
 
+def _armor_base_ac(equipment_entry: dict) -> int | None:
+    """Parses the base AC number out of a real SRD equipment entry's own
+    `ac` field (e.g. "11 + Dex modifier") - `None` for equipment with no
+    `ac` field at all (most equipment isn't armor) or a shape this can't
+    parse, so a caller can fall back rather than guess a value."""
+    ac_text = equipment_entry.get("ac")
+    if not ac_text:
+        return None
+    match = re.match(r"(\d+)", ac_text)
+    return int(match.group(1)) if match else None
+
+
+def _compute_ac(inventory: list[str], dex_modifier: int, rules: RulesIndex) -> int:
+    """Real 5e's own formula: 10 (unarmored) + DEX modifier, or an equipped
+    armor's own base AC + DEX modifier if better. Generalized over whatever
+    armor actually appears in `inventory` (matched against real SRD
+    equipment data) rather than hardcoded to one item, so it keeps working
+    without a code change if more armor is added to srd.json later - only
+    leather_armor exists there today, and it happens to have no DEX cap,
+    so a capped-armor-type case (medium/heavy armor in real 5e) is real,
+    untested future work, not something this formula already handles."""
+    base = 10
+    for item in inventory:
+        entry = rules.get_entry("equipment", item)
+        if entry is not None:
+            armor_base = _armor_base_ac(entry)
+            if armor_base is not None:
+                base = max(base, armor_base)
+    return base + dex_modifier
+
+
 def _public_character_view(character: CharacterSheet) -> dict:
     """The subset of a player character's sheet visible to *other* players -
     name, class, HP, and conditions, but never inventory/stats/notes. Backs
@@ -103,6 +134,7 @@ def _public_character_view(character: CharacterSheet) -> dict:
         "character_class": character.character_class,
         "hp": character.hp,
         "max_hp": character.max_hp,
+        "ac": character.ac,
         "conditions": list(character.conditions),
         # level, not xp - level is a meaningful public fact about a
         # character (like class or HP), the same way another player's
@@ -168,6 +200,8 @@ def build_starting_character(
     # CON score) - the CON-modifier half of the "no ability-score/CON
     # system yet" gap this file used to flag is closed by this line.
     max_hp = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod)
+    inventory = list(CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), []))
+    dex_mod = ability_modifier(stats["dex"]) if stats else 0
     return CharacterSheet(
         player_id=player_id,
         name=name,
@@ -175,7 +209,8 @@ def build_starting_character(
         max_hp=max_hp,
         character_class=class_entry["name"],
         stats=stats,
-        inventory=list(CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), [])),
+        inventory=inventory,
+        ac=_compute_ac(inventory, dex_mod, rules),
     )
 
 
@@ -484,6 +519,22 @@ class GameEngine:
             dc = update.get("dc")
             reason = update.get("reason", "")
 
+            # weapon, when given, is an equipment name (e.g. "longsword") -
+            # the engine looks up its real SRD damage die and uses that as
+            # the notation instead of whatever the model typed, the same
+            # "resolve real data server-side rather than trust the model to
+            # get it right" reasoning ability already applies. A name that
+            # doesn't match known equipment falls through to the given
+            # dice unchanged - the same graceful-miss convention every
+            # other name-based lookup in this file already follows.
+            weapon = update.get("weapon")
+            damage_type = None
+            if weapon:
+                equipment_entry = self._rules.get_entry("equipment", weapon)
+                weapon_damage = equipment_entry.get("damage") if equipment_entry else None
+                if weapon_damage:
+                    notation, _, damage_type = weapon_damage.partition(" ")
+
             # ability, when given, is the acting character's own ability
             # key (e.g. "dex") - the engine looks up its real modifier
             # (CharacterSheet.stat_modifiers, already precomputed) and adds
@@ -492,7 +543,8 @@ class GameEngine:
             # string by hand. dice.roll()'s notation regex only supports
             # one signed modifier group anyway (no "1d20+3+2"), so this
             # also sidesteps a real parsing limitation, not just a
-            # reliability one.
+            # reliability one. Composes naturally with weapon above - a
+            # real 5e damage roll is exactly "weapon's die + ability mod".
             ability = update.get("ability")
             ability_mod = character.stat_modifiers.get(ability) if ability else None
 
@@ -507,10 +559,13 @@ class GameEngine:
                     "dice": notation, "total": total, "rolls": rolls, "sides": sides,
                     "dc": dc, "success": success, "reason": reason,
                     "ability": ability, "ability_modifier": ability_mod,
+                    "damage_type": damage_type,
                 }
             )
 
-            label = f" +{ability_mod} {ability.upper()}" if ability_mod is not None else ""
+            damage_label = f" ({damage_type})" if damage_type else ""
+            ability_label = f" +{ability_mod} {ability.upper()}" if ability_mod is not None else ""
+            label = damage_label + ability_label
             if dc is None:
                 return f"Rolled {notation}{label}: {total} {rolls}."
             return f"Rolled {notation}{label}: {total} {rolls} vs DC {dc} — {'success' if success else 'failure'}."
@@ -559,6 +614,14 @@ class GameEngine:
                 monster_entry = self._rules.get_entry("monster", target)
                 if monster_entry is not None:
                     npc.stats = dict(monster_entry.get("stats", {}))
+                    # A real 5e monster's AC is a flat authored value (armor,
+                    # natural hide, etc. already folded in) - copied
+                    # directly, unlike a player's AC which is *computed*
+                    # from armor + DEX (_compute_ac above). Falls back to
+                    # CharacterSheet.ac's own default (10) if this monster
+                    # entry has no "ac" field, same as an unmatched name.
+                    if "ac" in monster_entry:
+                        npc.ac = monster_entry["ac"]
                 self._session.npcs[npc_key] = npc
 
             # Captured before apply_update mutates hp - this is the
@@ -729,8 +792,10 @@ class GameEngine:
         # to carry two always-None keys just for this function's benefit.
         ability_mod = roll.get("ability_modifier")
         ability_label = f" +{ability_mod} {roll['ability'].upper()}" if ability_mod is not None else ""
+        damage_type = roll.get("damage_type")
+        damage_label = f" ({damage_type})" if damage_type else ""
         label = f" ({roll['reason']})" if roll["reason"] else ""
-        text = f"{name} rolls {roll['dice']}{ability_label}{label}: {roll['total']} {roll['rolls']}"
+        text = f"{name} rolls {roll['dice']}{damage_label}{ability_label}{label}: {roll['total']} {roll['rolls']}"
         if roll["dc"] is not None:
             text += f" vs DC {roll['dc']}"
         if roll["success"] is not None:
@@ -752,6 +817,8 @@ class GameEngine:
         if roll.get("ability_modifier") is not None:
             payload["ability"] = roll["ability"]
             payload["ability_modifier"] = roll["ability_modifier"]
+        if roll.get("damage_type"):
+            payload["damage_type"] = roll["damage_type"]
         return Envelope(
             type="dice_result", session_id=self._session.session_id, sender_id="server", payload=payload
         )

@@ -90,17 +90,16 @@ class CharacterSheetPanel(Static):
         # (e.g. an NPC view, which has no level at all) would fall through
         # to the default here.
         name_line += f"  Lv {character.get('level', 1)}"
-        # A header block (identity + HP) set off by a divider, then
+        # A header block (identity + HP/AC) set off by a divider, then
         # everything else below it - the same shape D&D Beyond's own sheet
         # uses (name/class up top, core combat stats grouped together and
         # visually distinct from ability scores/equipment further down) and
         # Roll20's paged sheet mirrors with its "Core Page" vs. the rest.
-        # Oracle still has no AC/Initiative/Speed data (see ROADMAP.md -
-        # not fabricating placeholder fields for those), so this only
-        # carries over the *shape*: an identity+vitals header, set apart
-        # from the sections below it - ability scores now populate below,
-        # like D&D Beyond's own ability-score block does.
-        lines = [name_line, self._hp_line(character.get("hp"), character.get("max_hp"))]
+        # Oracle still has no Initiative/Speed data (see ROADMAP.md - not
+        # fabricating placeholder fields for those); AC joins HP in this
+        # header now, ability scores populate further below, like D&D
+        # Beyond's own sheet layout.
+        lines = [name_line, self._hp_line(character.get("hp"), character.get("max_hp"), character.get("ac"))]
         # xp is only ever present on the owner's own full sheet (never on
         # an "others"/party entry - server/engine.py's _public_character_view
         # deliberately keeps it private, same boundary inventory/stats/notes
@@ -170,8 +169,14 @@ class CharacterSheetPanel(Static):
         return f"[{color}]{bar}[/{color}]"
 
     @classmethod
-    def _hp_line(cls, hp: int | None, max_hp: int | None) -> str:
-        return f"HP {hp or 0}/{max_hp or 0}  {cls._hp_bar(hp, max_hp)}"
+    def _hp_line(cls, hp: int | None, max_hp: int | None, ac: int | None = None) -> str:
+        # ac is optional (an NPC status line has no ac at all pre-this-
+        # feature callers, and a genuinely bare/legacy dict might not
+        # carry one either) - omitted rather than shown as "AC 0", a real
+        # value some future all-armor-stripped character could otherwise
+        # be confused with.
+        ac_label = f"  AC {ac}" if ac is not None else ""
+        return f"HP {hp or 0}/{max_hp or 0}  {cls._hp_bar(hp, max_hp)}{ac_label}"
 
     @classmethod
     def _other_player_line(cls, other: dict) -> str:
@@ -186,6 +191,9 @@ class CharacterSheetPanel(Static):
         # party list gets a quick read" split Roll20's turn-order tracker
         # (small per-token bars) makes relative to your own character sheet.
         line += f": HP {hp}/{max_hp} {cls._hp_bar(hp, max_hp, width=6)}"
+        ac = other.get("ac")
+        if ac is not None:
+            line += f" AC {ac}"
         conditions = other.get("conditions") or []
         if conditions:
             line += f" ({', '.join(conditions)})"
@@ -194,6 +202,9 @@ class CharacterSheetPanel(Static):
 
 def _npc_status_line(name: str, npc: dict) -> str:
     line = f"[dim]{name}: HP {npc.get('hp')}/{npc.get('max_hp')}"
+    ac = npc.get("ac")
+    if ac is not None:
+        line += f" AC {ac}"
     conditions = npc.get("conditions") or []
     if conditions:
         line += f" ({', '.join(conditions)})"
@@ -508,6 +519,14 @@ class DungeonMasterApp(App):
         sides = payload.get("sides")
         purpose = payload.get("purpose")
         label = f" ({purpose})" if purpose else ""
+
+        # damage_type only ever appears on a DM-requested weapon damage
+        # roll (server/engine.py's request_roll closure resolving a real
+        # weapon field) - shown right after the die itself, matching the
+        # server's own tool_result wording ("1d8 (slashing)").
+        damage_type = payload.get("damage_type")
+        if damage_type:
+            notation = f"{notation} ({damage_type})"
 
         # ability/ability_modifier only ever appear on a DM-requested roll
         # tied to one of the character's own ability scores

@@ -34,6 +34,20 @@ class CharacterSheet(BaseModel):
     notes: str = ""
     xp: int = 0
     level: int = 1
+    # Real 5e's own unarmored baseline (10 + DEX modifier), same fallback a
+    # blank/unrecognized class already gets for HP/inventory. A real player
+    # character's actual AC (armor + DEX modifier) is computed once by
+    # server/engine.py's build_starting_character, which has both the SRD
+    # equipment data and the character's own stats in hand; a plain stored
+    # field, not a computed one like stat_modifiers, since a real 5e
+    # monster's AC (copied verbatim from srd.json onto a tracked NPC) is a
+    # flat authored value, not a formula derived from its own stats/gear -
+    # the two need genuinely different sources, so one field can't be
+    # computed from the sheet alone for both roles. A real, documented
+    # simplification: this doesn't recompute if inventory changes later
+    # (e.g. a player picks up different armor mid-session) - see
+    # docs/protocol.md's "Structured equipment" section.
+    ac: int = 10
 
     @computed_field
     @property
