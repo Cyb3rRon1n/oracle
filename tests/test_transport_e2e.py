@@ -248,6 +248,71 @@ async def test_defeating_an_npc_awards_xp_and_updates_the_sheet_panel_over_a_rea
             await server_task
 
 
+class DefeatsBossForLevel4DM:
+    """Simulates a DM turn that kills a boss worth exactly the level-4 XP
+    threshold (2700, server/rules/srd.json's leveling.xp_by_level) in one
+    award - exercises the real Ability Score Improvement trigger
+    (server/engine.py's _apply_ability_score_improvements), not just a
+    level-2 XP-award turn like DefeatsGoblinDM above."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        apply_update({"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 2700})
+        yield "You strike the boss down."
+
+
+async def test_ability_score_improvement_on_level_up_over_a_real_session():
+    """Confirms the ASI chain works end to end over a real websocket, not
+    just at the engine-unit level (tests/test_engine.py): a real fighter
+    joins with its real Standard-Array-generated STR (15), a real kill
+    worth exactly 2700 XP crosses the real level-4 threshold, and both the
+    real system_message announcement and the real re-rendered sheet panel
+    reflect the improved STR - not just directly-constructed test dicts."""
+    session = Session(session_id="e2e-session-6b")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, DefeatsBossForLevel4DM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8814))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8814", player_id=player_id, is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#class-input")
+            await pilot.press(*"fighter")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I strike the boss down", "enter")
+            await _wait_until(lambda: "reaches level 4" in _log_text(app.screen.query_one("#log")))
+
+            # Not a single "STR increases" substring check - the RichLog
+            # widget wraps long lines, which can (and did, found by
+            # actually running this) split "STR increases!" across two
+            # wrapped lines with a newline in between.
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "STR" in log_text
+            assert "increases" in log_text
+
+            # A real, direct check on server state.
+            assert session.characters[player_id].stats["str"] == 17
+
+            sheet = app.screen.query_one("#sheet")
+            assert "STR 17" in sheet._Static__content
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 class RequestsAbilityRollDM:
     """Simulates a DM turn requesting a DEX check - exercises the real
     ability-modifier plumbing (server/engine.py's request_roll closure,
