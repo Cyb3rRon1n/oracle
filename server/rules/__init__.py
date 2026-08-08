@@ -42,6 +42,23 @@ class RulesIndex:
         entries = self._data.get(key, {})
         return entries.get(_slug(name))
 
+    def xp_thresholds(self) -> dict[int, int]:
+        """Level -> cumulative XP required to reach it, from the SRD's own
+        Character Advancement table. Not name-keyed like CATEGORY_KEYS'
+        entries, so this gets its own accessor rather than going through
+        get_entry() - server/state.py's CharacterSheet.gain_xp() takes this
+        directly."""
+        return {int(level): xp for level, xp in self._data["leveling"]["xp_by_level"].items()}
+
+    def xp_for_cr(self, challenge_rating: str) -> int | None:
+        """XP awarded for defeating a monster of the given challenge rating
+        (e.g. "1/4", "2"), from the SRD's own Experience Points by
+        Challenge Rating table. None if the CR string isn't recognized -
+        callers fall back to a flat default rather than treating this as
+        an error, the same "not present isn't an error" convention
+        detect_gpu()-style functions across this workspace already follow."""
+        return self._data["leveling"]["xp_by_cr"].get(challenge_rating)
+
 
 def _slug(name: str) -> str:
     return name.strip().lower().replace(" ", "_").replace("'", "")

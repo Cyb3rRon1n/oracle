@@ -56,6 +56,14 @@ class CharacterSheetPanel(Static):
         character_class = character.get("character_class")
         if character_class:
             name_line += f" ({character_class})"
+        # "Lv N" alongside class - the same header real sheets put level in
+        # (D&D Beyond shows it right next to class on the summary panel).
+        # level defaults to 1 rather than being omitted when absent, since
+        # every real character sheet payload carries it (server/state.py's
+        # CharacterSheet.level default) - only a genuinely bare/legacy dict
+        # (e.g. an NPC view, which has no level at all) would fall through
+        # to the default here.
+        name_line += f"  Lv {character.get('level', 1)}"
         # A header block (identity + HP) set off by a divider, then
         # everything else below it - the same shape D&D Beyond's own sheet
         # uses (name/class up top, core combat stats grouped together and
@@ -65,7 +73,14 @@ class CharacterSheetPanel(Static):
         # ROADMAP.md - not fabricating placeholder fields for those), so
         # this only carries over the *shape*: an identity+vitals header,
         # set apart from the sections below it.
-        lines = [name_line, self._hp_line(character.get("hp"), character.get("max_hp")), self._DIVIDER]
+        lines = [name_line, self._hp_line(character.get("hp"), character.get("max_hp"))]
+        # xp is only ever present on the owner's own full sheet (never on
+        # an "others"/party entry - server/engine.py's _public_character_view
+        # deliberately keeps it private, same boundary inventory/stats/notes
+        # already have), so this line only shows up on your own sheet.
+        if "xp" in character:
+            lines.append(f"[dim]XP: {character.get('xp', 0)}[/dim]")
+        lines.append(self._DIVIDER)
         stats = character.get("stats") or {}
         if stats:
             lines.extend(f"{k}: {v}" for k, v in stats.items())
@@ -124,6 +139,7 @@ class CharacterSheetPanel(Static):
         character_class = other.get("character_class")
         if character_class:
             line += f" ({character_class})"
+        line += f" Lv{other.get('level', 1)}"
         hp, max_hp = other.get("hp"), other.get("max_hp")
         # A shorter bar than the main sheet's own - a party glance is meant
         # to be compact, the same "your own sheet gets full detail, the

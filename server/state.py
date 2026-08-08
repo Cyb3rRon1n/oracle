@@ -15,6 +15,39 @@ class CharacterSheet(BaseModel):
     inventory: list[str] = Field(default_factory=list)
     conditions: list[str] = Field(default_factory=list)
     notes: str = ""
+    xp: int = 0
+    level: int = 1
+
+    def gain_xp(self, amount: int, xp_thresholds: dict[int, int]) -> int:
+        """Awards XP and applies any level-ups the new total crosses -
+        looped, not a single if, since one award (a tough kill, or several
+        stacked awards in one turn) can plausibly cross more than one
+        threshold at once. Returns how many levels were gained (0 if none)
+        so a caller can decide whether to announce a level-up.
+
+        xp_thresholds is a level -> cumulative-XP-required-to-reach-it
+        table (server/rules/srd.json's "leveling.xp_by_level", the SRD's
+        own real Character Advancement table) passed in rather than looked
+        up here - this module has no access to rules data, and reaching for
+        it directly would make CharacterSheet depend on server.rules for a
+        single method, which server/engine.py (the only real caller,
+        already holding a RulesIndex) is better placed to own.
+
+        Deliberately no HP growth here - that needs the character's class
+        hit die, which lives in rules data alongside the XP tables, not on
+        the sheet itself. server/engine.py applies HP growth right after
+        calling this, the same "state.py owns mechanical bookkeeping,
+        engine.py owns anything needing rules data" split
+        build_starting_character already follows."""
+        if amount <= 0:
+            return 0
+        self.xp += amount
+        levels_gained = 0
+        max_level = max(xp_thresholds, default=self.level)
+        while self.level < max_level and self.xp >= xp_thresholds.get(self.level + 1, float("inf")):
+            self.level += 1
+            levels_gained += 1
+        return levels_gained
 
     def apply_update(self, update: dict) -> str:
         """Apply a DM-issued mechanical update (the update_character tool).

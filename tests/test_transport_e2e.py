@@ -189,6 +189,63 @@ class NarratesTurnDM:
         yield f"The DM responds to: {action_text}"
 
 
+class DefeatsGoblinDM:
+    """Simulates a DM turn that introduces and immediately kills a goblin -
+    "goblin" matches server/rules/srd.json's own monster entry (CR 1/4),
+    so this exercises the real automatic CR-to-XP lookup, not just an
+    explicit xp override."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        apply_update({"target": "goblin", "max_hp": 5, "hp_delta": -5})
+        yield "You strike the goblin down."
+
+
+async def test_defeating_an_npc_awards_xp_and_updates_the_sheet_panel_over_a_real_session():
+    """The XP/leveling system's deterministic award-on-kill logic
+    (server/engine.py's apply_update closure) is unit-tested against the
+    engine directly in tests/test_engine.py - this is the same "run it
+    through a real client and a real server, not mocked on either side"
+    pass test_two_real_clients_trade_turns_over_a_real_session already
+    established, confirming the real wire format (a system_message
+    announcing the XP) and the real CharacterSheetPanel rendering (Lv/XP
+    lines added this feature) actually connect end to end."""
+    session = Session(session_id="e2e-session-5")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, DefeatsGoblinDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8803))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        app = DungeonMasterApp(uri="ws://localhost:8803", player_id=str(uuid.uuid4()), is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I attack the goblin", "enter")
+            await _wait_until(lambda: "gains 50 XP" in _log_text(app.screen.query_one("#log")))
+
+            assert "reaches level" not in _log_text(app.screen.query_one("#log")), \
+                "50 XP shouldn't cross the real level-2 threshold (300)"
+
+            sheet = app.screen.query_one("#sheet")
+            rendered = sheet._Static__content
+            assert "XP: 50" in rendered
+            assert "Lv 1" in rendered
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_two_real_clients_trade_turns_over_a_real_session():
     """ROADMAP.md: the architecture has always supported multiple players
     (turn_order is a list, the transport handles multiple connections),
