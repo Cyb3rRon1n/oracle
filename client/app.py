@@ -72,6 +72,7 @@ class DungeonMasterApp(App):
     Horizontal { height: 1fr; }
     CharacterSheetPanel { width: 30%; border: solid $accent; padding: 1; }
     RichLog { width: 70%; border: solid $accent; }
+    #status { height: 1; padding: 0 1; }
     """
 
     def __init__(self, uri: str, session_id: str, player_id: str, player_name: str, character_class: str = ""):
@@ -87,8 +88,12 @@ class DungeonMasterApp(App):
         with Horizontal():
             yield CharacterSheetPanel(id="sheet")
             yield RichLog(id="log", wrap=True, markup=True)
+        yield Static("", id="status")
         yield Input(placeholder="What do you do? (/roll 1d20, /chat hello)", id="input")
         yield Footer()
+
+    def _set_thinking(self, thinking: bool) -> None:
+        self.query_one("#status", Static).update("[dim]The DM is thinking...[/dim]" if thinking else "")
 
     async def on_mount(self) -> None:
         self.query_one("#input", Input).focus()
@@ -131,6 +136,7 @@ class DungeonMasterApp(App):
         elif envelope.type == "log_entry":
             text = envelope.payload.get("text", "")
             if envelope.payload.get("kind") == "narration":
+                self._set_thinking(False)  # the silent gap this fills ends the moment real text starts arriving
                 if envelope.payload.get("done"):
                     log.write(self._narration_buffer)
                     self._narration_buffer = ""
@@ -144,6 +150,7 @@ class DungeonMasterApp(App):
                 log.write("[i]Your turn.[/i]")
 
         elif envelope.type == "system_message":
+            self._set_thinking(False)  # covers the narration-failed path, which never reaches a log_entry at all
             log.write(f"[dim]{envelope.payload.get('text', '')}[/dim]")
 
     @staticmethod
@@ -166,4 +173,8 @@ class DungeonMasterApp(App):
         elif text.startswith("/chat "):
             await self._transport.send("chat_message", {"text": text[len("/chat "):].strip()})
         else:
+            # Only a real player_action triggers a DM narrate() call - /roll
+            # and /chat are handled instantly server-side with no LLM in the
+            # loop, so there's nothing to wait on for those.
+            self._set_thinking(True)
             await self._transport.send("player_action", {"text": text})
