@@ -386,6 +386,59 @@ async def test_npc_no_op_update_does_not_broadcast_again():
     assert len(npc_updates) == 1, "a no-op update to an already-tracked NPC shouldn't rebroadcast"
 
 
+async def test_npc_target_recased_on_later_turn_updates_existing_npc_not_a_duplicate():
+    # ROADMAP.md: a live qwen2.5:7b run called target="Bandit" (capitalized)
+    # against a scenario whose narration consistently said "the bandit"
+    # (lowercase) - Session.npcs used to be keyed by the exact raw string,
+    # so an inconsistently-cased target would silently create a second,
+    # disconnected NPC instead of updating the one already tracked.
+    dm = UpdateSequenceDM([{"target": "bandit", "max_hp": 10, "hp_delta": -3}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the bandit"},
+    ))
+    assert session.npcs["bandit"].hp == 7
+
+    dm._updates = [{"target": "Bandit", "hp_delta": -3}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the bandit again"},
+    ))
+
+    assert len(session.npcs) == 1, "re-cased target must update the existing NPC, not duplicate it"
+    assert session.npcs["bandit"].hp == 4
+    assert "Introduced" not in dm.tool_results[-1], "re-cased target updates, doesn't re-introduce"
+
+
+async def test_npc_update_broadcast_keeps_first_seen_casing_after_recase():
+    # The dict key normalizes to casefold for lookup, but the display name
+    # broadcast to clients should stay the name the NPC was first introduced
+    # with, not whatever casing a later call happens to use - otherwise the
+    # same NPC would render under two different labels turn to turn.
+    dm = UpdateSequenceDM([{"target": "Bandit", "max_hp": 10, "hp_delta": -3}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the bandit"},
+    ))
+
+    dm._updates = [{"target": "bandit", "hp_delta": -3}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the bandit again"},
+    ))
+
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert [u[2]["name"] for u in updates] == ["Bandit", "Bandit"]
+
+
 async def test_update_character_explicit_self_target_still_updates_own_sheet():
     dm = UpdateCharacterDM({"target": "self", "hp_delta": -1})
     engine, session, _ = make_engine(dm)

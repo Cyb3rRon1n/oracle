@@ -258,7 +258,15 @@ class GameEngine:
                     sheet_changed = True
                 return result
 
-            npc = self._session.npcs.get(target)
+            # Keyed by a casefolded form of the name, not the raw target
+            # string - an inconsistently-cased target from the DM (e.g.
+            # "Bandit" one turn, "bandit" the next) would otherwise silently
+            # create a second, disconnected NPC entry instead of updating the
+            # one already being tracked. npc.name keeps the first-seen
+            # casing for display, so the tool result and broadcasts stay
+            # consistent turn to turn regardless of how later calls case it.
+            npc_key = target.casefold()
+            npc = self._session.npcs.get(npc_key)
             introduced = npc is None
 
             if introduced:
@@ -268,7 +276,7 @@ class GameEngine:
                 # intended path.
                 max_hp = update.get("max_hp") or DEFAULT_NPC_HP
                 npc = CharacterSheet(player_id=target, name=target, hp=max_hp, max_hp=max_hp)
-                self._session.npcs[target] = npc
+                self._session.npcs[npc_key] = npc
 
             delta_result = npc.apply_update(update)
             changed = not delta_result.startswith("No changes applied")
@@ -279,10 +287,10 @@ class GameEngine:
             # player-character path's own "only broadcast on a real
             # change" rule otherwise.
             if introduced or changed:
-                npcs_touched.add(target)
+                npcs_touched.add(npc_key)
 
             if introduced:
-                intro = f"Introduced {target} (HP {npc.hp}/{npc.max_hp})."
+                intro = f"Introduced {npc.name} (HP {npc.hp}/{npc.max_hp})."
                 return f"{intro} {delta_result}" if changed else intro
 
             return delta_result
@@ -314,8 +322,9 @@ class GameEngine:
         if sheet_changed:
             await self._send_to(player_id, self._character_update_envelope(player_id, character))
 
-        for name in npcs_touched:
-            await self._broadcast(self._npc_update_envelope(name, self._session.npcs[name]))
+        for npc_key in npcs_touched:
+            touched_npc = self._session.npcs[npc_key]
+            await self._broadcast(self._npc_update_envelope(touched_npc.name, touched_npc))
 
         if world_changed:
             await self._broadcast(self._world_update_envelope())
@@ -389,7 +398,11 @@ class GameEngine:
             sender_id="server",
             payload={
                 "characters": {pid: c.model_dump() for pid, c in self._session.characters.items()},
-                "npcs": {name: npc.model_dump() for name, npc in self._session.npcs.items()},
+                # Keyed by each NPC's own stored (first-seen-casing) name for
+                # display, not the internal casefolded dict key - keeps a
+                # reconnecting client's status lines consistent with what
+                # npc_update broadcasts already show.
+                "npcs": {npc.name: npc.model_dump() for npc in self._session.npcs.values()},
                 "world_state": self._session.world.model_dump(),
                 "turn_order": self._session.turn_order,
                 "current_turn": self._session.current_turn,
