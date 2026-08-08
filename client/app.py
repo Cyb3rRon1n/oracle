@@ -538,16 +538,32 @@ class DungeonMasterApp(App):
             sign = "+" if ability_mod >= 0 else ""
             notation = f"{notation} {sign}{ability_mod} {payload['ability'].upper()}"
 
+        # disadvantage_reasons only ever appears on a request_roll the
+        # engine automatically rolled with disadvantage (server/engine.py's
+        # _has_disadvantage, triggered by a tracked condition like
+        # poisoned/frightened/prone) - names the real reason so it's not
+        # just a bare, unexplained "why did that come out low".
+        disadvantage_reasons = payload.get("disadvantage_reasons")
+        if disadvantage_reasons:
+            notation = f"{notation} (disadvantage: {', '.join(disadvantage_reasons)})"
+
         # Highlight a natural max (a "20" on a d20, but generalized to
         # whatever die was actually rolled) or a natural min the same way -
         # exactly the "highlighting a natural 20" example
         # docs/protocol.md's own known-gap note named as the payoff for
-        # handling this envelope at all.
+        # handling this envelope at all. With disadvantage, `rolls` holds
+        # both d20s but only the *worse* one was actually kept - checking
+        # either raw entry would wrongly highlight green off a high die
+        # that got discarded, so the check narrows to the kept die when
+        # disadvantage applied, while still displaying both rolls below.
+        highlight_rolls = rolls
+        if payload.get("disadvantage") and len(rolls) == 2:
+            highlight_rolls = [min(rolls)]
         rolls_text = str(rolls)
         if sides:
-            if any(r == sides for r in rolls):
+            if any(r == sides for r in highlight_rolls):
                 rolls_text = f"[b green]{rolls}[/b green]"
-            elif any(r == 1 for r in rolls):
+            elif any(r == 1 for r in highlight_rolls):
                 rolls_text = f"[b red]{rolls}[/b red]"
 
         text = f"{name} rolls {notation}{label}: {total} {rolls_text}"

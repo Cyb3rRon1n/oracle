@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from unittest.mock import patch
 
 import pytest
 from websockets.asyncio.client import connect
@@ -358,6 +359,61 @@ async def test_structured_equipment_ac_and_weapon_damage_over_a_real_session():
 
             # A real, direct check on server state.
             assert session.characters[player_id].ac == 12
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
+class RequestsRollWhilePoisonedDM:
+    """Simulates a DM turn requesting a roll while the acting character is
+    already poisoned - exercises the real automatic-disadvantage plumbing
+    (server/engine.py's request_roll closure, _has_disadvantage) over an
+    actual websocket."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        apply_update({"add_condition": "poisoned"})
+        request_roll({"dice": "1d20", "dc": 10, "reason": "stealth check"})
+        yield "Sickened by the poison, you try to move quietly anyway."
+
+
+async def test_mechanical_conditions_disadvantage_applies_over_a_real_session():
+    """Confirms the disadvantage chain works end to end over a real
+    websocket: a real add_condition call tracks "poisoned" on the real
+    server-side sheet, and the very next request_roll in the same turn
+    picks it up and rolls with real disadvantage - not a pre-seeded
+    condition or a mocked dice.roll() like the unit-level tests use."""
+    session = Session(session_id="e2e-session-9")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, RequestsRollWhilePoisonedDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8807))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8807", player_id=player_id, is_new_character=True)
+        with patch("server.dice.random.randint", side_effect=[18, 4]):
+            async with app.run_test() as pilot:
+                await pilot.click("#name-input")
+                await pilot.press(*"Thrain")
+                await pilot.click("#join")
+                await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+                await pilot.click("#start")
+                await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+                await pilot.click("#input")
+                await pilot.press(*"I try to move quietly despite the poison", "enter")
+                await _wait_until(lambda: "disadvantage: poisoned" in _log_text(app.screen.query_one("#log")))
+
+                log_text = _log_text(app.screen.query_one("#log"))
+                assert ": 4 [18, 4]" in log_text  # kept the lower roll (4), both real rolls shown
+
+                # A real, direct check on server state.
+                assert "poisoned" in session.characters[player_id].conditions
     finally:
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):

@@ -31,7 +31,11 @@ You have five tools available:
   their sheet (character_summary's ac); an NPC/monster target's AC is in its stat
   block via lookup_rule. For the damage roll after a hit, use request_roll's weapon
   field (the weapon's name) instead of typing its damage die into dice yourself — the
-  engine looks up the real value and reports the damage type too.
+  engine looks up the real value and reports the damage type too. If the acting
+  character is poisoned, frightened, or prone, the engine automatically rolls that
+  request_roll with disadvantage (2d20, worse kept) — you don't need to ask for this or
+  account for it yourself, but do narrate the result you get back, which may come out
+  lower than you'd expect for that reason.
 - lookup_rule: use before improvising crunchy mechanics (monster stats, spell details,
   class features, equipment, conditions) so numbers stay consistent from turn to turn.
 - update_character: call this whenever your narration describes something that should
