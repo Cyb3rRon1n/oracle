@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 
 import pytest
@@ -240,6 +241,57 @@ async def test_defeating_an_npc_awards_xp_and_updates_the_sheet_panel_over_a_rea
             rendered = sheet._Static__content
             assert "XP: 50" in rendered
             assert "Lv 1" in rendered
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
+async def test_character_import_over_a_real_session_wins_over_typed_name_and_class(tmp_path):
+    """Character export is purely client-side (no server involvement, see
+    DungeonMasterApp.export_character) so it doesn't need a websocket to
+    verify - but import is a real join_session round trip, so this is the
+    one real end-to-end check: a real DungeonMasterApp reads a real local
+    export file via WelcomeScreen's #import-input, sends it as a real
+    join_session payload, and the real GameEngine on the other end of an
+    actual websocket builds the session character from it rather than
+    from whatever was typed into #name-input/#class-input."""
+    export_path = tmp_path / "torvin.json"
+    export_path.write_text(json.dumps({
+        "player_id": "stale-id-from-a-previous-session",
+        "name": "Torvin Ironheart", "hp": 9, "max_hp": 14, "character_class": "Cleric",
+        "inventory": ["Mace", "Holy Symbol"], "xp": 450, "level": 3,
+    }))
+
+    session = Session(session_id="e2e-session-6")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, StubDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8804))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8804", player_id=player_id, is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Someone Else")  # should be ignored - the import wins
+            await pilot.click("#import-input")
+            await pilot.press(*str(export_path))
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            assert session.characters[player_id].player_id == player_id
+            assert session.characters[player_id].name == "Torvin Ironheart"
+            assert session.characters[player_id].xp == 450
+            assert session.characters[player_id].level == 3
+
+            sheet = app.screen.query_one("#sheet")
+            rendered = sheet._Static__content
+            assert "Torvin Ironheart" in rendered
+            assert "Lv 3" in rendered
     finally:
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):

@@ -4,6 +4,8 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 
+from pydantic import ValidationError
+
 from shared.protocol import Envelope
 
 from . import dice
@@ -128,6 +130,29 @@ def build_starting_character(
         inventory=list(CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), [])),
     )
 
+
+def _character_from_import(player_id: str, imported: dict) -> CharacterSheet | None:
+    """Builds a CharacterSheet from a client-submitted export file
+    (join_session's optional imported_character field - client/app.py's
+    WelcomeScreen/export_character). The exported dict is just a prior
+    session's own full CharacterSheet.model_dump(), so this is mostly a
+    pass-through - but player_id is always overridden to the real joining
+    connection's id, never trusted from the file itself (a stale or
+    tampered export shouldn't let one connection claim another's already-
+    tracked identity). Any other shape mismatch (a hand-edited or
+    corrupted file, or one from some future/incompatible sheet version) is
+    caught and treated as "no import" rather than a crash - the caller
+    falls back to a fresh build_starting_character() sheet, the same
+    graceful-fallback convention that function's own blank/unrecognized-
+    class handling already established. The client does its own lighter
+    read/JSON-parse validation first (_load_character_file), but this is
+    the real trust boundary - a client is never authoritative for another
+    connection's data, so the shape gets fully re-validated here too."""
+    try:
+        return CharacterSheet(**{**imported, "player_id": player_id})
+    except (ValidationError, TypeError):
+        return None
+
 # A visible mitigation, not a fix (ROADMAP.md's tool-call reliability
 # investigation, item 6's remaining-candidates list) - the live qwen2.5:7b/
 # llama3.1:8b runs documented there repeatedly narrated unambiguous lethal
@@ -215,9 +240,23 @@ class GameEngine:
         if is_new_character:
             name = envelope.payload.get("player_name", player_id)
             character_class = envelope.payload.get("character_class", "")
-            self._session.characters[player_id] = build_starting_character(
-                player_id, name, character_class, self._rules
-            )
+
+            character = None
+            imported = envelope.payload.get("imported_character")
+            if imported is not None:
+                character = _character_from_import(player_id, imported)
+                if character is None:
+                    await self._send_to(
+                        player_id,
+                        self._system_envelope(
+                            "Couldn't import that character file - starting fresh instead.",
+                            level="warning",
+                        ),
+                    )
+            if character is None:
+                character = build_starting_character(player_id, name, character_class, self._rules)
+
+            self._session.characters[player_id] = character
             self._session.turn_order.append(player_id)
             await self._save(player_id)
 

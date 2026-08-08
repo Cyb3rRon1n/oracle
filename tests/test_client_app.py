@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -73,6 +74,83 @@ async def test_returning_player_does_not_see_class_prompt():
         async with app.run_test():
             with pytest.raises(NoMatches):
                 app.screen.query_one("#class-input")
+
+
+async def test_welcome_screen_shows_import_field_when_new():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test():
+            assert app.screen.query_one("#import-input") is not None
+
+
+async def test_returning_player_does_not_see_import_field():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=False)
+        async with app.run_test():
+            with pytest.raises(NoMatches):
+                app.screen.query_one("#import-input")
+
+
+async def test_join_with_valid_import_file_sends_imported_character(tmp_path):
+    character_data = {"name": "Torvin", "hp": 5, "max_hp": 12, "xp": 300, "level": 2}
+    import_path = tmp_path / "torvin.json"
+    import_path.write_text(json.dumps(character_data))
+
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#import-input")
+            await pilot.press(*str(import_path))
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.sent[-1][0] == "join_session"
+            assert app.transport.sent[-1][1]["imported_character"] == character_data
+
+
+async def test_join_with_unreadable_import_path_shows_error_and_does_not_connect(tmp_path):
+    missing_path = tmp_path / "does-not-exist.json"
+
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#import-input")
+            await pilot.press(*str(missing_path))
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport is None, "a bad import path should stop join_session from ever being sent"
+            error = app.screen.query_one("#welcome-error")._Static__content
+            assert "couldn't read" in str(error).lower()
+
+
+async def test_join_with_invalid_json_import_shows_error(tmp_path):
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text("{not valid json")
+
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#import-input")
+            await pilot.press(*str(bad_path))
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport is None
+            error = app.screen.query_one("#welcome-error")._Static__content
+            assert "valid json" in str(error).lower()
+
+
+async def test_join_with_blank_import_field_omits_imported_character():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("join_session", {"player_name": "Thrain", "character_class": ""})
 
 
 async def test_fresh_join_lands_on_lobby_not_session():
@@ -186,6 +264,68 @@ async def test_lobby_chat_writes_to_chat_log_not_the_session_log():
             await pilot.pause()
 
             assert "hello" in _log_text(app.screen.query_one("#chat-log"))
+
+
+async def test_lobby_export_command_writes_character_file_not_chat(tmp_path):
+    export_path = tmp_path / "mychar"
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync(
+                "p1", started=False,
+                characters={"p1": {
+                    "player_id": "p1", "name": "Thrain", "hp": 10, "max_hp": 10, "xp": 50, "level": 1,
+                }},
+            ))
+            await pilot.pause()
+
+            await pilot.click("#chat-input")
+            await pilot.press(*f"/export {export_path}", "enter")
+            await pilot.pause()
+
+            written = json.loads((tmp_path / "mychar.json").read_text())
+            assert written["name"] == "Thrain"
+            assert written["xp"] == 50
+            assert "exported" in _log_text(app.screen.query_one("#chat-log")).lower()
+            assert app.transport.sent[-1][0] != "chat_message", "/export must not also be sent as chat"
+
+
+async def test_session_export_command_writes_character_file(tmp_path):
+    export_path = tmp_path / "session_char"
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*f"/export {export_path}", "enter")
+            await pilot.pause()
+
+            written = json.loads((tmp_path / "session_char.json").read_text())
+            assert written["name"] == "Thrain"
+            assert "exported" in _log_text(app.screen.query_one("#log")).lower()
+
+
+async def test_export_command_with_no_filename_uses_default_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/export", "enter")
+            await pilot.pause()
+
+            assert (tmp_path / "character.json").exists()
 
 
 async def test_party_updates_render_in_lobby_sheet_panel_without_inventory():
