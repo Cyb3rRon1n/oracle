@@ -131,17 +131,18 @@ python -m server.main
 python -m client.main
 ```
 
-The client will ask you a few quick questions right in the terminal before the game screen appears:
+A full-screen terminal interface opens straight into a welcome screen — your pre-game menu:
 
-- `Character name:` — type anything, e.g. `Torvin`
-- `Session ID (blank for default):` — just press Enter to use the default session
-- `Class (fighter/wizard/rogue/cleric, blank to skip):` — only asked for a brand-new character, not on reconnect. Picks a real starting HP (from the class's SRD hit die) and a starting item or two, so your sheet isn't just a name and 10 HP with nothing else. Leave it blank for that old blank-sheet behavior instead.
+- **Character name** and **Session ID** (blank for default) — plain text fields.
+- **Class** (`fighter`/`wizard`/`rogue`/`cleric`, blank to skip) — only shown for a brand-new character, not on reconnect. Picks a real starting HP (from the class's SRD hit die) and a starting item or two, so your sheet isn't just a name and 10 HP with nothing else. Leave it blank for that old blank-sheet behavior instead.
 
-After that, a full-screen terminal interface opens: your character sheet on one side, a scrolling narrative log on the other, and an input bar at the bottom.
+Press **Join** (or Enter) and you land in the **lobby**: your character sheet on the left (review it before things kick off), a chat log on the right, and a **Start Adventure** button. This is where you can chat with anyone else who's joined, and see them show up in the **Party** list on your sheet, before anything happens in the story. Any joined player can hit Start Adventure — there's no separate host — and everyone's client moves into the real session view together, where the DM narrates the opening scene live.
+
+Reconnecting mid-game (the client remembers you via `.player_id`, see below) skips the lobby entirely and drops you straight back into the session.
 
 ### 5. Play
 
-On a brand-new session, the DM opens with a short scene before asking you for anything — no blank prompt to stare at. From there, type what your character does in plain English and press Enter — e.g. `I open the door` or `I attack the goblin with my sword`. The DM (Ollama or Claude, whichever you configured) responds with narration, streamed in as it's generated.
+Once the adventure starts, the interface is your character sheet on one side, a scrolling narrative log on the other, and an input bar at the bottom. The DM opens with a short scene as everyone watches it stream in — no blank prompt to stare at. From there, type what your character does in plain English and press Enter — e.g. `I open the door` or `I attack the goblin with my sword`. The DM (Ollama or Claude, whichever you configured) responds with narration, streamed in as it's generated.
 
 A couple of special commands, typed into that same input bar:
 

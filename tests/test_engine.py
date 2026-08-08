@@ -386,6 +386,59 @@ async def test_npc_no_op_update_does_not_broadcast_again():
     assert len(npc_updates) == 1, "a no-op update to an already-tracked NPC shouldn't rebroadcast"
 
 
+async def test_npc_target_recased_on_later_turn_updates_existing_npc_not_a_duplicate():
+    # ROADMAP.md: a live qwen2.5:7b run called target="Bandit" (capitalized)
+    # against a scenario whose narration consistently said "the bandit"
+    # (lowercase) - Session.npcs used to be keyed by the exact raw string,
+    # so an inconsistently-cased target would silently create a second,
+    # disconnected NPC instead of updating the one already tracked.
+    dm = UpdateSequenceDM([{"target": "bandit", "max_hp": 10, "hp_delta": -3}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the bandit"},
+    ))
+    assert session.npcs["bandit"].hp == 7
+
+    dm._updates = [{"target": "Bandit", "hp_delta": -3}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the bandit again"},
+    ))
+
+    assert len(session.npcs) == 1, "re-cased target must update the existing NPC, not duplicate it"
+    assert session.npcs["bandit"].hp == 4
+    assert "Introduced" not in dm.tool_results[-1], "re-cased target updates, doesn't re-introduce"
+
+
+async def test_npc_update_broadcast_keeps_first_seen_casing_after_recase():
+    # The dict key normalizes to casefold for lookup, but the display name
+    # broadcast to clients should stay the name the NPC was first introduced
+    # with, not whatever casing a later call happens to use - otherwise the
+    # same NPC would render under two different labels turn to turn.
+    dm = UpdateSequenceDM([{"target": "Bandit", "max_hp": 10, "hp_delta": -3}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the bandit"},
+    ))
+
+    dm._updates = [{"target": "bandit", "hp_delta": -3}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the bandit again"},
+    ))
+
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert [u[2]["name"] for u in updates] == ["Bandit", "Bandit"]
+
+
 async def test_update_character_explicit_self_target_still_updates_own_sheet():
     dm = UpdateCharacterDM({"target": "self", "hp_delta": -1})
     engine, session, _ = make_engine(dm)
@@ -459,6 +512,108 @@ async def test_state_sync_includes_npcs_for_a_later_joining_player():
     ]
     assert syncs, "the second player should get a state_sync on join"
     assert syncs[-1][3]["npcs"]["goblin"]["hp"] == 3
+
+
+async def test_join_broadcasts_player_joined_with_public_view_only():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+
+    joins = [r for r in received if r[0] == "broadcast" and r[1] == "player_joined"]
+    assert joins, "joining should broadcast a structured player_joined event"
+    payload = joins[-1][2]
+    assert payload["player_id"] == player_id
+    assert payload["name"] == "Rook"
+    assert payload["character_class"] == "Fighter"
+    assert payload["hp"] == payload["max_hp"] == 10
+    assert payload["conditions"] == []
+    # A fighter starts with real inventory (Longsword, Leather Armor) - the
+    # public view must never leak it, or anyone's own stats/notes.
+    assert "inventory" not in payload
+    assert "stats" not in payload
+    assert "notes" not in payload
+
+
+async def test_second_players_state_sync_redacts_first_players_inventory():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+
+    second_player_id = str(uuid.uuid4())
+    await join(engine, second_player_id, name="Rowan")
+
+    syncs = [
+        r for r in received
+        if r[0] == "send_to" and r[1] == second_player_id and r[2] == "state_sync"
+    ]
+    others_view = syncs[-1][3]["characters"][player_id]
+    assert others_view["name"] == "Rook"
+    assert others_view["hp"] == others_view["max_hp"] == 10
+    assert "inventory" not in others_view, "another player's inventory must never reach a non-owning client"
+    assert "stats" not in others_view
+    assert "notes" not in others_view
+
+    # The second player's own entry in their own sync is the full sheet,
+    # not redacted against themselves.
+    own_view = syncs[-1][3]["characters"][second_player_id]
+    assert "inventory" in own_view
+
+
+async def test_sheet_change_broadcasts_public_player_update_alongside_private_character_update():
+    dm = UpdateCharacterDM({"target": "self", "hp_delta": -3, "add_item": "torch"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I light a torch and take a hit"},
+    ))
+
+    private_updates = [
+        r for r in received if r[0] == "send_to" and r[1] == player_id and r[2] == "character_update"
+    ]
+    assert private_updates
+    assert private_updates[-1][3]["sheet_delta"]["inventory"] == ["torch"]
+
+    public_updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
+    assert public_updates, "a sheet change should also broadcast the public view to everyone else"
+    payload = public_updates[-1][2]
+    assert payload["player_id"] == player_id
+    assert payload["hp"] == 7
+    assert "inventory" not in payload
+
+
+async def test_handle_disconnect_broadcasts_player_left():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+
+    await engine.handle_disconnect(player_id)
+
+    left = [r for r in received if r[0] == "broadcast" and r[1] == "player_left"]
+    assert left
+    assert left[-1][2] == {"player_id": player_id, "name": "Thrain"}
+
+
+async def test_handle_disconnect_for_never_joined_player_falls_back_to_id_as_name():
+    # Defensive path - the transport only tracks a connection after a real
+    # join_session, so this shouldn't happen in practice, but shouldn't
+    # crash if it somehow did.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle_disconnect(player_id)
+
+    left = [r for r in received if r[0] == "broadcast" and r[1] == "player_left"]
+    assert left[-1][2] == {"player_id": player_id, "name": player_id}
 
 
 async def test_rejoin_uses_existing_character_name_not_new_input():
@@ -641,58 +796,137 @@ async def test_update_world_no_op_does_not_broadcast():
     assert not any(r[0] == "broadcast" and r[1] == "world_update" for r in received)
 
 
-async def test_opening_scene_fires_once_on_a_genuine_campaign_start():
+async def start_session(engine, player_id):
+    await engine.handle(Envelope(
+        type="start_session", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+
+async def test_join_never_narrates_regardless_of_opening_scene_flag():
+    # Regression guard for the test helper itself: most existing tests in
+    # this file rely on join() having no narration side effect - true now
+    # unconditionally, since narration only ever fires via an explicit
+    # start_session (see the next test), never automatically on join.
     dm = OpeningSceneDM()
     engine, session, received = make_engine(dm, enable_opening_scene=True)
     player_id = str(uuid.uuid4())
 
     await join(engine, player_id)
+
+    assert dm.action_texts == []
+    assert not any(r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"), \
+        "turn_prompt shouldn't show before the adventure has started"
+
+
+async def test_opening_scene_fires_on_explicit_start_not_on_join():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm, enable_opening_scene=True)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await start_session(engine, player_id)
 
     assert len(dm.action_texts) == 1
     assert "adventure begins" in dm.action_texts[0]
     narration_chunks = [r for r in received if r[0] == "broadcast" and r[2].get("kind") == "narration"]
     assert narration_chunks, "the opening scene should stream narration like a real turn"
     assert session.log[-1]["text"] == "Scene."
-    # doesn't consume the player's real first turn
-    assert session.current_turn == player_id
+    assert session.current_turn == player_id  # doesn't consume the player's real first turn
+    started = [r for r in received if r[0] == "broadcast" and r[1] == "session_started"]
+    assert started, "start_session should broadcast session_started once the adventure begins"
+    turn_prompts = [r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"]
+    assert turn_prompts, "turn_prompt should now be visible once the adventure has started"
 
 
-async def test_opening_scene_does_not_fire_for_a_second_player_joining_in_progress():
+async def test_start_session_with_multiple_players_mentions_everyone_in_the_prompt():
     dm = OpeningSceneDM()
     engine, session, received = make_engine(dm, enable_opening_scene=True)
     first_id = str(uuid.uuid4())
     second_id = str(uuid.uuid4())
+    await join(engine, first_id, name="Thrain")
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=second_id,
+        payload={"player_name": "Rowan", "character_class": "rogue"},
+    ))
 
-    await join(engine, first_id)  # campaign start: fires once
+    await start_session(engine, first_id)
+
+    assert len(dm.action_texts) == 1
+    prompt = dm.action_texts[0]
+    assert "Thrain" in prompt
+    assert "Rowan the Rogue" in prompt
+    assert "introduce themselves" in prompt
+
+
+async def test_start_session_is_idempotent_once_the_adventure_has_begun():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm, enable_opening_scene=True)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
     assert len(dm.action_texts) == 1
 
-    await join(engine, second_id)  # session already has log entries: should not fire again
+    await start_session(engine, player_id)  # e.g. a second player also clicking Start
 
-    assert len(dm.action_texts) == 1
+    assert len(dm.action_texts) == 1, "a second start_session shouldn't re-narrate the opening scene"
+    started = [r for r in received if r[0] == "broadcast" and r[1] == "session_started"]
+    assert len(started) == 1, "session_started shouldn't rebroadcast either"
 
 
-async def test_opening_scene_disabled_by_default_in_make_engine_helper():
-    # Regression guard for the test helper itself: most existing tests in
-    # this file rely on join() having no narration side effect.
+async def test_start_session_with_no_players_is_a_defensive_no_op():
+    engine, session, received = make_engine(StubDM(), enable_opening_scene=True)
+    player_id = str(uuid.uuid4())  # never actually joined
+
+    await start_session(engine, player_id)
+
+    assert session.log == []
+    assert not any(r for r in received if r[0] == "broadcast" and r[1] == "session_started")
+
+
+async def test_opening_scene_disabled_does_not_narrate_but_session_still_starts():
+    # enable_opening_scene=False (make_engine()'s own default, and the
+    # reliability harness's - scripts/live_reliability_check.py) should
+    # suppress narration but still let the lobby transition happen and
+    # turn_prompt become visible.
     dm = OpeningSceneDM()
     engine, session, received = make_engine(dm)
     player_id = str(uuid.uuid4())
-
     await join(engine, player_id)
+
+    await start_session(engine, player_id)
 
     assert dm.action_texts == []
+    started = [r for r in received if r[0] == "broadcast" and r[1] == "session_started"]
+    assert started, "the lobby should still transition even with narration disabled"
+    assert any(r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt")
 
 
-async def test_opening_scene_failure_warns_but_does_not_block_join():
+async def test_opening_scene_failure_warns_but_session_still_starts():
     engine, session, received = make_engine(FailingDM(), enable_opening_scene=True)
     player_id = str(uuid.uuid4())
-
     await join(engine, player_id)
 
+    await start_session(engine, player_id)
+
     warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
-    assert warnings, "a failed opening scene should warn, not crash the join"
+    assert warnings, "a failed opening scene should warn, not crash the start"
     assert session.current_turn == player_id, "the player should still be seated normally"
     assert session.log == [], "a failed opening scene shouldn't leave a partial log entry"
+    started = [r for r in received if r[0] == "broadcast" and r[1] == "session_started"]
+    assert started, "the session should still transition out of the lobby even if narration failed"
+
+
+async def test_rejoin_after_session_started_shows_turn_prompt():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
+
+    received.clear()
+    await join(engine, player_id)  # e.g. the client restarted mid-game
+
+    assert any(r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"), \
+        "reconnecting into an already-started game should still show whose turn it is"
 
 
 class NarratesFixedTextDM:

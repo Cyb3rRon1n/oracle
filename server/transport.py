@@ -48,6 +48,12 @@ class Transport:
         finally:
             if player_id is not None:
                 self._connections.pop(player_id, None)
+                # The counterpart to _on_join_session's player_joined
+                # broadcast - a disconnect isn't a client-sent event, so the
+                # engine can't learn about it through the normal handle()/
+                # envelope dispatch path; the transport is the only thing
+                # that actually observes the socket closing.
+                await self._engine.handle_disconnect(player_id)
 
     async def serve(self, host: str = "localhost", port: int = 8765) -> None:
         async with serve(self._handler, host, port):

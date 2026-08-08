@@ -13,16 +13,19 @@ EventType = Literal[
     "character_edit",
     "dice_roll",
     "reconnect",
+    "start_session",
     # server -> client
     "state_sync",
     "log_entry",
     "character_update",
+    "player_update",
     "npc_update",
     "world_update",
     "turn_prompt",
     "dice_result",
     "player_joined",
     "player_left",
+    "session_started",
     "system_message",
 ]
 

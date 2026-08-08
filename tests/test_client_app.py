@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import pytest
+
+from client.app import DungeonMasterApp, LobbyScreen, SessionScreen, WelcomeScreen
+from shared.protocol import Envelope
+from textual.css.query import NoMatches
+
+
+class FakeTransport:
+    """Records every sent envelope type/payload instead of touching a real
+    socket - these tests exercise the client's own screen/transition logic,
+    not the transport layer (already covered for real by
+    tests/test_transport_e2e.py's live websocket tests)."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.sent: list[tuple[str, dict]] = []
+
+    async def connect(self) -> None:
+        pass
+
+    async def send(self, type_: str, payload: dict) -> None:
+        self.sent.append((type_, payload))
+
+    async def messages(self):
+        return
+        yield  # pragma: no cover - never actually iterated; _handle() is called directly instead
+
+
+def _state_sync(player_id: str, *, started: bool, characters: dict | None = None) -> Envelope:
+    return Envelope(
+        type="state_sync", session_id="s", sender_id="server",
+        payload={
+            "characters": characters or {player_id: {"name": "Thrain", "hp": 10, "max_hp": 10}},
+            "npcs": {},
+            "world_state": {},
+            "turn_order": [player_id],
+            "current_turn": player_id,
+            "log_tail": [],
+            "started": started,
+        },
+    )
+
+
+def _log_text(rich_log) -> str:
+    return "\n".join(strip.text for strip in rich_log.lines)
+
+
+async def test_welcome_screen_is_the_first_screen_and_prompts_for_class_when_new():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test():
+            assert isinstance(app.screen, WelcomeScreen)
+            assert app.screen.query_one("#class-input") is not None
+
+
+async def test_returning_player_does_not_see_class_prompt():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=False)
+        async with app.run_test():
+            with pytest.raises(NoMatches):
+                app.screen.query_one("#class-input")
+
+
+async def test_fresh_join_lands_on_lobby_not_session():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            assert isinstance(app.screen, LobbyScreen)
+            assert app.transport.sent[-1] == ("join_session", {"player_name": "Thrain", "character_class": ""})
+
+
+async def test_reconnect_into_started_session_skips_the_lobby():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=False)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            assert isinstance(app.screen, SessionScreen)
+
+
+async def test_start_button_sends_start_session_and_disables_itself():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await pilot.click("#start")
+            await pilot.pause()
+
+            assert ("start_session", {}) in app.transport.sent
+            assert app.screen.query_one("#start").disabled
+
+
+async def test_session_started_transitions_lobby_to_session_screen():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+            assert isinstance(app.screen, LobbyScreen)
+
+            await app._handle(Envelope(type="session_started", session_id="s", sender_id="server", payload={}))
+            await pilot.pause()
+
+            assert isinstance(app.screen, SessionScreen)
+
+
+async def test_narration_streams_into_session_screen_after_session_started():
+    # This is the exact ordering the server relies on (session_started
+    # broadcasts before the opening scene's narration - see
+    # GameEngine._on_start_session): a client must already be on
+    # SessionScreen, with a real #log widget, by the time narration
+    # chunks arrive, or they'd have nowhere to render.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await app._handle(Envelope(type="session_started", session_id="s", sender_id="server", payload={}))
+            await pilot.pause()
+
+            # Matches the real server's actual streaming shape
+            # (GameEngine._narrate_and_apply/_log_envelope): text arrives
+            # via done=False chunks, then a final empty done=True flush -
+            # not one message carrying the full text with done=True.
+            await app._handle(Envelope(
+                type="log_entry", session_id="s", sender_id="server",
+                payload={"kind": "narration", "text": "A cold wind blows.", "done": False},
+            ))
+            await app._handle(Envelope(
+                type="log_entry", session_id="s", sender_id="server",
+                payload={"kind": "narration", "text": "", "done": True},
+            ))
+            await pilot.pause()
+
+            assert "cold wind" in _log_text(app.screen.query_one("#log"))
+
+
+async def test_lobby_chat_writes_to_chat_log_not_the_session_log():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="log_entry", session_id="s", sender_id="server",
+                payload={"kind": "chat", "text": "Rowan: hello!"},
+            ))
+            await pilot.pause()
+
+            assert "hello" in _log_text(app.screen.query_one("#chat-log"))
+
+
+async def test_party_updates_render_in_lobby_sheet_panel_without_inventory():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="player_joined", session_id="s", sender_id="server",
+                payload={
+                    "player_id": "p2", "name": "Rowan", "character_class": "Rogue",
+                    "hp": 8, "max_hp": 8, "conditions": [],
+                },
+            ))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet")
+            assert "p2" in sheet._others
+            rendered = sheet._Static__content
+            assert "Rowan" in rendered
+            assert "inventory" not in rendered.lower()
