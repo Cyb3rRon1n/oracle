@@ -809,6 +809,7 @@ class GameEngine:
                     "The DM's narration may describe a change that wasn't recorded - "
                     "your sheet might be out of sync with the story.",
                     level="warning",
+                    advisory=True,
                 ),
             )
 
@@ -1060,10 +1061,21 @@ class GameEngine:
             payload["done"] = done
         return Envelope(type="log_entry", session_id=self._session.session_id, sender_id="server", payload=payload)
 
-    def _system_envelope(self, text: str, level: str = "info") -> Envelope:
+    def _system_envelope(self, text: str, level: str = "info", advisory: bool = False) -> Envelope:
+        # advisory is deliberately narrow - only the missed-change heuristic
+        # (below) sets it. Every other system_message (connection/turn-order/
+        # save-failure) is a plain fact about what just happened; this one is
+        # a "you might want to double check" nudge the player should weigh,
+        # not act on unconditionally - a real, different category from an
+        # ordinary warning, even though both currently share level="warning".
+        # Only included when true, the same "don't carry an always-False
+        # field" convention dice_result's own optional fields already follow.
+        payload: dict = {"level": level, "text": text}
+        if advisory:
+            payload["advisory"] = True
         return Envelope(
             type="system_message",
             session_id=self._session.session_id,
             sender_id="server",
-            payload={"level": level, "text": text},
+            payload=payload,
         )

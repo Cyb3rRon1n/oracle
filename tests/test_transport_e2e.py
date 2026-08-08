@@ -504,6 +504,52 @@ async def test_transcript_command_saves_a_real_session_over_a_real_websocket(tmp
             await server_task
 
 
+class NarratesLethalDamageWithNoToolCallDM:
+    """Reconstructs the exact real failure shape ROADMAP.md's tool-call
+    reliability investigation documents - narration confirms lethal damage
+    with no update_character call at all - to exercise the missed-change
+    heuristic's advisory system_message over a real websocket, not just the
+    mocked-DM unit tests in test_engine.py."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        yield "Your blade finds its mark - the bandit staggers, bleeding, and falls dead."
+
+
+async def test_missed_change_advisory_renders_with_distinct_styling_over_a_real_session():
+    session = Session(session_id="e2e-session-12")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(
+            session, NarratesLethalDamageWithNoToolCallDM(), broadcast, send_to, enable_opening_scene=False
+        )
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8810))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        app = DungeonMasterApp(uri="ws://localhost:8810", player_id=str(uuid.uuid4()), is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I strike the bandit", "enter")
+            await _wait_until(lambda: "out of sync" in _log_text(app.screen.query_one("#log")))
+
+            log = app.screen.query_one("#log")
+            assert any("yellow" in str(seg.style) for strip in log.lines for seg in strip._segments)
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_character_import_over_a_real_session_wins_over_typed_name_and_class(tmp_path):
     """Character export is purely client-side (no server involvement, see
     DungeonMasterApp.export_character) so it doesn't need a websocket to

@@ -378,6 +378,46 @@ async def test_item_remove_command_sends_character_edit():
             assert app.transport.sent[-1] == ("character_edit", {"field": "remove_item", "value": "a torch"})
 
 
+async def test_advisory_system_message_renders_with_distinct_yellow_styling():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="system_message", session_id="s", sender_id="server",
+                payload={"level": "warning", "text": "your sheet might be out of sync", "advisory": True},
+            ))
+            await pilot.pause()
+
+            log = app.screen.query_one("#log")
+            assert "out of sync" in _log_text(log)
+            assert _log_has_styled_segment(log, "yellow")
+
+
+async def test_ordinary_system_message_does_not_get_advisory_styling():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="system_message", session_id="s", sender_id="server",
+                payload={"level": "warning", "text": "It's not your turn."},
+            ))
+            await pilot.pause()
+
+            log = app.screen.query_one("#log")
+            assert "not your turn" in _log_text(log)
+            assert not _log_has_styled_segment(log, "yellow")
+
+
 async def test_transcript_command_writes_plain_text_log_not_sent_to_server(tmp_path):
     transcript_path = tmp_path / "my_session"
     with patch("client.app.ClientTransport", FakeTransport):

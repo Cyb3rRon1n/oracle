@@ -1565,6 +1565,44 @@ async def test_missed_change_heuristic_warns_when_damage_language_has_no_tool_ca
     )
 
 
+async def test_missed_change_heuristic_warning_carries_advisory_flag():
+    # advisory distinguishes this specific nudge from every other
+    # system_message (connection/turn-order/save-failure) so the client can
+    # give it a visually distinct treatment instead of rendering it
+    # identically to a plain operational warning.
+    dm = NarratesFixedTextDM("Your blade finds its mark - the bandit staggers, bleeding, and falls dead.")
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+
+    warnings = _missed_change_warnings(received, player_id)
+    assert warnings and warnings[0][3]["advisory"] is True
+
+
+async def test_out_of_turn_warning_does_not_carry_advisory_flag():
+    # A real, different category of warning - an ordinary operational
+    # rejection, not the missed-change nudge - should render the same as
+    # before (no advisory flag at all, not even advisory: False).
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    other_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=other_id,
+        payload={"text": "I do nothing"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert "advisory" not in warnings[0][3]
+
+
 async def test_missed_change_heuristic_silent_when_a_real_tool_call_fired():
     # Same trigger language as above, but this time the DM actually called
     # update_character - the heuristic must not double-warn on a turn that
