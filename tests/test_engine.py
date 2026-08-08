@@ -1994,6 +1994,218 @@ async def test_opening_scene_failure_warns_but_session_still_starts():
     assert started, "the session should still transition out of the lobby even if narration failed"
 
 
+async def _join_as(engine, player_id, character_class, name="Thrain"):
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": name, "character_class": character_class},
+    ))
+
+
+async def _start_combat(engine, player_id):
+    await engine.handle(Envelope(type="start_combat", session_id="test-session", sender_id=player_id, payload={}))
+
+
+async def _end_combat(engine, player_id):
+    await engine.handle(Envelope(type="end_combat", session_id="test-session", sender_id=player_id, payload={}))
+
+
+async def test_start_combat_orders_players_by_initiative_roll():
+    # Fighter (DEX 13, +1 mod) and rogue (DEX 15, +2 mod) - rolls chosen so
+    # the rogue's lower raw roll still wins once its higher DEX modifier is
+    # added, confirming the modifier is genuinely applied, not just the
+    # bare d20.
+    engine, session, received = make_engine(StubDM())
+    fighter_id, rogue_id = str(uuid.uuid4()), str(uuid.uuid4())
+    await _join_as(engine, fighter_id, "fighter", name="Thrain")
+    await _join_as(engine, rogue_id, "rogue", name="Rowan")
+
+    with patch("server.dice.random.randint", side_effect=[10, 9]):  # fighter=11, rogue=11... see below
+        await _start_combat(engine, fighter_id)
+
+    # fighter: 10 + 1 = 11; rogue: 9 + 2 = 11 - a genuine tie, broken by the
+    # higher DEX modifier (rogue's +2 beats fighter's +1), confirming the
+    # tiebreak itself works, not just the common no-tie case.
+    assert session.turn_order == [rogue_id, fighter_id]
+    assert session.in_combat is True
+
+    announcements = [
+        r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Initiative" in r[2]["text"]
+    ]
+    assert announcements
+
+
+async def test_start_combat_announcement_names_everyone_with_their_roll():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter", name="Thrain")
+
+    with patch("server.dice.random.randint", return_value=15):  # 15 + 1 (fighter's DEX mod) = 16
+        await _start_combat(engine, player_id)
+
+    announcements = [
+        r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Initiative" in r[2]["text"]
+    ]
+    assert announcements
+    assert "Thrain (16)" in announcements[0][2]["text"]
+
+
+async def test_start_combat_announces_npcs_but_excludes_them_from_turn_order():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": 0}])  # introduces, no damage
+    # npc.name preserves the DM's own first-seen casing (documented elsewhere
+    # in this file) - "goblin" here, not "Goblin".
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter", name="Thrain")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "A goblin appears"},
+    ))
+    assert "goblin" in session.npcs
+
+    with patch("server.dice.random.randint", return_value=10):
+        await _start_combat(engine, player_id)
+
+    # Only the player id is in the mechanical turn_order - NPCs are named
+    # in the announcement for narrative/pacing clarity but never occupy a
+    # real turn slot (see _on_start_combat's own docstring for why).
+    assert session.turn_order == [player_id]
+    announcements = [
+        r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Initiative" in r[2]["text"]
+    ]
+    assert "goblin" in announcements[0][2]["text"]
+
+
+async def test_start_combat_dex_modifier_fallback_for_npc_without_stats():
+    # "bandit" matches no known SRD monster, so it never gets real stats -
+    # the same fallback every other stat-dependent mechanic here uses.
+    dm = UpdateSequenceDM([{"target": "bandit", "max_hp": 10, "hp_delta": 0}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter", name="Thrain")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "A bandit appears"},
+    ))
+    assert session.npcs["bandit"].stats == {}
+
+    with patch("server.dice.random.randint", return_value=10):
+        await _start_combat(engine, player_id)  # would raise/KeyError if the fallback were missing
+
+    announcements = [
+        r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Initiative" in r[2]["text"]
+    ]
+    assert "bandit (10)" in announcements[0][2]["text"]  # +0 modifier, bare roll
+
+
+async def test_start_combat_is_idempotent():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter")
+
+    with patch("server.dice.random.randint", return_value=10):
+        await _start_combat(engine, player_id)
+    order_after_first = list(session.turn_order)
+    received.clear()
+
+    await _start_combat(engine, player_id)  # no dice.roll patch active - would error if it actually rolled again
+
+    assert session.turn_order == order_after_first
+    assert not any(r for r in received if r[0] == "broadcast" and r[1] == "system_message")
+
+
+async def test_start_combat_with_no_players_is_a_defensive_no_op():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())  # never actually joined
+
+    await _start_combat(engine, player_id)
+
+    assert session.in_combat is False
+    assert session.turn_order == []
+
+
+async def test_start_combat_is_exempt_from_turn_order():
+    engine, session, received = make_engine(StubDM())
+    player1_id, player2_id = str(uuid.uuid4()), str(uuid.uuid4())
+    await _join_as(engine, player1_id, "fighter", name="Thrain")
+    await _join_as(engine, player2_id, "rogue", name="Rowan")
+    assert session.current_turn != player2_id
+
+    with patch("server.dice.random.randint", return_value=10):
+        await _start_combat(engine, player2_id)  # not player2's turn, but start_combat isn't turn-gated
+
+    assert session.in_combat is True
+
+
+async def test_end_combat_restores_pre_combat_order():
+    engine, session, received = make_engine(StubDM())
+    player1_id, player2_id = str(uuid.uuid4()), str(uuid.uuid4())
+    await _join_as(engine, player1_id, "fighter", name="Thrain")
+    await _join_as(engine, player2_id, "rogue", name="Rowan")
+    join_order = list(session.turn_order)
+
+    with patch("server.dice.random.randint", side_effect=[5, 18]):  # rogue (18+2=20) beats fighter (5+1=6)
+        await _start_combat(engine, player1_id)
+    assert session.turn_order != join_order
+
+    received.clear()
+    await _end_combat(engine, player1_id)
+
+    assert session.turn_order == join_order
+    assert session.in_combat is False
+    assert session.pre_combat_turn_order is None
+    ends = [r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Combat ends" in r[2]["text"]]
+    assert ends
+
+
+async def test_end_combat_appends_players_who_joined_mid_combat():
+    engine, session, received = make_engine(StubDM())
+    player1_id = str(uuid.uuid4())
+    await _join_as(engine, player1_id, "fighter", name="Thrain")
+
+    with patch("server.dice.random.randint", return_value=10):
+        await _start_combat(engine, player1_id)
+
+    player2_id = str(uuid.uuid4())
+    await _join_as(engine, player2_id, "rogue", name="Rowan")  # joins mid-combat
+    assert session.turn_order == [player1_id, player2_id]  # appended live, same as always
+
+    await _end_combat(engine, player1_id)
+
+    # Restored pre-combat order (just player1) with the mid-combat joiner
+    # appended after, not lost and not re-sorted by initiative.
+    assert session.turn_order == [player1_id, player2_id]
+
+
+async def test_end_combat_is_idempotent():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter")
+    received.clear()  # drop the "joined the session" broadcast
+
+    await _end_combat(engine, player_id)  # never in combat at all
+
+    assert not any(r for r in received if r[0] == "broadcast" and r[1] == "system_message")
+
+
+async def test_advance_turn_cycles_through_initiative_order():
+    engine, session, received = make_engine(StubDM())
+    player1_id, player2_id = str(uuid.uuid4()), str(uuid.uuid4())
+    await _join_as(engine, player1_id, "fighter", name="Thrain")
+    await _join_as(engine, player2_id, "rogue", name="Rowan")
+
+    with patch("server.dice.random.randint", side_effect=[5, 18]):  # rogue goes first
+        await _start_combat(engine, player1_id)
+    assert session.current_turn == player2_id
+
+    session.advance_turn()
+    assert session.current_turn == player1_id
+
+    session.advance_turn()
+    assert session.current_turn == player2_id  # cycles back to the top of the round
+
+
 async def test_rejoin_after_session_started_shows_turn_prompt():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())

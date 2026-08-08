@@ -524,6 +524,12 @@ class SessionScreen(Screen):
             # "no payload needed, sender_id says who" shape start_session
             # already uses.
             await self.app.transport.send("death_save", {})
+        elif text.startswith("/combat start"):
+            # Empty payload, same shape as start_session/death_save - any
+            # joined player may trigger this, not just whoever's turn it is.
+            await self.app.transport.send("start_combat", {})
+        elif text.startswith("/combat end"):
+            await self.app.transport.send("end_combat", {})
         elif text.startswith("/chat "):
             await self.app.transport.send("chat_message", {"text": text[len("/chat "):].strip()})
         elif text.startswith("/note "):

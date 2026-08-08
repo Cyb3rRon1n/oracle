@@ -552,6 +552,38 @@ async def test_deathsave_command_sends_death_save_with_no_payload():
             assert app.transport.sent[-1] == ("death_save", {})
 
 
+async def test_combat_start_command_sends_start_combat_with_no_payload():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/combat start", "enter")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("start_combat", {})
+
+
+async def test_combat_end_command_sends_end_combat_with_no_payload():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/combat end", "enter")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("end_combat", {})
+
+
 def test_death_status_label_is_empty_for_a_healthy_character():
     assert CharacterSheetPanel._death_status_label(10) == ""
 

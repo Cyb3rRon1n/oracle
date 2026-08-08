@@ -15,6 +15,8 @@ EventType = Literal[
     "death_save",
     "reconnect",
     "start_session",
+    "start_combat",
+    "end_combat",
     # server -> client
     "state_sync",
     "log_entry",

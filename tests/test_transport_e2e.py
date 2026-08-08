@@ -1095,3 +1095,79 @@ async def test_two_real_clients_trade_turns_over_a_real_session():
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await server_task
+
+
+async def test_formal_initiative_reorders_turns_over_a_real_session():
+    """Confirms the whole formal-initiative chain works end to end over a
+    real websocket, not just at the engine-unit level (tests/test_engine.py):
+    two real clients join in one order, a real /combat start reorders
+    turn_order by a real DEX-based roll (both clients see the same
+    broadcast announcement), and the resulting turn_prompt genuinely
+    reflects the new order - not the join order either player joined in."""
+    session = Session(session_id="e2e-session-14")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, NarratesTurnDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8816))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player1_id, player2_id = str(uuid.uuid4()), str(uuid.uuid4())
+        player1 = DungeonMasterApp(uri="ws://localhost:8816", player_id=player1_id, is_new_character=True)
+        player2 = DungeonMasterApp(uri="ws://localhost:8816", player_id=player2_id, is_new_character=True)
+
+        async with player1.run_test() as pilot1, player2.run_test() as pilot2:
+            # Thrain (fighter, DEX +1) joins first, so plain join order
+            # would put him first - the point of this test is confirming
+            # combat genuinely overrides that with a real DEX-based roll.
+            await pilot1.click("#name-input")
+            await pilot1.press(*"Thrain")
+            await pilot1.click("#class-input")
+            await pilot1.press(*"fighter")
+            await pilot1.click("#join")
+            await _wait_until(lambda: isinstance(player1.screen, LobbyScreen))
+
+            await pilot2.click("#name-input")
+            await pilot2.press(*"Rowan")
+            await pilot2.click("#class-input")
+            await pilot2.press(*"rogue")
+            await pilot2.click("#join")
+            await _wait_until(lambda: isinstance(player2.screen, LobbyScreen))
+
+            await pilot1.click("#start")
+            await _wait_until(lambda: isinstance(player1.screen, SessionScreen))
+            await _wait_until(lambda: isinstance(player2.screen, SessionScreen))
+
+            await _wait_until(lambda: "Your turn" in _log_text(player1.screen.query_one("#log")))
+
+            # Rowan (rogue, DEX +2) - mocked low enough that only a real
+            # DEX modifier being applied could put her ahead of Thrain
+            # (fighter, DEX +1): Thrain 10+1=11, Rowan 9+2=11, a genuine
+            # tie broken by the higher DEX modifier, the same tiebreak
+            # tests/test_engine.py's own unit-level test already confirms.
+            with patch("server.dice.random.randint", side_effect=[10, 9]):
+                await pilot1.click("#input")
+                await pilot1.press(*"/combat start", "enter")
+                await _wait_until(lambda: "Initiative" in _log_text(player1.screen.query_one("#log")))
+
+            # Both real clients see the same real broadcast announcement.
+            for screen_owner in (player1, player2):
+                log_text = _log_text(screen_owner.screen.query_one("#log"))
+                assert "Initiative" in log_text
+                assert "Rowan (11)" in log_text
+                assert "Thrain (11)" in log_text
+
+            # Rowan won the tiebreak - it's genuinely her turn now, not
+            # Thrain's, confirming turn_order was really rebuilt, not just
+            # announced.
+            await _wait_until(lambda: "Your turn" in _log_text(player2.screen.query_one("#log")))
+            assert "Rowan's turn" in _log_text(player1.screen.query_one("#log"))
+
+            # A real, direct check on server state.
+            assert session.turn_order[0] == player2_id
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task

@@ -583,6 +583,93 @@ class GameEngine:
         if self._session.current_turn is not None:
             await self._broadcast(self._turn_prompt_envelope())
 
+    async def _on_start_combat(self, envelope: Envelope) -> None:
+        """Real 5e formal initiative - any joined player may trigger this
+        (the same symmetric, no-host-role precedent start_session already
+        establishes), not something detected from narration. Deliberately
+        explicit rather than inferred: this project's own tool-call
+        reliability investigation (ROADMAP.md) found the DM model can't be
+        trusted to reliably notice and act on state changes on its own, and
+        "did combat just start" is exactly that kind of judgment call - a
+        player saying so is the one signal that's actually reliable.
+
+        Idempotent, matching _on_start_session's own precedent - a second
+        start_combat while already in combat (two players both reaching
+        for it, a retry) is a silent no-op, not a re-rolled order.
+
+        Rolls a real 1d20 + DEX modifier for every present player and every
+        currently-tracked NPC (server/dice.py's roll(), the same primitive
+        every other roll in this project already uses) - Oracle now has
+        real DEX modifiers for both (Ability scores; NPCs matched against a
+        known SRD monster get real stats on introduction), so this needed
+        no new data. An NPC/character with no stats at all (a blank/
+        unrecognized class, or an NPC that never matched a known monster)
+        gets a modifier of 0, the same fallback every other stat-dependent
+        mechanic here already uses rather than a special case.
+
+        Deliberately scoped: NPCs are announced in the rolled order (so the
+        table knows when they act relative to the players) but never enter
+        `turn_order` itself - only player ids do. Giving NPCs real
+        mechanical turn slots would need a genuinely new engine mechanism
+        (an autonomous "it's the goblin's turn" step with no player input
+        at all, nothing like it exists anywhere in this project today) -
+        deliberately deferred rather than guessed at; see ROADMAP.md."""
+        if self._session.in_combat or not self._session.characters:
+            return
+
+        participants: list[tuple[str, int, int, str | None]] = []  # (name, roll, dex_mod, player_id)
+        for player_id, character in self._session.characters.items():
+            dex_mod = character.stat_modifiers.get("dex", 0)
+            total, _, _ = dice.roll("1d20", extra_modifier=dex_mod)
+            participants.append((character.name, total, dex_mod, player_id))
+        for npc in self._session.npcs.values():
+            dex_mod = npc.stat_modifiers.get("dex", 0)
+            total, _, _ = dice.roll("1d20", extra_modifier=dex_mod)
+            participants.append((npc.name, total, dex_mod, None))
+
+        # Highest roll first; ties broken by the higher DEX modifier (real
+        # 5e's own tiebreak), then by Python's stable sort preserving each
+        # participant's original (join/introduction) order - a real,
+        # deterministic tiebreak beyond that isn't attempted, matching real
+        # 5e's own "DM decides" for a tie that persists past DEX.
+        participants.sort(key=lambda p: (-p[1], -p[2]))
+
+        self._session.pre_combat_turn_order = list(self._session.turn_order)
+        self._session.turn_order = [pid for (_, _, _, pid) in participants if pid is not None]
+        self._session.current_turn_index = 0
+        self._session.in_combat = True
+
+        order_text = ", ".join(f"{name} ({roll})" for name, roll, _, _ in participants)
+        await self._broadcast(self._system_envelope(f"Combat begins! Initiative order: {order_text}.", level="info"))
+        await self._broadcast(self._turn_prompt_envelope())
+        await self._save()
+
+    async def _on_end_combat(self, envelope: Envelope) -> None:
+        """Symmetric with _on_start_combat - any joined player may end
+        combat too, the same "no host role" precedent. Idempotent: a
+        second end_combat outside combat is a silent no-op.
+
+        Restores turn_order to pre_combat_turn_order (plain join order,
+        snapshotted the moment combat began) plus anyone who joined mid-
+        combat - _on_join_session appends a new joiner straight to the
+        live turn_order during combat, same as it always does, so those
+        joiners are simply whatever's in turn_order now but wasn't in the
+        snapshot, appended in the order they actually joined."""
+        if not self._session.in_combat:
+            return
+
+        pre_combat = self._session.pre_combat_turn_order or []
+        latecomers = [pid for pid in self._session.turn_order if pid not in pre_combat]
+        self._session.turn_order = pre_combat + latecomers
+        self._session.pre_combat_turn_order = None
+        self._session.current_turn_index = 0
+        self._session.in_combat = False
+
+        await self._broadcast(self._system_envelope("Combat ends.", level="info"))
+        if self._session.current_turn is not None:
+            await self._broadcast(self._turn_prompt_envelope())
+        await self._save()
+
     async def handle_disconnect(self, player_id: str) -> None:
         """Called by the transport when a connected player's socket closes -
         the counterpart to the player_joined broadcast above, so everyone
