@@ -427,6 +427,19 @@ class Session(BaseModel):
     # among others) is correctly still recognized as already-started even
     # though it predates this field and would otherwise load as False.
     started: bool = False
+    # Real 5e formal initiative (server/engine.py's _on_start_combat/
+    # _on_end_combat) - deliberately narrow scope: only replaces the
+    # mechanical turn_order/current_turn-index cycling for the duration of
+    # a fight, never a second turn-tracking system running in parallel.
+    # pre_combat_turn_order is a snapshot of turn_order taken the moment
+    # combat starts (which, since combat hasn't started yet, is still
+    # plain join order at that point) - restored (plus anyone who joined
+    # mid-combat, appended to the end) when combat ends, rather than a
+    # second persistent "join order" field that would need its own
+    # backward-compatibility handling for sessions saved before this
+    # existed. None outside combat.
+    in_combat: bool = False
+    pre_combat_turn_order: list[str] | None = None
     log: list[dict] = Field(default_factory=list)
     history: list[dict] = Field(default_factory=list)
     # Per-instance so it can be tuned for a real production session, or
