@@ -691,6 +691,15 @@ class DungeonMasterApp(App):
             sign = "+" if ability_mod >= 0 else ""
             notation = f"{notation} {sign}{ability_mod} {payload['ability'].upper()}"
 
+        # roll_kind only ever appears on a DM-requested roll that named one
+        # (server/engine.py's request_roll closure) - purely descriptive of
+        # what the roll represents (attack/save/check), shown the same way
+        # damage_type/ability are so the roll reads as "what it actually
+        # was", not just a bare number.
+        roll_kind = payload.get("roll_kind")
+        if roll_kind:
+            notation = f"{notation} ({roll_kind})"
+
         # disadvantage_reasons only ever appears on a request_roll the
         # engine automatically rolled with disadvantage (server/engine.py's
         # _has_disadvantage, triggered by a tracked condition like

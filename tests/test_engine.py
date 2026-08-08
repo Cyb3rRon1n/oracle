@@ -1170,6 +1170,164 @@ async def test_dm_requested_roll_with_a_non_disadvantage_condition_is_unaffected
     assert len(payload["rolls"]) == 1
 
 
+async def test_roll_kind_save_excludes_poisoned_from_disadvantage():
+    # Real SRD text: poisoned gives disadvantage on attack rolls and
+    # ability checks - saving throws are never mentioned, so a roll_kind
+    # of "save" should not trigger it, unlike every prior test above
+    # (all omit roll_kind, so they still get the broader legacy behavior).
+    dm = RequestRollDM({"dice": "1d20", "roll_kind": "save"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("poisoned")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I resist the poison's grip on my mind"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert "disadvantage" not in payload
+    assert len(payload["rolls"]) == 1
+
+
+async def test_roll_kind_attack_still_applies_poisoned_disadvantage():
+    dm = RequestRollDM({"dice": "1d20", "roll_kind": "attack"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("poisoned")
+
+    with patch("server.dice.random.randint", side_effect=[18, 4]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I swing my sword despite the poison"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results[-1][2]["disadvantage"] is True
+
+
+async def test_roll_kind_save_excludes_frightened_from_disadvantage():
+    dm = RequestRollDM({"dice": "1d20", "roll_kind": "save"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("frightened")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I steel my nerve"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert "disadvantage" not in results[-1][2]
+
+
+async def test_roll_kind_check_excludes_prone_from_disadvantage():
+    # Prone's real SRD text only ever mentions attack rolls - unlike
+    # poisoned/frightened, it doesn't affect checks either, so this
+    # excludes a *broader* set of roll kinds than the save-only cases above.
+    dm = RequestRollDM({"dice": "1d20", "roll_kind": "check"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("prone")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try to recall a useful fact while down"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert "disadvantage" not in results[-1][2]
+
+
+async def test_roll_kind_attack_still_applies_prone_disadvantage():
+    dm = RequestRollDM({"dice": "1d20", "roll_kind": "attack"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("prone")
+
+    with patch("server.dice.random.randint", side_effect=[18, 4]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I attack from the ground"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results[-1][2]["disadvantage"] is True
+
+
+async def test_roll_kind_omitted_keeps_the_prior_broader_disadvantage_behavior():
+    # Backward compatibility: a request_roll call that doesn't set
+    # roll_kind at all (an older call shape, or a DM that just didn't
+    # bother) still gets the original "applies to any roll" behavior -
+    # this is additive, not a breaking change to existing callers.
+    dm = RequestRollDM({"dice": "1d20"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("poisoned")
+
+    with patch("server.dice.random.randint", side_effect=[18, 4]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I try to save against the poison"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results[-1][2]["disadvantage"] is True
+
+
+async def test_roll_kind_unrecognized_value_is_treated_as_omitted():
+    dm = RequestRollDM({"dice": "1d20", "roll_kind": "bogus"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I roll for something"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert "roll_kind" not in results[-1][2]
+
+
+async def test_roll_kind_appears_in_dice_result_and_tool_result_when_given():
+    dm = RequestRollDM({"dice": "1d20", "roll_kind": "check", "reason": "spot a trap"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look for traps"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results[-1][2]["roll_kind"] == "check"
+    assert dm.tool_result is not None and "(check)" in dm.tool_result
+
+
+async def test_roll_kind_absent_when_omitted():
+    dm = RequestRollDM({"dice": "1d20"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I roll for something"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert "roll_kind" not in results[-1][2]
+
+
 async def test_player_initiated_roll_also_applies_disadvantage():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())

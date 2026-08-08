@@ -43,12 +43,26 @@ DEFAULT_NPC_XP = 50
 # target-side and turn-blocking, not "the bearer rolls worse" - and
 # deliberately not modeled in this slice; a stunned character can still
 # act and rolls normally here, a real known gap, not silently pretended
-# away. Also a broader simplification than strict RAW: poisoned/
-# frightened's real text excludes saving throws specifically, but
-# request_roll has no way to distinguish a save from a check from an
-# attack roll today, so this applies disadvantage to *any* roll while the
-# condition is active rather than narrowly scoped per roll type.
+# away.
 DISADVANTAGE_CONDITIONS = frozenset({"poisoned", "frightened", "prone"})
+
+# Per-condition roll_kind exclusions, matching each condition's real SRD
+# text now that request_roll can actually distinguish a save from a check
+# from an attack roll (the roll_kind field, AnthropicNarrator only - see
+# ROADMAP.md). Poisoned/frightened's real text is "disadvantage on attack
+# rolls and ability checks" - saving throws are never mentioned, so a
+# save is excluded. Prone's real text only ever mentions attack rolls
+# ("has disadvantage on attack rolls") - neither checks nor saves are
+# affected at all, so both are excluded. Only takes effect when roll_kind
+# is actually given (see _has_disadvantage below) - an omitted roll_kind
+# (a plain player /roll, or any older/simpler request_roll call that
+# doesn't set it) keeps the prior broader "applies to any roll" behavior
+# unchanged, so this is additive, not a breaking change to existing calls.
+ROLL_KIND_DISADVANTAGE_EXCLUSIONS: dict[str, frozenset[str]] = {
+    "poisoned": frozenset({"save"}),
+    "frightened": frozenset({"save"}),
+    "prone": frozenset({"save", "check"}),
+}
 
 # character_edit's own real scope (docs/protocol.md, ROADMAP.md's "let a
 # player edit their own notes/inventory directly, without DM adjudication"):
@@ -60,15 +74,29 @@ DISADVANTAGE_CONDITIONS = frozenset({"poisoned", "frightened", "prone"})
 CHARACTER_EDIT_FIELDS = frozenset({"notes", "add_item", "remove_item"})
 
 
-def _has_disadvantage(character: CharacterSheet) -> list[str]:
+def _has_disadvantage(character: CharacterSheet, roll_kind: str | None = None) -> list[str]:
     """Returns which of the acting character's current conditions actually
     trigger disadvantage (empty if none) - a list, not just a bool, so a
     caller can name the real reason in the roll's own text rather than a
     bare "disadvantage" with no explanation. Real 5e disadvantage never
     stacks (multiple sources still just apply once) - callers only need
     `bool(...)` on this to know whether to roll with disadvantage at all,
-    the list itself is purely for the human-readable reason."""
-    return [c for c in character.conditions if c.casefold() in DISADVANTAGE_CONDITIONS]
+    the list itself is purely for the human-readable reason.
+
+    roll_kind (optional - "attack"/"save"/"check", request_roll's own new
+    field) narrows this against ROLL_KIND_DISADVANTAGE_EXCLUSIONS when
+    given; left as the prior "applies regardless" behavior when omitted,
+    which is what a plain player /roll (no roll_kind at all) always
+    passes."""
+    reasons = []
+    for c in character.conditions:
+        key = c.casefold()
+        if key not in DISADVANTAGE_CONDITIONS:
+            continue
+        if roll_kind is not None and roll_kind in ROLL_KIND_DISADVANTAGE_EXCLUSIONS.get(key, frozenset()):
+            continue
+        reasons.append(c)
+    return reasons
 
 
 # A real, deterministic starting sheet instead of every new character
@@ -624,6 +652,20 @@ class GameEngine:
             ability = update.get("ability")
             ability_mod = character.stat_modifiers.get(ability) if ability else None
 
+            # roll_kind ("attack"/"save"/"check") is purely descriptive of
+            # what the roll represents - unlike every other request_roll
+            # field, it never changes the roll's own math (no modifier, no
+            # notation change). Its one real effect is narrowing which
+            # tracked conditions apply disadvantage below (real 5e's own
+            # per-roll-type scoping - see ROLL_KIND_DISADVANTAGE_EXCLUSIONS).
+            # An unrecognized value is treated the same as omitted (None) -
+            # the same graceful-miss convention every other name-based
+            # field in this closure (weapon, ability) already follows,
+            # rather than erroring on a value the model got slightly wrong.
+            roll_kind = update.get("roll_kind")
+            if roll_kind not in ("attack", "save", "check"):
+                roll_kind = None
+
             # Fully automatic, never a model-supplied field - the same
             # "the engine computes this from real tracked state, not the
             # model's judgment" reasoning every other mechanic in this
@@ -632,7 +674,7 @@ class GameEngine:
             # state for (fighting in darkness, an ally in the way) still
             # isn't modeled - real, deliberate future work, not silently
             # promised here.
-            disadvantage_reasons = _has_disadvantage(character)
+            disadvantage_reasons = _has_disadvantage(character, roll_kind)
             disadvantage = bool(disadvantage_reasons)
 
             try:
@@ -648,15 +690,16 @@ class GameEngine:
                     "dice": notation, "total": total, "rolls": rolls, "sides": sides,
                     "dc": dc, "success": success, "reason": reason,
                     "ability": ability, "ability_modifier": ability_mod,
-                    "damage_type": damage_type,
+                    "damage_type": damage_type, "roll_kind": roll_kind,
                     "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
                 }
             )
 
             damage_label = f" ({damage_type})" if damage_type else ""
             ability_label = f" +{ability_mod} {ability.upper()}" if ability_mod is not None else ""
+            roll_kind_label = f" ({roll_kind})" if roll_kind else ""
             disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage else ""
-            label = damage_label + ability_label + disadvantage_label
+            label = damage_label + ability_label + roll_kind_label + disadvantage_label
             if dc is None:
                 return f"Rolled {notation}{label}: {total} {rolls}."
             return f"Rolled {notation}{label}: {total} {rolls} vs DC {dc} — {'success' if success else 'failure'}."
@@ -1041,11 +1084,13 @@ class GameEngine:
         ability_label = f" +{ability_mod} {roll['ability'].upper()}" if ability_mod is not None else ""
         damage_type = roll.get("damage_type")
         damage_label = f" ({damage_type})" if damage_type else ""
+        roll_kind = roll.get("roll_kind")
+        roll_kind_label = f" ({roll_kind})" if roll_kind else ""
         disadvantage_reasons = roll.get("disadvantage_reasons")
         disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
         label = f" ({roll['reason']})" if roll["reason"] else ""
         text = (
-            f"{name} rolls {roll['dice']}{damage_label}{ability_label}{disadvantage_label}{label}: "
+            f"{name} rolls {roll['dice']}{damage_label}{ability_label}{roll_kind_label}{disadvantage_label}{label}: "
             f"{roll['total']} {roll['rolls']}"
         )
         if roll["dc"] is not None:
@@ -1071,6 +1116,8 @@ class GameEngine:
             payload["ability_modifier"] = roll["ability_modifier"]
         if roll.get("damage_type"):
             payload["damage_type"] = roll["damage_type"]
+        if roll.get("roll_kind"):
+            payload["roll_kind"] = roll["roll_kind"]
         if roll.get("disadvantage"):
             payload["disadvantage"] = True
             payload["disadvantage_reasons"] = roll["disadvantage_reasons"]
