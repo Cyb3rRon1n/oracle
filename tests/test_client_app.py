@@ -462,6 +462,80 @@ async def test_npc_update_with_disposition_renders_in_the_log():
             assert "hostile" in _log_text(app.screen.query_one("#log"))
 
 
+def test_npc_line_shows_defeated_at_zero_hp():
+    line = CharacterSheetPanel._npc_line("goblin", {"hp": 0, "max_hp": 7})
+    assert "(defeated)" in line
+
+
+def test_npc_line_omits_defeated_label_above_zero_hp():
+    line = CharacterSheetPanel._npc_line("goblin", {"hp": 3, "max_hp": 7})
+    assert "defeated" not in line
+
+
+def test_npc_line_shows_disposition_and_conditions():
+    line = CharacterSheetPanel._npc_line(
+        "goblin", {"hp": 3, "max_hp": 7, "disposition": "hostile", "conditions": ["poisoned"]}
+    )
+    assert "hostile" in line
+    assert "poisoned" in line
+
+
+async def test_state_sync_npcs_render_in_the_persistent_panel():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            # _state_sync's helper defaults npcs={} - build the payload
+            # directly to cover a (re)joining player seeing existing NPC
+            # state immediately, not just a live npc_update after joining.
+            await app._handle(Envelope(
+                type="state_sync", session_id="s", sender_id="server",
+                payload={
+                    "characters": {"p1": {"name": "Thrain", "hp": 10, "max_hp": 10}},
+                    "npcs": {"goblin": {"hp": 3, "max_hp": 7}},
+                    "world_state": {}, "turn_order": ["p1"], "current_turn": "p1",
+                    "log_tail": [], "started": True,
+                },
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert "NPCs" in rendered
+            assert "goblin" in rendered
+
+
+async def test_npc_update_refreshes_the_persistent_panel_not_just_the_log():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="npc_update", session_id="s", sender_id="server",
+                payload={"name": "goblin", "sheet_delta": {"hp": 3, "max_hp": 7}},
+            ))
+            await pilot.pause()
+            assert "goblin" in app.screen.query_one("#sheet")._Static__content
+
+            # A second update for the same NPC must replace, not duplicate,
+            # its panel entry - the exact staleness bug this feature fixes
+            # (self.npcs was previously only ever set once, from
+            # state_sync, and never updated by a live npc_update at all).
+            await app._handle(Envelope(
+                type="npc_update", session_id="s", sender_id="server",
+                payload={"name": "goblin", "sheet_delta": {"hp": 0, "max_hp": 7}},
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert rendered.count("goblin") == 1
+            assert "(defeated)" in rendered
+
+
 async def test_deathsave_command_sends_death_save_with_no_payload():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
