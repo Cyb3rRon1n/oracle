@@ -352,13 +352,16 @@ class GameEngine:
             reason = update.get("reason", "")
 
             try:
-                total, rolls = dice.roll(notation)
+                total, rolls, sides = dice.roll(notation)
             except dice.InvalidDiceNotation as exc:
                 return f"Invalid dice notation: {exc}"
 
             success = None if dc is None else total >= dc
             rolls_made.append(
-                {"dice": notation, "total": total, "rolls": rolls, "dc": dc, "success": success, "reason": reason}
+                {
+                    "dice": notation, "total": total, "rolls": rolls, "sides": sides,
+                    "dc": dc, "success": success, "reason": reason,
+                }
             )
 
             if dc is None:
@@ -485,12 +488,15 @@ class GameEngine:
         reason = envelope.payload.get("reason", "")
 
         try:
-            total, rolls = dice.roll(notation)
+            total, rolls, sides = dice.roll(notation)
         except dice.InvalidDiceNotation as exc:
             await self._send_to(player_id, self._system_envelope(str(exc), level="warning"))
             return
 
-        roll = {"dice": notation, "total": total, "rolls": rolls, "dc": None, "success": None, "reason": reason}
+        roll = {
+            "dice": notation, "total": total, "rolls": rolls, "sides": sides,
+            "dc": None, "success": None, "reason": reason,
+        }
         await self._broadcast(self._log_envelope("dice", self._dice_log_text(name, roll)))
         await self._broadcast(self._dice_result_envelope(player_id, roll))
 
@@ -510,6 +516,7 @@ class GameEngine:
             "dice": roll["dice"],
             "result": roll["total"],
             "rolls": roll["rolls"],
+            "sides": roll["sides"],
             "purpose": roll["reason"],
         }
         if roll["dc"] is not None:

@@ -267,6 +267,19 @@ async def test_two_real_clients_trade_turns_over_a_real_session():
                 log_text = _log_text(screen_owner.screen.query_one("#log"))
                 assert "Rowan: I step through the doorway" in log_text
                 assert "The DM responds to: I step through the doorway" in log_text
+
+            # /roll is exempt from turn order and structured client-side
+            # rendering (dice_result) is new - a real roll over a real
+            # socket should reach both clients exactly once each, not as a
+            # duplicate of the plain log_entry text.
+            await pilot2.click("#input")
+            await pilot2.press(*"/roll 1d20 perception check", "enter")
+            await _wait_until(lambda: "rolls 1d20" in _log_text(player1.screen.query_one("#log")))
+
+            for screen_owner in (player1, player2):
+                log_text = _log_text(screen_owner.screen.query_one("#log"))
+                assert "Rowan rolls 1d20 (perception check)" in log_text
+                assert log_text.count("rolls 1d20") == 1
     finally:
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):
