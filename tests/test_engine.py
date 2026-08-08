@@ -367,6 +367,52 @@ async def test_update_character_tool_call_applies_and_pushes_character_update():
     assert updates[-1][3]["sheet_delta"]["inventory"] == ["torch"]
 
 
+async def test_update_character_rest_heals_the_acting_character_through_a_real_turn():
+    dm = UpdateSequenceDM([{"hp_delta": -7}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)  # blank class, hp=10/max_hp=10
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I take a bad hit"},
+    ))
+    assert session.characters[player_id].hp == 3
+
+    dm._updates = [{"rest": "long"}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I make camp and rest for the night"},
+    ))
+
+    assert session.characters[player_id].hp == 10
+    assert "long rest" in dm.tool_results[-1]
+
+
+async def test_update_character_rest_heals_a_tracked_npc_too():
+    # apply_update's rest handling lives on CharacterSheet itself, so it
+    # applies to a tracked NPC the same way it does the acting character -
+    # no separate wiring needed in the NPC-targeting branch.
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 10, "hp_delta": -8}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I wound the goblin"},
+    ))
+    assert session.npcs["goblin"].hp == 2
+
+    dm._updates = [{"target": "goblin", "rest": "short"}]  # missing 8, +4
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "The goblin retreats and catches its breath"},
+    ))
+
+    assert session.npcs["goblin"].hp == 6
+
+
 async def test_update_character_no_op_does_not_push_character_update():
     dm = UpdateCharacterDM({"hp_delta": 0})
     engine, session, received = make_engine(dm)

@@ -73,6 +73,57 @@ def test_apply_update_clamps_hp_to_valid_range():
     assert character.hp == 10
 
 
+def test_apply_update_long_rest_fully_restores_hp():
+    character = make_character(hp=3, max_hp=10)
+    result = character.apply_update({"rest": "long"})
+    assert character.hp == 10
+    assert "long rest" in result and "10/10" in result
+
+
+def test_apply_update_long_rest_at_full_hp_is_a_no_op():
+    character = make_character(hp=10, max_hp=10)
+    result = character.apply_update({"rest": "long"})
+    assert character.hp == 10
+    assert result.startswith("No changes applied")
+
+
+def test_apply_update_short_rest_restores_half_of_missing_hp():
+    character = make_character(hp=2, max_hp=10)  # missing 8, floor(8/2) = 4
+    result = character.apply_update({"rest": "short"})
+    assert character.hp == 6
+    assert "short rest" in result and "+4" in result and "6/10" in result
+
+
+def test_apply_update_short_rest_floors_an_odd_missing_amount():
+    character = make_character(hp=7, max_hp=10)  # missing 3, floor(3/2) = 1
+    character.apply_update({"rest": "short"})
+    assert character.hp == 8
+
+
+def test_apply_update_short_rest_at_full_hp_is_a_no_op():
+    character = make_character(hp=10, max_hp=10)
+    result = character.apply_update({"rest": "short"})
+    assert character.hp == 10
+    assert result.startswith("No changes applied")
+
+
+def test_apply_update_short_rest_never_overshoots_max_hp():
+    # missing=1, floor(1/2)=0 - a genuinely near-full character shouldn't
+    # somehow tip over max_hp from a rounding quirk.
+    character = make_character(hp=9, max_hp=10)
+    character.apply_update({"rest": "short"})
+    assert character.hp == 9
+
+
+def test_apply_update_rest_leaves_conditions_untouched():
+    # Deliberate: most SRD conditions don't just expire with time under
+    # the actual rules, so a rest silently clearing them would be a real
+    # rules error, not a simplification - see the comment in state.py.
+    character = make_character(hp=1, max_hp=10, conditions=["poisoned"])
+    character.apply_update({"rest": "long"})
+    assert character.conditions == ["poisoned"]
+
+
 def test_apply_update_inventory_add_and_remove():
     character = make_character()
 
