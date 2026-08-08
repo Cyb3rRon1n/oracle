@@ -305,6 +305,65 @@ async def test_ability_score_modifier_applies_to_a_dm_requested_roll_over_a_real
             await server_task
 
 
+class RequestsWeaponDamageRollDM:
+    """Simulates a DM turn narrating a hit and rolling real weapon damage -
+    exercises the real equipment-lookup plumbing (server/engine.py's
+    request_roll closure resolving a real srd.json damage die) over an
+    actual websocket."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        request_roll({"weapon": "longsword", "ability": "str", "reason": "damage roll"})
+        yield "Your longsword bites deep."
+
+
+async def test_structured_equipment_ac_and_weapon_damage_over_a_real_session():
+    """Confirms the structured-equipment chain works end to end over a real
+    websocket: a fighter's real starting AC (leather armor + DEX) renders
+    on the sheet, and a DM-requested weapon damage roll resolves the real
+    SRD damage die/type - not mocked payload dicts like the client-level
+    tests use."""
+    session = Session(session_id="e2e-session-8")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, RequestsWeaponDamageRollDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8806))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8806", player_id=player_id, is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#class-input")
+            await pilot.press(*"fighter")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            sheet = app.screen.query_one("#sheet")
+            rendered = sheet._Static__content
+            assert "AC 12" in rendered  # leather armor's real base (11) + fighter's real DEX mod (+1)
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I strike with my longsword", "enter")
+            await _wait_until(lambda: "(slashing)" in _log_text(app.screen.query_one("#log")))
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "1d8 (slashing) +2 STR" in log_text  # real longsword die + fighter's real STR mod
+
+            # A real, direct check on server state.
+            assert session.characters[player_id].ac == 12
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_character_import_over_a_real_session_wins_over_typed_name_and_class(tmp_path):
     """Character export is purely client-side (no server involvement, see
     DungeonMasterApp.export_character) so it doesn't need a websocket to

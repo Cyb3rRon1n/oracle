@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from server.engine import GameEngine, build_starting_character
+from server.engine import GameEngine, build_starting_character, _compute_ac
 from server.rules import RulesIndex
 from server.state import Session
 from shared.protocol import Envelope
@@ -128,25 +128,27 @@ async def test_join_seats_player_and_starts_their_turn():
 
 
 @pytest.mark.parametrize(
-    "character_class,expected_hp,expected_inventory,expected_stats",
+    "character_class,expected_hp,expected_inventory,expected_stats,expected_ac",
     [
         # HP is the SRD hit_die max + a real CON modifier now (every class
         # places CON second in its own priority order - see
         # CLASS_ABILITY_PRIORITY - so each gets the Standard Array's 14,
         # a +2 modifier, uniformly): fighter d10+2=12, rogue d8+2=10,
-        # cleric d8+2=10, wizard d6+2=8.
+        # cleric d8+2=10, wizard d6+2=8. AC is 11 (leather armor's base)
+        # + DEX modifier for the three classes whose starting kit includes
+        # it, or 10 (unarmored) + DEX modifier for wizard, which doesn't.
         ("fighter", 12, ["Longsword", "Leather Armor"],
-         {"str": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "int": 8}),
+         {"str": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "int": 8}, 12),
         ("rogue", 10, ["Shortbow", "Leather Armor"],
-         {"dex": 15, "con": 14, "int": 13, "wis": 12, "cha": 10, "str": 8}),
+         {"dex": 15, "con": 14, "int": 13, "wis": 12, "cha": 10, "str": 8}, 13),
         ("cleric", 10, ["Leather Armor", "Potion of Healing"],
-         {"wis": 15, "con": 14, "str": 13, "dex": 12, "cha": 10, "int": 8}),
+         {"wis": 15, "con": 14, "str": 13, "dex": 12, "cha": 10, "int": 8}, 12),
         ("wizard", 8, ["Potion of Healing"],
-         {"int": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "str": 8}),
+         {"int": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "str": 8}, 11),
     ],
 )
 def test_build_starting_character_gives_a_real_class_kit(
-    character_class, expected_hp, expected_inventory, expected_stats
+    character_class, expected_hp, expected_inventory, expected_stats, expected_ac
 ):
     # Closes the "no character sheet at all" gap: previously every fresh
     # character was just name + hp=10/10 with nothing else, since stats/
@@ -163,6 +165,7 @@ def test_build_starting_character_gives_a_real_class_kit(
     assert sheet.character_class  # the SRD's display name, e.g. "Fighter"
     assert sheet.stats == expected_stats
     assert sheet.stat_modifiers["con"] == 2  # (14 - 10) // 2
+    assert sheet.ac == expected_ac
 
 
 @pytest.mark.parametrize("character_class", ["", "bard", "not-a-real-class"])
@@ -178,6 +181,7 @@ def test_build_starting_character_falls_back_on_blank_or_unknown_class(character
     assert sheet.inventory == []
     assert sheet.character_class == ""
     assert sheet.stats == {}
+    assert sheet.ac == 10  # unarmored baseline, no DEX modifier to add (no stats)
 
 
 async def test_join_with_character_class_builds_real_starting_sheet_end_to_end():
@@ -1103,6 +1107,111 @@ async def test_npc_introduction_leaves_stats_empty_for_an_unmatched_name():
     ))
 
     assert session.npcs["shadow_beast"].stats == {}
+
+
+def test_compute_ac_unarmored_is_ten_plus_dex_modifier():
+    rules = RulesIndex.load_default()
+    assert _compute_ac([], dex_modifier=2, rules=rules) == 12
+    assert _compute_ac(["Potion of Healing"], dex_modifier=1, rules=rules) == 11  # no armor in inventory
+
+
+def test_compute_ac_uses_the_best_matched_armors_base_value():
+    rules = RulesIndex.load_default()
+    assert _compute_ac(["Leather Armor"], dex_modifier=1, rules=rules) == 12  # 11 + 1
+    # Case/whitespace shouldn't matter - the same _slug()-based lookup
+    # every other equipment/monster name match in this project already uses.
+    assert _compute_ac(["leather armor"], dex_modifier=0, rules=rules) == 11
+
+
+async def test_npc_introduction_copies_ac_from_a_matched_srd_monster():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -1}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I size up the goblin"},
+    ))
+
+    assert session.npcs["goblin"].ac == 15  # server/rules/srd.json's real goblin ac
+
+
+async def test_npc_introduction_leaves_ac_at_default_for_an_unmatched_name():
+    dm = UpdateSequenceDM([{"target": "shadow_beast", "max_hp": 5, "hp_delta": -1}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I size up the shadow beast"},
+    ))
+
+    assert session.npcs["shadow_beast"].ac == 10  # CharacterSheet's own unarmored default
+
+
+async def test_public_character_view_includes_ac():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+
+    other_id = str(uuid.uuid4())
+    await join(engine, other_id, name="Rowan")
+
+    syncs = [r for r in received if r[0] == "send_to" and r[1] == other_id and r[2] == "state_sync"]
+    view = syncs[-1][3]["characters"][player_id]
+    assert view["ac"] == 12  # fighter's real starting AC (leather armor 11 + DEX 13 -> +1)
+
+
+async def test_dm_requested_weapon_damage_roll_uses_real_srd_damage_die():
+    dm = RequestRollDM({"weapon": "longsword", "ability": "str", "reason": "damage roll"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I swing my longsword"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["dice"] == "1d8"  # server/rules/srd.json's real longsword damage die
+    assert payload["damage_type"] == "slashing"
+    assert payload["ability"] == "str"
+    assert payload["ability_modifier"] == 2  # fighter's real STR modifier
+    assert 1 <= (payload["result"] - 2) <= 8  # the raw d8 roll, before the +2 STR mod
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "1d8 (slashing) +2 STR" in dice_logs[-1][2]["text"]
+    assert dm.tool_result is not None and "(slashing)" in dm.tool_result
+
+
+async def test_dm_requested_roll_with_unmatched_weapon_falls_back_to_given_dice():
+    dm = RequestRollDM({"dice": "2d6", "weapon": "not-a-real-weapon", "reason": "improvised damage"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I improvise a weapon"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["dice"] == "2d6"
+    assert "damage_type" not in payload
 
 
 async def test_dm_requested_roll_with_invalid_notation_reports_error_without_crashing_turn():

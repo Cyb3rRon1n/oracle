@@ -26,7 +26,12 @@ You have five tools available:
   those abilities, pass its key (str/dex/con/int/wis/cha) as request_roll's ability
   field and the engine adds the correct modifier itself; don't also compute and type a
   modifier into dice by hand for that same ability. Use lookup_rule on the acting
-  character's class to see which two abilities its saving throws use.
+  character's class to see which two abilities its saving throws use. For an attack
+  roll against a target, use its AC as the dc — the acting character's own AC is in
+  their sheet (character_summary's ac); an NPC/monster target's AC is in its stat
+  block via lookup_rule. For the damage roll after a hit, use request_roll's weapon
+  field (the weapon's name) instead of typing its damage die into dice yourself — the
+  engine looks up the real value and reports the damage type too.
 - lookup_rule: use before improvising crunchy mechanics (monster stats, spell details,
   class features, equipment, conditions) so numbers stay consistent from turn to turn.
 - update_character: call this whenever your narration describes something that should
@@ -239,8 +244,19 @@ REQUEST_ROLL_TOOL = {
                     "a modifier into dice yourself for this same ability, or it'll be "
                     "applied twice. The character's scores and modifiers are in their sheet "
                     "(character_summary's stats/stat_modifiers). Omit for a roll that isn't "
-                    "tied to any ability (e.g. a pure damage roll already using a weapon's "
-                    "own damage dice)."
+                    "tied to any ability."
+                ),
+            },
+            "weapon": {
+                "type": "string",
+                "description": (
+                    "For a damage roll: the weapon's name (e.g. 'longsword') - the engine "
+                    "looks up its real SRD damage die and uses that instead of whatever's "
+                    "in dice, and reports the damage type too. Combine with ability (the "
+                    "character's STR for most melee weapons, DEX for ranged/finesse ones) "
+                    "the same way real damage rolls add an ability modifier on top of the "
+                    "weapon's own die. Omit for an attack roll or check - this is for the "
+                    "follow-up damage roll after a hit, not the roll to see if it lands."
                 ),
             },
         },

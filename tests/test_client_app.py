@@ -401,6 +401,46 @@ async def test_party_view_never_shows_ability_scores():
             assert "Ability Scores" not in rendered
 
 
+async def test_sheet_panel_renders_own_ac_next_to_hp():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12, "ac": 15},
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert "AC 15" in rendered
+
+
+async def test_party_view_shows_ac_since_it_is_public():
+    # Unlike ability scores/xp, ac is part of the public view
+    # (server/engine.py's _public_character_view) - a real fact about
+    # combat capability visible to the party, the same as HP or level.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="player_joined", session_id="s", sender_id="server",
+                payload={
+                    "player_id": "p2", "name": "Rowan", "character_class": "Rogue",
+                    "hp": 8, "max_hp": 8, "ac": 13, "conditions": [], "level": 1,
+                },
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert "AC 13" in rendered
+
+
 async def test_turn_prompt_for_another_player_names_them_not_just_your_own_turn():
     # A real gap found only by running two real clients through a real
     # session (ROADMAP.md): turn_prompt used to only ever write something
@@ -517,6 +557,31 @@ async def test_dice_result_shows_ability_modifier_tag_when_present():
             log_text = _log_text(app.screen.query_one("#log"))
             assert "1d20 +1 DEX" in log_text
             assert "15" in log_text
+
+
+async def test_dice_result_shows_damage_type_and_ability_together():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d8", "result": 7, "rolls": [5],
+                    "sides": 8, "purpose": "damage roll",
+                    "ability": "str", "ability_modifier": 2, "damage_type": "slashing",
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "1d8 (slashing) +2 STR" in log_text
 
 
 async def test_dice_result_names_the_other_players_roll():
