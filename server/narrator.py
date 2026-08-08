@@ -39,7 +39,10 @@ You have five tools available:
   in the same turn you narrate it. When you introduce a new NPC worth remembering, give
   it a brief `notes` value too (a sentence on its personality, goal, or relationship to
   the party) — update that note later if the relationship changes. This is what keeps a
-  recurring character feeling continuous instead of reset each time they appear.
+  recurring character feeling continuous instead of reset each time they appear. When
+  the character/NPC rests for a meaningful stretch (camping overnight, resting after a
+  fight), use the `rest` field ('short' or 'long') instead of guessing an `hp_delta` -
+  the engine computes the real amount healed.
 - update_world: call this when something should be remembered for the rest of the
   campaign, not just this scene — a new objective or plot thread emerging, one being
   completed or abandoned, the location changing, or a durable fact about the world. This
@@ -113,6 +116,17 @@ UPDATE_CHARACTER_TOOL = {
             "hp_delta": {
                 "type": "integer",
                 "description": "Change in hit points. Negative for damage, positive for healing.",
+            },
+            "rest": {
+                "type": "string",
+                "enum": ["short", "long"],
+                "description": (
+                    "Use when the character/NPC rests for a meaningful stretch of time "
+                    "(camping overnight, resting after a fight) instead of guessing an "
+                    "hp_delta yourself - the engine computes the real amount healed. "
+                    "'long' fully restores HP; 'short' restores about half of what's "
+                    "currently missing. Don't combine with hp_delta in the same call."
+                ),
             },
             "add_item": {"type": "string", "description": "Item name to add to inventory."},
             "remove_item": {

@@ -103,6 +103,16 @@ The foundational mechanic everything else in this section leans on eventually �
 - **NPCs get real stats too when their name matches a known SRD monster** — the same target-name-to-monster lookup `_xp_for_npc` already does for Challenge Rating, reused when an NPC is first introduced (`server/engine.py`'s `apply_update` closure) to copy its real `stats` block. An unmatched name gets no stats, same as an unrecognized player class.
 - **Not built (yet)**: player-chosen stat allocation (point buy, standard-array self-assignment, or rolling) — the fixed per-class array is a deliberately small first slice, matching `build_starting_character`'s existing "small, deterministic, not a full character builder" scope.
 
+## Rest and recovery
+
+Closes a gap that's existed since HP was first tracked: healing had always meant the DM narrating a positive `hp_delta` and computing that number itself. `update_character`'s existing `target`/`hp_delta` shape gained a new optional `rest` field (`"short"` or `"long"`, both backends — this rides the same shared `update_character` tool `request_roll`/`update_world` are deliberately *not* on, so no new reliability gating was needed) instead of a new tool.
+
+- **`"long"` fully restores HP** — real 5e's own actual long-rest rule, not a simplification.
+- **`"short"` restores half of whatever's currently missing** (`(max_hp - hp) // 2`, floored) — a deliberate simplification of real 5e's hit-dice-spending mechanic, which would need a new spent-hit-dice resource tracked on the sheet; this needs no new state at all.
+- **Deliberately doesn't touch conditions.** Most SRD conditions (poisoned, frightened, ...) don't just expire with time under the actual rules — silently clearing them on a rest would be a rules error, not a simplification. The DM can still pair `rest` with an explicit `remove_condition` in the same call when the fiction actually calls for it.
+- **Applies to NPCs too, for free** — the logic lives on `CharacterSheet.apply_update()` itself, so a rested/regrouped NPC (`target` set to its name) heals exactly the same way the acting character does, no separate wiring in the NPC-targeting branch.
+- Already-full is a no-op (`"No changes applied"`), the same rule every other `apply_update` field already follows.
+
 ## Character export/import
 
 The secondary half of the owner's XP/leveling request: *"if possible character saving format so players can import or export their character as an extra layer to not lose their progression."* Scoped to a single `CharacterSheet` snapshot — distinct from a full session-transcript export (a separate, already-tracked item), and deliberately not a new protocol envelope type for either direction.
@@ -118,6 +128,7 @@ The secondary half of the owner's XP/leveling request: *"if possible character s
 - **XP/leveling, implemented** — see "Character progression: XP and leveling" above. `CharacterSheet` gained `xp`/`level` fields (defaulting to `0`/`1`), awarded deterministically off NPC-defeat state transitions rather than a DM tool call.
 - **Character export/import, implemented** — see "Character export/import" above. `/export [filename]` (client-side, `SessionScreen`/`LobbyScreen`), `join_session`'s new optional `imported_character` field (server-side, new-character-only, `_character_from_import()`).
 - **Ability scores, implemented** — see "Ability scores" above. `CharacterSheet.stats` (real values now, not always-empty) plus a new `stat_modifiers` computed field; `request_roll`'s new optional `ability` field, `AnthropicNarrator` only.
+- **Rest and recovery, implemented** — see "Rest and recovery" above. `update_character`'s new optional `rest` field (`"short"`/`"long"`), both backends.
 - **Not yet implemented** (defined here, no server handler): `character_edit`, `reconnect` as a distinct event — today, reconnecting is just calling `join_session` again with the same `player_id`, which the engine already treats as resuming an existing character rather than creating a new one. A dedicated `reconnect` event may turn out to be unnecessary; revisit before building it.
 
 ## Open questions

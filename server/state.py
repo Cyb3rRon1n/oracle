@@ -95,6 +95,33 @@ class CharacterSheet(BaseModel):
             sign = "+" if hp_delta > 0 else ""
             changes.append(f"HP {sign}{hp_delta} (now {self.hp}/{self.max_hp})")
 
+        # A real recovery mechanic, closing a gap that's existed since HP
+        # was first tracked: healing had always meant the DM narrating a
+        # positive hp_delta and doing that arithmetic itself - the same
+        # "don't rely on the model to get numbers right when the engine
+        # can just compute them" reasoning ability scores/XP already
+        # follow, applied here. Deliberately simplified from real 5e (no
+        # hit-dice pool, no per-die CON-modifier healing) - a long rest is
+        # a full, unconditional HP restore (real 5e's own actual rule, not
+        # a simplification); a short rest restores half of whatever's
+        # currently missing, a proportional stand-in for "spend some hit
+        # dice" that needs no new resource tracked on the sheet.
+        # Deliberately doesn't touch conditions - unlike HP, most SRD
+        # conditions (poisoned, frightened, ...) don't just expire with
+        # time under the actual rules, so silently clearing them here
+        # would be a real rules error, not a simplification; the DM can
+        # still pair this with an explicit remove_condition in the same
+        # call when the fiction actually calls for it.
+        rest = update.get("rest")
+        if rest == "long" and self.hp < self.max_hp:
+            self.hp = self.max_hp
+            changes.append(f"long rest: HP restored to {self.hp}/{self.max_hp}")
+        elif rest == "short":
+            healed = (self.max_hp - self.hp) // 2
+            if healed > 0:
+                self.hp += healed
+                changes.append(f"short rest: HP +{healed} (now {self.hp}/{self.max_hp})")
+
         add_item = update.get("add_item")
         if add_item:
             self.inventory.append(add_item)
