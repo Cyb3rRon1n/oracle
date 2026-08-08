@@ -24,7 +24,7 @@ Real captures from a live session — local `qwen2.5:7b` via Ollama, no mocked o
 
 Instead of a single-player chatbot, Oracle is a game engine with an LLM in the GM seat:
 
-- **Multiplayer, two ways** (architecture in place, not yet exercised with 2+ players): players share one terminal and take turns (hotseat), or connect from their own terminals over the network — same engine underneath, different transport.
+- **Multiplayer, two ways**: players share one terminal and take turns (hotseat), or connect from their own terminals over the network — same engine underneath, different transport. Networked play with 2+ real clients trading turns, presence, and chat has been verified live end-to-end (see [ROADMAP.md](ROADMAP.md)); hotseat mode is architecturally supported but not separately exercised.
 - **Persistent character view**: each player's client always shows two regions — their character sheet, and a scrolling log of turn actions, DM narration, and prompts.
 - **LLM as adjudicator/narrator**: the server owns the source of truth (character sheets, world state, turn order, session log) and calls the LLM to resolve actions and narrate outcomes.
 - **Grounded in real rules, not just vibes**: the DM can look up official D&D 5e SRD data (monster stats, spells, conditions) before improvising mechanics, and can reach for general web search when it needs outside inspiration.
@@ -173,6 +173,14 @@ CI (`.github/workflows/ci.yml`) runs the same suite on every push/PR.
 ```bash
 python -m scripts.live_reliability_check --backend ollama --model qwen2.5:7b
 python -m scripts.live_reliability_check --backend anthropic --out results.json
+```
+
+`scripts/compare_reliability_reports.py` diffs two or more saved `--out` reports (single-run or `--repeat`) into one comparison table instead of eyeballing printed summaries by hand — the "is this new model worth switching to" question the reliability investigation kept re-asking one model at a time:
+
+```bash
+python -m scripts.live_reliability_check --backend ollama --model qwen2.5:7b --repeat 5 --out qwen25.json
+python -m scripts.live_reliability_check --backend ollama --model qwen3:8b --repeat 5 --out qwen3.json
+python -m scripts.compare_reliability_reports qwen25.json qwen3.json
 ```
 
 See [ROADMAP.md](ROADMAP.md) item 6 for why this exists and what it's found so far.
