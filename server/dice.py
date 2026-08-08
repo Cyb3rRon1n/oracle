@@ -10,8 +10,14 @@ class InvalidDiceNotation(ValueError):
     pass
 
 
-def roll(notation: str) -> tuple[int, list[int]]:
-    """Roll dice notation like '1d20' or '2d6+3'. Returns (total, individual_rolls)."""
+def roll(notation: str) -> tuple[int, list[int], int]:
+    """Roll dice notation like '1d20' or '2d6+3'. Returns
+    (total, individual_rolls, sides) - sides is returned (not just parsed
+    and discarded, as before) so a caller can tell a natural max/min roll
+    apart from an ordinary one without re-parsing the notation string
+    itself: needed by the dice_result envelope, which reports individual
+    rolls but shouldn't make every consumer duplicate this module's own
+    notation parser just to know what "natural 20" means for a given die."""
     match = _DICE_RE.match(notation.strip())
     if not match:
         raise InvalidDiceNotation(
@@ -28,4 +34,4 @@ def roll(notation: str) -> tuple[int, list[int]]:
         raise InvalidDiceNotation("dice must have at least 2 sides")
 
     rolls = [random.randint(1, sides) for _ in range(count)]
-    return sum(rolls) + modifier, rolls
+    return sum(rolls) + modifier, rolls, sides

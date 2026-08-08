@@ -48,6 +48,17 @@ def _log_text(rich_log) -> str:
     return "\n".join(strip.text for strip in rich_log.lines)
 
 
+def _log_has_styled_segment(rich_log, color: str) -> bool:
+    # RichLog is constructed with markup=True, so a written "[b green]..."
+    # tag is parsed into a real styled Segment, not left as literal bracket
+    # text - checking .text for the raw markup string would never match.
+    return any(
+        color in str(seg.style)
+        for strip in rich_log.lines
+        for seg in strip._segments
+    )
+
+
 async def test_welcome_screen_is_the_first_screen_and_prompts_for_class_when_new():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
@@ -242,3 +253,81 @@ async def test_turn_prompt_for_another_player_names_them_not_just_your_own_turn(
 
             log_text = "\n".join(strip.text for strip in app.screen.query_one("#log").lines)
             assert "Your turn" in log_text
+
+
+async def test_dice_result_renders_with_natural_max_highlighted():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 20, "rolls": [20],
+                    "sides": 20, "purpose": "attack",
+                },
+            ))
+            await pilot.pause()
+
+            log = app.screen.query_one("#log")
+            assert "Thrain rolls 1d20 (attack): 20" in _log_text(log)
+            assert _log_has_styled_segment(log, "green")
+
+
+async def test_dice_result_does_not_duplicate_the_plain_log_entry_line():
+    # Both envelopes broadcast for every real roll (server/engine.py) -
+    # the client must render exactly one line per roll, not two.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="log_entry", session_id="s", sender_id="server",
+                payload={"kind": "dice", "text": "Thrain rolls 1d20: 13 [13]"},
+            ))
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={"roller_id": "p1", "dice": "1d20", "result": 13, "rolls": [13], "sides": 20, "purpose": ""},
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert log_text.count("rolls 1d20") == 1
+
+
+async def test_dice_result_names_the_other_players_roll():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+            await app._handle(Envelope(
+                type="player_joined", session_id="s", sender_id="server",
+                payload={
+                    "player_id": "p2", "name": "Rowan", "character_class": "Rogue",
+                    "hp": 8, "max_hp": 8, "conditions": [],
+                },
+            ))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={"roller_id": "p2", "dice": "1d20", "result": 1, "rolls": [1], "sides": 20, "purpose": ""},
+            ))
+            await pilot.pause()
+
+            log = app.screen.query_one("#log")
+            assert "Rowan rolls 1d20: 1" in _log_text(log)
+            assert _log_has_styled_segment(log, "red")

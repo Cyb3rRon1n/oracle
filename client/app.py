@@ -372,6 +372,44 @@ class DungeonMasterApp(App):
         sheet.render_others(self.others)
         sheet.render_world(self.world)
 
+    def _roller_name(self, roller_id: str) -> str:
+        # dice_result's roller_id is always a real player_id - both
+        # dice_roll (player-initiated) and request_roll (DM-initiated,
+        # engine.py's _narrate_and_apply) are always attributed to the
+        # acting character, never an NPC.
+        if roller_id == self._player_id:
+            return self.my_character.get("name") or "You"
+        return self.others.get(roller_id, {}).get("name", "Someone")
+
+    def _dice_result_line(self, payload: dict) -> str:
+        name = self._roller_name(payload.get("roller_id"))
+        notation = payload.get("dice", "")
+        total = payload.get("result")
+        rolls = payload.get("rolls") or []
+        sides = payload.get("sides")
+        purpose = payload.get("purpose")
+        label = f" ({purpose})" if purpose else ""
+
+        # Highlight a natural max (a "20" on a d20, but generalized to
+        # whatever die was actually rolled) or a natural min the same way -
+        # exactly the "highlighting a natural 20" example
+        # docs/protocol.md's own known-gap note named as the payoff for
+        # handling this envelope at all.
+        rolls_text = str(rolls)
+        if sides:
+            if any(r == sides for r in rolls):
+                rolls_text = f"[b green]{rolls}[/b green]"
+            elif any(r == 1 for r in rolls):
+                rolls_text = f"[b red]{rolls}[/b red]"
+
+        text = f"{name} rolls {notation}{label}: {total} {rolls_text}"
+        if payload.get("dc") is not None:
+            text += f" vs DC {payload['dc']}"
+            success = payload.get("success")
+            if success is not None:
+                text += " — success" if success else " — failure"
+        return text
+
     async def _handle(self, envelope: Envelope) -> None:
         # async, and _listen() awaits each call in turn (not fire-and-
         # forget) specifically so the push_screen/switch_screen awaits
@@ -450,10 +488,28 @@ class DungeonMasterApp(App):
             kind = envelope.payload.get("kind")
             if session_screen is not None and kind == "narration":
                 session_screen.handle_narration_chunk(text, bool(envelope.payload.get("done")))
+            elif session_screen is not None and kind == "dice":
+                # Skipped here, not written - the structured dice_result
+                # branch below renders the same roll with individual-die
+                # highlighting the plain text can't carry. Both envelopes
+                # broadcast for every roll (server/engine.py); rendering
+                # both here would show each roll twice.
+                pass
             elif session_screen is not None:
                 session_screen.write_log(text)
             elif kind == "chat" and isinstance(self.screen, LobbyScreen):
                 self.screen.query_one("#chat-log", RichLog).write(text)
+            return
+
+        if envelope.type == "dice_result":
+            # Closes docs/protocol.md's own documented "known client gap" -
+            # this used to have no handler at all, so a roll's only visible
+            # trace was the plain log_entry text line skipped above. Built
+            # from the structured payload instead so a natural max/min on
+            # any individual die can actually be highlighted, not just
+            # reproduced as the same flat text.
+            if session_screen is not None:
+                session_screen.write_log(self._dice_result_line(envelope.payload))
             return
 
         if envelope.type == "turn_prompt":
