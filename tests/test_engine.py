@@ -1040,6 +1040,15 @@ async def test_missed_change_heuristic_does_not_fire_during_opening_scene():
     # trigger words (a village recently attacked, a wounded NPC met in
     # passing) with no mechanical change ever expected on turn zero - a
     # real false-positive class this deliberately guards against.
+    #
+    # A real gap found while touching this file for something unrelated
+    # (the save-failure work below): since the pre-game lobby slice, join()
+    # no longer triggers the opening scene at all - only an explicit
+    # start_session does (see test_opening_scene_fires_on_explicit_start_
+    # not_on_join, above). This test previously only called join(), so its
+    # assertion was trivially true regardless of whether the false-positive
+    # guard actually worked - it never exercised the opening scene path it
+    # claims to test. Fixed by actually starting the session.
     dm = NarratesFixedTextDM(
         "The village still bears the scars of a recent raid - a wounded farmer nurses a bleeding arm nearby."
     )
@@ -1047,5 +1056,124 @@ async def test_missed_change_heuristic_does_not_fire_during_opening_scene():
     player_id = str(uuid.uuid4())
 
     await join(engine, player_id)
+    await start_session(engine, player_id)
 
     assert not _missed_change_warnings(received, player_id)
+
+
+class FailingStore:
+    """A real save-failure incident, reconstructed: ROADMAP.md documents a
+    live process whose SESSION_STORE_DIR vanished mid-run (the repo it was
+    launched from got moved), turning every _save() call into an unhandled
+    FileNotFoundError that silently killed the connection with nothing
+    shown to the player. This stands in for that same failure mode without
+    needing a real vanishing directory."""
+
+    def save(self, session):
+        raise FileNotFoundError("sessions/test-session.json")
+
+    def load(self, session_id):
+        return None
+
+
+def _save_failure_warnings(received: list[tuple], player_id: str) -> list[tuple]:
+    return [
+        r for r in received
+        if r[0] == "send_to" and r[1] == player_id and r[3].get("level") == "warning"
+        and "saving" in r[3].get("text", "")
+    ]
+
+
+async def test_join_warns_but_does_not_crash_when_save_fails():
+    session = Session(session_id="test-session")
+    received: list[tuple] = []
+
+    async def broadcast(env):
+        received.append(("broadcast", env.type, env.payload))
+
+    async def send_to(pid, env):
+        received.append(("send_to", pid, env.type, env.payload))
+
+    engine = GameEngine(session, StubDM(), broadcast, send_to, store=FailingStore())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain"},
+    ))
+
+    assert player_id in session.characters, "the character should still be created despite the save failure"
+    assert _save_failure_warnings(received, player_id)
+    # A real state_sync should still have gone out - a save failure doesn't
+    # block the rest of the join.
+    assert any(r[0] == "send_to" and r[2] == "state_sync" for r in received)
+
+
+async def test_start_session_warns_but_still_starts_when_save_fails():
+    session = Session(session_id="test-session")
+    received: list[tuple] = []
+
+    async def broadcast(env):
+        received.append(("broadcast", env.type, env.payload))
+
+    async def send_to(pid, env):
+        received.append(("send_to", pid, env.type, env.payload))
+
+    engine = GameEngine(session, StubDM(), broadcast, send_to, store=FailingStore(), enable_opening_scene=False)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain"},
+    ))
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="start_session", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    assert session.started is True, "the session should still start despite the save failure"
+    assert _save_failure_warnings(received, player_id)
+    assert any(r[0] == "broadcast" and r[1] == "session_started" for r in received)
+
+
+async def test_player_action_warns_but_still_advances_turn_when_save_fails():
+    session = Session(session_id="test-session")
+    received: list[tuple] = []
+
+    async def broadcast(env):
+        received.append(("broadcast", env.type, env.payload))
+
+    async def send_to(pid, env):
+        received.append(("send_to", pid, env.type, env.payload))
+
+    engine = GameEngine(session, StubDM(), broadcast, send_to, store=FailingStore(), enable_opening_scene=False)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain"},
+    ))
+    await engine.handle(Envelope(
+        type="start_session", session_id="test-session", sender_id=player_id, payload={},
+    ))
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I open the door"},
+    ))
+
+    assert _save_failure_warnings(received, player_id)
+    # The turn itself should still have resolved normally - narration
+    # broadcast and a fresh turn_prompt, not silently dropped.
+    assert any(r[0] == "broadcast" and r[1] == "turn_prompt" for r in received)
+
+
+async def test_save_is_a_silent_no_op_with_no_store_configured():
+    # The overwhelmingly common real path (store=None in every other test
+    # in this file) shouldn't warn about a "failure" that never happened.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await join(engine, player_id)
+
+    assert not _save_failure_warnings(received, player_id)
