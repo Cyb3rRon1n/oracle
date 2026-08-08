@@ -514,6 +514,108 @@ async def test_state_sync_includes_npcs_for_a_later_joining_player():
     assert syncs[-1][3]["npcs"]["goblin"]["hp"] == 3
 
 
+async def test_join_broadcasts_player_joined_with_public_view_only():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+
+    joins = [r for r in received if r[0] == "broadcast" and r[1] == "player_joined"]
+    assert joins, "joining should broadcast a structured player_joined event"
+    payload = joins[-1][2]
+    assert payload["player_id"] == player_id
+    assert payload["name"] == "Rook"
+    assert payload["character_class"] == "Fighter"
+    assert payload["hp"] == payload["max_hp"] == 10
+    assert payload["conditions"] == []
+    # A fighter starts with real inventory (Longsword, Leather Armor) - the
+    # public view must never leak it, or anyone's own stats/notes.
+    assert "inventory" not in payload
+    assert "stats" not in payload
+    assert "notes" not in payload
+
+
+async def test_second_players_state_sync_redacts_first_players_inventory():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+
+    second_player_id = str(uuid.uuid4())
+    await join(engine, second_player_id, name="Rowan")
+
+    syncs = [
+        r for r in received
+        if r[0] == "send_to" and r[1] == second_player_id and r[2] == "state_sync"
+    ]
+    others_view = syncs[-1][3]["characters"][player_id]
+    assert others_view["name"] == "Rook"
+    assert others_view["hp"] == others_view["max_hp"] == 10
+    assert "inventory" not in others_view, "another player's inventory must never reach a non-owning client"
+    assert "stats" not in others_view
+    assert "notes" not in others_view
+
+    # The second player's own entry in their own sync is the full sheet,
+    # not redacted against themselves.
+    own_view = syncs[-1][3]["characters"][second_player_id]
+    assert "inventory" in own_view
+
+
+async def test_sheet_change_broadcasts_public_player_update_alongside_private_character_update():
+    dm = UpdateCharacterDM({"target": "self", "hp_delta": -3, "add_item": "torch"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I light a torch and take a hit"},
+    ))
+
+    private_updates = [
+        r for r in received if r[0] == "send_to" and r[1] == player_id and r[2] == "character_update"
+    ]
+    assert private_updates
+    assert private_updates[-1][3]["sheet_delta"]["inventory"] == ["torch"]
+
+    public_updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
+    assert public_updates, "a sheet change should also broadcast the public view to everyone else"
+    payload = public_updates[-1][2]
+    assert payload["player_id"] == player_id
+    assert payload["hp"] == 7
+    assert "inventory" not in payload
+
+
+async def test_handle_disconnect_broadcasts_player_left():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+
+    await engine.handle_disconnect(player_id)
+
+    left = [r for r in received if r[0] == "broadcast" and r[1] == "player_left"]
+    assert left
+    assert left[-1][2] == {"player_id": player_id, "name": "Thrain"}
+
+
+async def test_handle_disconnect_for_never_joined_player_falls_back_to_id_as_name():
+    # Defensive path - the transport only tracks a connection after a real
+    # join_session, so this shouldn't happen in practice, but shouldn't
+    # crash if it somehow did.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle_disconnect(player_id)
+
+    left = [r for r in received if r[0] == "broadcast" and r[1] == "player_left"]
+    assert left[-1][2] == {"player_id": player_id, "name": player_id}
+
+
 async def test_rejoin_uses_existing_character_name_not_new_input():
     """Regression test: rejoining with a name typed differently than the
     original (e.g. a fresh client run before .player_id existed, or a stale

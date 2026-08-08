@@ -17,6 +17,7 @@ EventType = Literal[
     "state_sync",
     "log_entry",
     "character_update",
+    "player_update",
     "npc_update",
     "world_update",
     "turn_prompt",

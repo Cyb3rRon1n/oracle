@@ -16,6 +16,7 @@ class CharacterSheetPanel(Static):
         super().__init__(*args, **kwargs)
         self._character: dict = {}
         self._world: dict = {}
+        self._others: dict = {}
 
     def render_sheet(self, character: dict) -> None:
         self._character = character
@@ -23,6 +24,13 @@ class CharacterSheetPanel(Static):
 
     def render_world(self, world: dict) -> None:
         self._world = world
+        self._refresh_display()
+
+    def render_others(self, others: dict) -> None:
+        # others is keyed by player_id -> that player's public view
+        # (name/character_class/hp/max_hp/conditions - never inventory,
+        # same boundary the server's own public/private split enforces).
+        self._others = others
         self._refresh_display()
 
     def _refresh_display(self) -> None:
@@ -64,7 +72,24 @@ class CharacterSheetPanel(Static):
             lines.append("[b]Objectives[/b]")
             lines.extend(f"- {o['text']}" for o in active_objectives)
 
+        if self._others:
+            lines.append("")
+            lines.append("[b]Other Players[/b]")
+            lines.extend(self._other_player_line(other) for other in self._others.values())
+
         self.update("\n".join(lines))
+
+    @staticmethod
+    def _other_player_line(other: dict) -> str:
+        line = f"- {other.get('name', '?')}"
+        character_class = other.get("character_class")
+        if character_class:
+            line += f" ({character_class})"
+        line += f": HP {other.get('hp')}/{other.get('max_hp')}"
+        conditions = other.get("conditions") or []
+        if conditions:
+            line += f" ({', '.join(conditions)})"
+        return line
 
 
 class DungeonMasterApp(App):
@@ -82,6 +107,7 @@ class DungeonMasterApp(App):
         self._player_name = player_name
         self._character_class = character_class
         self._narration_buffer = ""
+        self._others: dict[str, dict] = {}  # player_id -> public view, keyed the same way the server sends it
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -116,6 +142,8 @@ class DungeonMasterApp(App):
             mine = characters.get(self._player_id)
             if mine:
                 sheet.render_sheet(mine)
+            self._others = {pid: c for pid, c in characters.items() if pid != self._player_id}
+            sheet.render_others(self._others)
             sheet.render_world(envelope.payload.get("world_state", {}))
             for name, npc in envelope.payload.get("npcs", {}).items():
                 log.write(self._npc_status_line(name, npc))
@@ -125,6 +153,17 @@ class DungeonMasterApp(App):
         elif envelope.type == "character_update":
             if envelope.payload.get("player_id") == self._player_id:
                 sheet.render_sheet(envelope.payload.get("sheet_delta", {}))
+
+        elif envelope.type in ("player_joined", "player_update"):
+            pid = envelope.payload.get("player_id")
+            if pid and pid != self._player_id:
+                self._others[pid] = envelope.payload
+                sheet.render_others(self._others)
+
+        elif envelope.type == "player_left":
+            pid = envelope.payload.get("player_id")
+            if self._others.pop(pid, None) is not None:
+                sheet.render_others(self._others)
 
         elif envelope.type == "npc_update":
             name = envelope.payload.get("name", "?")

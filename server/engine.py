@@ -42,6 +42,24 @@ CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
 }
 
 
+def _public_character_view(character: CharacterSheet) -> dict:
+    """The subset of a player character's sheet visible to *other* players -
+    name, class, HP, and conditions, but never inventory/stats/notes. Backs
+    every other-player-facing broadcast (player_joined, player_update, and
+    a non-owning recipient's own entry in state_sync's characters dict) so
+    there's exactly one place defining what's public - matches the same
+    "others shouldn't see your inventory" boundary character_update's
+    owner-only routing already established (docs/protocol.md)."""
+    return {
+        "player_id": character.player_id,
+        "name": character.name,
+        "character_class": character.character_class,
+        "hp": character.hp,
+        "max_hp": character.max_hp,
+        "conditions": list(character.conditions),
+    }
+
+
 def _hit_die_max(hit_die: str) -> int:
     # SRD hit_die values are like "d10" - the max roll, used here as this
     # project's level-1 HP (no ability scores yet to add a CON modifier).
@@ -145,14 +163,30 @@ class GameEngine:
             self._save()
 
         character = self._session.characters[player_id]
-        await self._send_to(player_id, self._state_sync_envelope())
+        await self._send_to(player_id, self._state_sync_envelope(player_id))
         await self._broadcast(self._system_envelope(f"{character.name} joined the session.", level="info"))
+        # Structured counterpart to the text log line above - lets a client
+        # add/refresh this player's presence line (left-column "other
+        # players" view) without parsing prose. Fires on every join,
+        # including a reconnect, so a client's own local roster stays
+        # correct even after missing an earlier player_left.
+        await self._broadcast(self._player_joined_envelope(character))
 
         if is_campaign_start:
             await self._narrate_opening_scene(character)
 
         if self._session.current_turn == player_id:
             await self._broadcast(self._turn_prompt_envelope())
+
+    async def handle_disconnect(self, player_id: str) -> None:
+        """Called by the transport when a connected player's socket closes -
+        the counterpart to the player_joined broadcast above, so everyone
+        else's presence view drops them. Not routed through handle()/
+        envelope dispatch since a disconnect isn't a client-sent event -
+        the transport is the only thing that actually observes it."""
+        character = self._session.characters.get(player_id)
+        name = character.name if character else player_id
+        await self._broadcast(self._player_left_envelope(player_id, name))
 
     async def _narrate_opening_scene(self, character: CharacterSheet) -> None:
         """Best-effort: a missing opening scene shouldn't block joining, so
@@ -321,6 +355,11 @@ class GameEngine:
 
         if sheet_changed:
             await self._send_to(player_id, self._character_update_envelope(player_id, character))
+            # The private character_update above carries the full sheet
+            # (inventory included) to the owner; everyone else's presence
+            # view needs the same public-only fields player_joined already
+            # established, kept live rather than only ever set at join time.
+            await self._broadcast(self._player_update_envelope(character))
 
         for npc_key in npcs_touched:
             touched_npc = self._session.npcs[npc_key]
@@ -391,13 +430,21 @@ class GameEngine:
             type="dice_result", session_id=self._session.session_id, sender_id="server", payload=payload
         )
 
-    def _state_sync_envelope(self) -> Envelope:
+    def _state_sync_envelope(self, recipient_id: str) -> Envelope:
         return Envelope(
             type="state_sync",
             session_id=self._session.session_id,
             sender_id="server",
             payload={
-                "characters": {pid: c.model_dump() for pid, c in self._session.characters.items()},
+                # The recipient's own entry is a full sheet (inventory
+                # included); every other player's entry is the same public
+                # view player_joined/player_update broadcast - a (re)joining
+                # player shouldn't see everyone else's inventory just
+                # because it's bundled into their own sync.
+                "characters": {
+                    pid: (c.model_dump() if pid == recipient_id else _public_character_view(c))
+                    for pid, c in self._session.characters.items()
+                },
                 # Keyed by each NPC's own stored (first-seen-casing) name for
                 # display, not the internal casefolded dict key - keeps a
                 # reconnecting client's status lines consistent with what
@@ -416,6 +463,37 @@ class GameEngine:
             session_id=self._session.session_id,
             sender_id="server",
             payload={"player_id": player_id, "sheet_delta": character.model_dump()},
+        )
+
+    def _player_joined_envelope(self, character: CharacterSheet) -> Envelope:
+        # Broadcast (everyone, including the joining player themselves - same
+        # as the system_envelope "X joined the session" line already is),
+        # public-view-only payload, same boundary _state_sync_envelope's
+        # non-owning entries already establish.
+        return Envelope(
+            type="player_joined",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload=_public_character_view(character),
+        )
+
+    def _player_left_envelope(self, player_id: str, name: str) -> Envelope:
+        return Envelope(
+            type="player_left",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload={"player_id": player_id, "name": name},
+        )
+
+    def _player_update_envelope(self, character: CharacterSheet) -> Envelope:
+        # The public counterpart to _character_update_envelope's private,
+        # full-sheet push - keeps every other player's presence view (HP,
+        # conditions) live turn to turn without ever including inventory.
+        return Envelope(
+            type="player_update",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload=_public_character_view(character),
         )
 
     def _npc_update_envelope(self, name: str, npc: CharacterSheet) -> Envelope:
