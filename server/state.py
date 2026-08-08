@@ -67,6 +67,15 @@ class CharacterSheet(BaseModel):
     dead: bool = False
     death_save_successes: int = 0
     death_save_failures: int = 0
+    # A structured, cheaper alternative to the who-knows-whom relationship
+    # graph flagged as real future work (see ROADMAP.md) - not who an NPC
+    # knows or a full personality, just a coarse attitude the DM can stay
+    # consistent against turn to turn instead of only inferring it from
+    # free-text notes. Meaningful for a tracked NPC (Session.npcs); on a
+    # real player character it just sits at its default, unused - the same
+    # shared-model tradeoff notes/ac already make (see their own comments)
+    # rather than a second, NPC-only sheet class for one field.
+    disposition: Literal["hostile", "neutral", "friendly"] = "neutral"
 
     @computed_field
     @property
@@ -209,6 +218,20 @@ class CharacterSheet(BaseModel):
         if notes and notes != self.notes:
             self.notes = notes
             changes.append("notes updated")
+
+        disposition = update.get("disposition")
+        # A real model-input boundary, not decorative: disposition is a
+        # closed enum on the model (Literal["hostile", "neutral",
+        # "friendly"]), but this dict comes straight from a tool call - the
+        # JSON schema's own "enum" constrains AnthropicNarrator, but nothing
+        # stops OllamaNarrator's shared update_character path from sending
+        # an arbitrary string. A plain attribute assignment here wouldn't
+        # re-validate against the Literal (pydantic v2 doesn't, by default,
+        # on direct attribute sets), so an unrecognized value is silently
+        # ignored rather than corrupting the field's own declared contract.
+        if disposition in ("hostile", "neutral", "friendly") and disposition != self.disposition:
+            self.disposition = disposition
+            changes.append(f"disposition now {disposition}")
 
         if not changes:
             return "No changes applied (nothing matched, or all deltas were zero)."

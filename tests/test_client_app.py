@@ -5,7 +5,14 @@ from unittest.mock import patch
 
 import pytest
 
-from client.app import CharacterSheetPanel, DungeonMasterApp, LobbyScreen, SessionScreen, WelcomeScreen
+from client.app import (
+    CharacterSheetPanel,
+    DungeonMasterApp,
+    LobbyScreen,
+    SessionScreen,
+    WelcomeScreen,
+    _npc_status_line,
+)
 from shared.protocol import Envelope
 from textual.css.query import NoMatches
 
@@ -416,6 +423,43 @@ async def test_ordinary_system_message_does_not_get_advisory_styling():
             log = app.screen.query_one("#log")
             assert "not your turn" in _log_text(log)
             assert not _log_has_styled_segment(log, "yellow")
+
+
+def test_npc_status_line_omits_neutral_disposition():
+    # neutral is the field's own default and the common case - only a real,
+    # DM-set non-neutral disposition is worth a reader's attention.
+    line = _npc_status_line("goblin", {"hp": 3, "max_hp": 7, "disposition": "neutral"})
+    assert "neutral" not in line
+
+
+def test_npc_status_line_shows_a_non_neutral_disposition():
+    line = _npc_status_line("goblin", {"hp": 3, "max_hp": 7, "disposition": "hostile"})
+    assert "hostile" in line
+
+
+def test_npc_status_line_omits_disposition_entirely_when_absent():
+    # A legacy/pre-disposition NPC dict (no key at all, not just "neutral")
+    # should render exactly as it always has, no crash on a missing key.
+    line = _npc_status_line("goblin", {"hp": 3, "max_hp": 7})
+    assert "hostile" not in line and "friendly" not in line and "neutral" not in line
+
+
+async def test_npc_update_with_disposition_renders_in_the_log():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="npc_update", session_id="s", sender_id="server",
+                payload={"name": "goblin", "sheet_delta": {"hp": 3, "max_hp": 7, "disposition": "hostile"}},
+            ))
+            await pilot.pause()
+
+            assert "hostile" in _log_text(app.screen.query_one("#log"))
 
 
 async def test_deathsave_command_sends_death_save_with_no_payload():

@@ -244,6 +244,18 @@ def _npc_status_line(name: str, npc: dict) -> str:
     ac = npc.get("ac")
     if ac is not None:
         line += f" AC {ac}"
+    # "neutral" is the field's own default and the common, uninteresting
+    # case (most NPCs are never given a disposition at all) - only show it
+    # once the DM has actually set something worth knowing, the same
+    # "don't render the boring default" rule conditions/inventory already
+    # follow by only appearing when non-empty. Plain text, not bracketed
+    # (e.g. "[hostile]") - RichLog is markup=True, and Rich's own markup
+    # parser treats square brackets as a style tag, silently swallowing an
+    # unrecognized one like "[hostile]" from the rendered output entirely -
+    # a real bug caught by running this, not assumed safe.
+    disposition = npc.get("disposition")
+    if disposition and disposition != "neutral":
+        line += f" {disposition}"
     conditions = npc.get("conditions") or []
     if conditions:
         line += f" ({', '.join(conditions)})"

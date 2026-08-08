@@ -618,6 +618,49 @@ async def test_missed_change_advisory_renders_with_distinct_styling_over_a_real_
             await server_task
 
 
+class IntroducesHostileGoblinDM:
+    """Simulates a DM turn introducing a new NPC with a real disposition -
+    exercises the disposition field over an actual websocket session, not
+    just the mocked-DM unit test in test_engine.py."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        apply_update({"target": "goblin", "max_hp": 7, "disposition": "hostile"})
+        yield "A goblin bursts from the underbrush, weapon raised."
+
+
+async def test_npc_disposition_over_a_real_session():
+    session = Session(session_id="e2e-session-13")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, IntroducesHostileGoblinDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8811))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        app = DungeonMasterApp(uri="ws://localhost:8811", player_id=str(uuid.uuid4()), is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I peer into the underbrush", "enter")
+            await _wait_until(lambda: "hostile" in _log_text(app.screen.query_one("#log")))
+
+            # A real, direct check on server state.
+            assert session.npcs["goblin"].disposition == "hostile"
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_character_import_over_a_real_session_wins_over_typed_name_and_class(tmp_path):
     """Character export is purely client-side (no server involvement, see
     DungeonMasterApp.export_character) so it doesn't need a websocket to

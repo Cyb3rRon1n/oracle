@@ -48,7 +48,9 @@ You have five tools available:
   in the same turn you narrate it. When you introduce a new NPC worth remembering, give
   it a brief `notes` value too (a sentence on its personality, goal, or relationship to
   the party) — update that note later if the relationship changes. This is what keeps a
-  recurring character feeling continuous instead of reset each time they appear. When
+  recurring character feeling continuous instead of reset each time they appear. Set
+  `disposition` too when it's clear (hostile/neutral/friendly) — a structured value to
+  stay consistent against turn to turn, separate from the free-text `notes`. When
   the character/NPC rests for a meaningful stretch (camping overnight, resting after a
   fight), use the `rest` field ('short' or 'long') instead of guessing an `hp_delta` -
   the engine computes the real amount healed.
@@ -161,6 +163,17 @@ UPDATE_CHARACTER_TOOL = {
                     "relationship to the party), replacing any previous note. Most useful "
                     "on an NPC's introduction or when the relationship meaningfully changes "
                     "- not needed every call."
+                ),
+            },
+            "disposition": {
+                "type": "string",
+                "enum": ["hostile", "neutral", "friendly"],
+                "description": (
+                    "An NPC/monster's current attitude toward the party. Set this on "
+                    "introduction if it's clear from context, and update it later if the "
+                    "relationship meaningfully changes (e.g. a fight ends and they surrender, "
+                    "or a favor is repaid). Not meaningful for 'self' - omit for the acting "
+                    "character."
                 ),
             },
         },

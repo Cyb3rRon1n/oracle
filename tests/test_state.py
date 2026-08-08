@@ -317,6 +317,32 @@ def test_apply_update_notes():
     assert result.startswith("No changes applied")
 
 
+def test_apply_update_disposition():
+    character = make_character()
+    assert character.disposition == "neutral"
+
+    result = character.apply_update({"disposition": "hostile"})
+    assert character.disposition == "hostile"
+    assert "disposition now hostile" in result
+
+    # setting the exact same disposition again is a no-op
+    result = character.apply_update({"disposition": "hostile"})
+    assert result.startswith("No changes applied")
+
+
+def test_apply_update_rejects_an_unrecognized_disposition():
+    # A real model-input boundary: the field is a closed Literal, but the
+    # update dict comes straight from a tool call with no guaranteed
+    # server-side schema enforcement (OllamaNarrator's shared
+    # update_character path in particular) - an unrecognized value must be
+    # silently ignored, not written past the declared enum.
+    character = make_character()
+
+    result = character.apply_update({"disposition": "curious"})
+    assert character.disposition == "neutral"
+    assert result.startswith("No changes applied")
+
+
 def test_world_apply_update_location_and_summary():
     world = WorldState()
 
