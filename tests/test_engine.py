@@ -471,6 +471,29 @@ async def test_update_character_npc_target_defaults_max_hp_when_omitted():
     assert rat.hp == 8
 
 
+async def test_update_character_npc_target_disposition_persists_and_updates():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "disposition": "hostile"}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin"},
+    ))
+
+    assert session.npcs["goblin"].disposition == "hostile"
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert updates[-1][2]["sheet_delta"]["disposition"] == "hostile"
+
+    dm._updates = [{"target": "goblin", "disposition": "friendly"}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I offer the goblin a truce"},
+    ))
+    assert session.npcs["goblin"].disposition == "friendly"
+
+
 async def test_npc_introduction_broadcasts_npc_update():
     dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
     engine, session, received = make_engine(dm)

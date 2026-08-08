@@ -81,6 +81,15 @@ NPCs/monsters have no private owner, so `npc_update` is broadcast outright — n
 
 World state (`Session.world`) has no private owner either, same reasoning as NPCs — `world_update` is broadcast outright on any real change from the DM's `update_world` tool call (location, standing summary, objectives, flags).
 
+## NPC disposition
+
+A structured, cheaper alternative to a full who-knows-whom relationship graph (real future work, still open) — not who an NPC knows or a full personality, just a coarse attitude the DM can stay consistent against turn to turn instead of only inferring it from free-text `notes`.
+
+- **`CharacterSheet.disposition: Literal["hostile", "neutral", "friendly"] = "neutral"`** (`server/state.py`) — a shared-model field, same tradeoff `notes`/`ac` already make: meaningful for a tracked NPC (`Session.npcs`), unused on a real player character (stays at its default).
+- **`update_character`'s existing `notes` field gains a sibling, `disposition`** (shared by both backends, not Claude-gated — the same tool every `notes` update already goes through), settable on an NPC's introduction or updated later when the relationship meaningfully changes (a fight ends and they surrender, a favor is repaid).
+- **A real model-input boundary, not decorative.** `disposition` is a closed enum on the model, but the update dict comes straight from a tool call — the JSON schema's own `enum` constrains `AnthropicNarrator`, but nothing stops `OllamaNarrator`'s shared `update_character` path from sending an arbitrary string. `CharacterSheet.apply_update()` only accepts one of the three known values; an unrecognized one is silently ignored rather than written past the field's own declared contract (a plain attribute assignment wouldn't otherwise re-validate against the `Literal`).
+- **Client**: `_npc_status_line()` (`client/app.py`) shows a non-`"neutral"` disposition as a plain word (e.g. `goblin: HP 3/7 hostile`) — deliberately not bracketed like `[hostile]`, since `RichLog` is `markup=True` and Rich's own markup parser treats square brackets as a style tag, silently swallowing an unrecognized one from the rendered output entirely (a real bug caught by running this, not assumed safe).
+
 ## Objective expiry and failure
 
 Closes a real, previously-named gap: `Objective.status` only ever had `active`/`completed`, so nothing could represent a quest going stale on its own or being genuinely failed outright — every objective either stayed open forever or eventually got marked a success, even when the fiction called for something else.
@@ -190,6 +199,7 @@ Every `system_message` used to render identically client-side (`[dim]{text}[/dim
 - **Session-transcript export, implemented** — see "Session-transcript export" above. `/transcript [filename]` (client-side, `SessionScreen` only), no protocol change.
 - **Missed-change advisory styling, implemented** — see "Missed-change advisory styling" above. `system_message`'s new optional `advisory` field, set only by the missed-change heuristic; client renders it with distinct yellow styling instead of blending in with every other system message.
 - **Objective expiry and failure, implemented** — see "Objective expiry and failure" above. `Objective.status` gained `expired`/`failed`; `update_world`'s new `expire_objective`/`fail_objective` fields, `AnthropicNarrator` only.
+- **NPC disposition, implemented** — see "NPC disposition" above. `CharacterSheet.disposition`; `update_character`'s new `disposition` field, both backends (shared, not Claude-gated, same as `notes`).
 - **Not yet implemented** (defined here, no server handler): `reconnect` as a distinct event — today, reconnecting is just calling `join_session` again with the same `player_id`, which the engine already treats as resuming an existing character rather than creating a new one. A dedicated `reconnect` event may turn out to be unnecessary; revisit before building it.
 
 ## Open questions
