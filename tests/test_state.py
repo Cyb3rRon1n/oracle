@@ -261,6 +261,33 @@ def test_world_apply_update_objectives_add_complete_remove():
     assert "removed objective" in result
 
 
+def test_world_apply_update_objective_expires():
+    world = WorldState()
+    world.apply_update({"add_objective": "Meet the caravan before dawn"})
+
+    result = world.apply_update({"expire_objective": "Meet the caravan before dawn"})
+    assert world.objectives[0].status == "expired"
+    assert "expired" in result
+
+    # already-expired shouldn't flip to failed or re-expire
+    result = world.apply_update({"fail_objective": "Meet the caravan before dawn"})
+    assert world.objectives[0].status == "expired"
+    assert result.startswith("No changes applied")
+
+
+def test_world_apply_update_objective_fails():
+    world = WorldState()
+    world.apply_update({"add_objective": "Capture the bandit leader alive"})
+
+    result = world.apply_update({"fail_objective": "Capture the bandit leader alive"})
+    assert world.objectives[0].status == "failed"
+    assert "failed" in result
+
+    # already-failed shouldn't flip to completed
+    result = world.apply_update({"complete_objective": "Capture the bandit leader alive"})
+    assert world.objectives[0].status == "failed"
+
+
 def test_world_apply_update_flags_set_and_clear():
     world = WorldState()
 

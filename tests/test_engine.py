@@ -1376,6 +1376,22 @@ async def test_update_world_tool_call_broadcasts_world_update():
     assert payload["objectives"] == [{"text": "Find the missing merchant", "status": "active"}]
 
 
+async def test_update_world_can_expire_or_fail_an_objective():
+    engine, session, received = make_engine(UpdateWorldDM({"expire_objective": "Meet the caravan before dawn"}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.world.apply_update({"add_objective": "Meet the caravan before dawn"})
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I wait at the crossroads"},
+    ))
+
+    assert session.world.objectives[0].status == "expired"
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "world_update"]
+    assert updates[-1][2]["objectives"] == [{"text": "Meet the caravan before dawn", "status": "expired"}]
+
+
 async def test_update_world_no_op_does_not_broadcast():
     dm = UpdateWorldDM({})
     engine, session, received = make_engine(dm)
