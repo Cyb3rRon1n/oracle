@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Input, RichLog, Static
@@ -18,6 +20,30 @@ from .transport import ClientTransport
 # or blank entry falls back gracefully server-side, so this isn't strictly
 # validated here.
 CHARACTER_CLASSES = ["fighter", "wizard", "rogue", "cleric"]
+
+
+def _load_character_file(path: str) -> tuple[dict | None, str | None]:
+    """Reads and parses a character export file for WelcomeScreen's optional
+    import field - local file I/O, so this happens client-side before
+    join_session is even sent. The server still independently validates the
+    shape (server/engine.py's _character_from_import) since a client is
+    never a trusted boundary for another connection's data - this is just
+    the "can we even read and parse it" check, so a bad path fails fast
+    with a clear message instead of silently sending garbage to the server.
+    Returns (data, None) on success or (None, error_message) on any
+    failure - a missing file, invalid JSON, or valid JSON that isn't even
+    an object all become one user-facing message rather than a raw
+    traceback, the same graceful-fallback spirit build_starting_character's
+    blank/unrecognized-class handling already established server-side."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except OSError:
+        return None, f"Couldn't read '{path}' - check the path and try again."
+    except json.JSONDecodeError:
+        return None, f"'{path}' isn't valid JSON."
+    if not isinstance(data, dict):
+        return None, f"'{path}' doesn't look like a character file."
+    return data, None
 
 
 class CharacterSheetPanel(Static):
@@ -169,20 +195,39 @@ class WelcomeScreen(Screen):
 
     CSS = """
     WelcomeScreen { align: center middle; }
-    #welcome-box { width: 50; height: auto; border: solid $accent; padding: 1 2; }
+    #welcome-box { width: 50; height: auto; max-height: 100%; border: solid $accent; padding: 0 2; }
     #welcome-box Input { margin-bottom: 1; }
+    #welcome-box #import-input { margin-bottom: 0; }
     #welcome-error { color: $error; height: 1; }
     """
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="welcome-box"):
-            yield Static("[b]Oracle[/b] - an AI Dungeon Master\n")
+        # VerticalScroll, not Vertical - the two new import-related widgets
+        # (added alongside the existing class prompt) can push a new-
+        # character join past a standard 80x24 viewport's visible height;
+        # max-height: 100% above caps the box so it scrolls internally
+        # instead of pushing #join off-screen, the same real fix this
+        # workspace's other Textual projects have needed for the identical
+        # "adding fields to an already-tall screen" class of bug.
+        with VerticalScroll(id="welcome-box"):
+            yield Static("[b]Oracle[/b] - an AI Dungeon Master")
             yield Input(placeholder="Character name", id="name-input")
             yield Input(placeholder="Session ID (blank for default)", id="session-input")
             if self.app.is_new_character:
                 yield Static(f"Class ({'/'.join(CHARACTER_CLASSES)}, blank to skip)")
                 yield Input(placeholder="Class", id="class-input")
+                # Import-time only, same as class - a returning character
+                # already has everything an export would carry, so there's
+                # nothing to import into it. A filled-in path here makes
+                # name/class above irrelevant server-side (the imported
+                # sheet wins - see server/engine.py's
+                # _character_from_import). No separate label Static here
+                # (unlike class-input above) - the placeholder alone says
+                # enough, and this screen's row budget is already tight on
+                # a standard 80x24 terminal (see the VerticalScroll note
+                # on #welcome-box above).
+                yield Input(placeholder="Import character .json (optional, overrides name/class)", id="import-input")
             yield Button("Join", id="join", variant="primary")
             yield Static("", id="welcome-error")
         yield Footer()
@@ -206,11 +251,19 @@ class WelcomeScreen(Screen):
         name = self.query_one("#name-input", Input).value.strip() or "Adventurer"
         session_id = self.query_one("#session-input", Input).value.strip() or "default"
         character_class = ""
+        imported_character = None
         if self.app.is_new_character:
             character_class = self.query_one("#class-input", Input).value.strip()
+            import_path = self.query_one("#import-input", Input).value.strip()
+            if import_path:
+                imported_character, error = _load_character_file(import_path)
+                if error:
+                    join_button.disabled = False
+                    self.query_one("#welcome-error", Static).update(f"[red]{error}[/red]")
+                    return
 
         try:
-            await self.app.connect_and_join(name, session_id, character_class)
+            await self.app.connect_and_join(name, session_id, character_class, imported_character)
         except OSError as exc:
             join_button.disabled = False
             self.query_one("#welcome-error", Static).update(f"[red]Couldn't connect: {exc}[/red]")
@@ -237,7 +290,7 @@ class LobbyScreen(Screen):
             yield RichLog(id="chat-log", wrap=True, markup=True)
         yield Static("", id="lobby-status")
         yield Button("Start Adventure", id="start", variant="success")
-        yield Input(placeholder="Chat with the party before starting...", id="chat-input")
+        yield Input(placeholder="Chat with the party... (/export [file] to save your character)", id="chat-input")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -253,8 +306,16 @@ class LobbyScreen(Screen):
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         event.input.value = ""
-        if text:
-            await self.app.transport.send("chat_message", {"text": text})
+        if not text:
+            return
+
+        if text.startswith("/export"):
+            filename = text[len("/export"):].strip() or "character"
+            message = await self.app.export_character(filename)
+            self.query_one("#chat-log", RichLog).write(f"[dim]{message}[/dim]")
+            return
+
+        await self.app.transport.send("chat_message", {"text": text})
 
 
 class SessionScreen(Screen):
@@ -280,7 +341,7 @@ class SessionScreen(Screen):
             yield CharacterSheetPanel(id="sheet")
             yield RichLog(id="log", wrap=True, markup=True)
         yield Static("", id="status")
-        yield Input(placeholder="What do you do? (/roll 1d20, /chat hello)", id="input")
+        yield Input(placeholder="What do you do? (/roll 1d20, /chat hello, /export [file])", id="input")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -317,6 +378,10 @@ class SessionScreen(Screen):
             await self.app.transport.send("dice_roll", {"dice": dice, "reason": reason})
         elif text.startswith("/chat "):
             await self.app.transport.send("chat_message", {"text": text[len("/chat "):].strip()})
+        elif text.startswith("/export"):
+            filename = text[len("/export"):].strip() or "character"
+            message = await self.app.export_character(filename)
+            self.write_log(f"[dim]{message}[/dim]")
         else:
             # Only a real player_action triggers a DM narrate() call - /roll
             # and /chat are handled instantly server-side with no LLM in the
@@ -349,15 +414,39 @@ class DungeonMasterApp(App):
     async def on_mount(self) -> None:
         self.push_screen(WelcomeScreen())
 
-    async def connect_and_join(self, player_name: str, session_id: str, character_class: str) -> None:
+    async def connect_and_join(
+        self, player_name: str, session_id: str, character_class: str, imported_character: dict | None = None
+    ) -> None:
         self.transport = ClientTransport(self._uri, session_id, self._player_id)
         await self.transport.connect()
         if not self._listening:
             self._listening = True
             asyncio.create_task(self._listen())
-        await self.transport.send(
-            "join_session", {"player_name": player_name, "character_class": character_class}
-        )
+        payload = {"player_name": player_name, "character_class": character_class}
+        if imported_character is not None:
+            payload["imported_character"] = imported_character
+        await self.transport.send("join_session", payload)
+
+    async def export_character(self, filename: str) -> str:
+        """Writes the current player's own full character sheet to a local
+        JSON file - the client-side half of character save/load (the
+        server-side half is join_session's optional imported_character
+        field, see WelcomeScreen/_load_character_file above).
+        self.my_character already carries everything worth saving (xp,
+        level, inventory, notes, ...) since it's the exact private
+        sheet_delta state_sync/character_update already deliver to their
+        owner - no new protocol needed just to export it. Returns a
+        user-facing status string rather than raising, matching this
+        client's existing "report, don't crash the input loop" convention
+        (WelcomeScreen's own OSError handling on connect)."""
+        path = Path(filename)
+        if path.suffix != ".json":
+            path = path.with_suffix(".json")
+        try:
+            path.write_text(json.dumps(self.my_character, indent=2))
+        except OSError as exc:
+            return f"Couldn't export: {exc}"
+        return f"Character exported to {path}"
 
     async def _listen(self) -> None:
         async for envelope in self.transport.messages():

@@ -181,6 +181,88 @@ async def test_join_with_character_class_builds_real_starting_sheet_end_to_end()
     assert character.inventory == ["Longsword", "Leather Armor"]
 
 
+async def test_join_with_imported_character_uses_imported_sheet():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    imported = {
+        "player_id": "some-other-stale-id",  # must never win over the real connection's id
+        "name": "Torvin Ironheart",
+        "hp": 7,
+        "max_hp": 12,
+        "character_class": "Cleric",
+        "stats": {"str": 14},
+        "inventory": ["Mace", "Holy Symbol"],
+        "conditions": ["blessed"],
+        "notes": "Sworn to protect the village of Rivenwood.",
+        "xp": 450,
+        "level": 3,
+    }
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "ignored", "character_class": "ignored", "imported_character": imported},
+    ))
+
+    character = session.characters[player_id]
+    assert character.player_id == player_id, "player_id is always the real connection's, never trusted from the file"
+    assert character.name == "Torvin Ironheart"
+    assert character.hp == 7
+    assert character.max_hp == 12
+    assert character.character_class == "Cleric"
+    assert character.inventory == ["Mace", "Holy Symbol"]
+    assert character.notes == "Sworn to protect the village of Rivenwood."
+    assert character.xp == 450
+    assert character.level == 3
+
+
+async def test_join_with_invalid_imported_character_falls_back_to_fresh_start():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={
+            "player_name": "Rook", "character_class": "fighter",
+            "imported_character": {"hp": "not-a-number"},  # wrong type, no required fields
+        },
+    ))
+
+    character = session.characters[player_id]
+    assert character.name == "Rook"
+    assert character.character_class == "Fighter"  # fell back to build_starting_character
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert any("import" in w[3]["text"].lower() for w in warnings)
+
+
+async def test_join_with_non_dict_imported_character_falls_back_to_fresh_start():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "imported_character": ["not", "a", "dict"]},
+    ))
+
+    assert session.characters[player_id].name == "Rook"
+
+
+async def test_imported_character_ignored_on_reconnect():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+    session.characters[player_id].hp = 3  # simulate some real damage taken
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "imported_character": {"name": "Someone Else", "hp": 99, "max_hp": 99}},
+    ))
+
+    character = session.characters[player_id]
+    assert character.name == "Thrain", "a reconnect must never be overwritten by an import"
+    assert character.hp == 3
+
+
 async def test_out_of_turn_action_is_rejected_not_queued():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())

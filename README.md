@@ -29,6 +29,7 @@ Instead of a single-player chatbot, Oracle is a game engine with an LLM in the G
 - **LLM as adjudicator/narrator**: the server owns the source of truth (character sheets, world state, turn order, session log) and calls the LLM to resolve actions and narrate outcomes.
 - **Grounded in real rules, not just vibes**: the DM can look up official D&D 5e SRD data (monster stats, spells, conditions) before improvising mechanics, and can reach for general web search when it needs outside inspiration.
 - **Real D&D-style XP and leveling, awarded deterministically**: defeating a tracked NPC/monster awards real XP (automatically, from the SRD's own Challenge Rating table, whenever the NPC's name matches a known monster) and levels a character up against the SRD's real Character Advancement thresholds — the award itself is triggered by the engine observing an NPC's HP hit 0, not by depending on the DM model reliably calling a dedicated tool, so it works the same regardless of which model is narrating.
+- **Character export/import**: `/export` saves your full character (progression included — XP, level, inventory, notes) to a local file at any point; import it back in on a future Join to pick up exactly where you left off, instead of losing progress once a session ends.
 
 ## Planned (later)
 
@@ -136,6 +137,7 @@ A full-screen terminal interface opens straight into a welcome screen — your p
 
 - **Character name** and **Session ID** (blank for default) — plain text fields.
 - **Class** (`fighter`/`wizard`/`rogue`/`cleric`, blank to skip) — only shown for a brand-new character, not on reconnect. Picks a real starting HP (from the class's SRD hit die) and a starting item or two, so your sheet isn't just a name and 10 HP with nothing else. Leave it blank for that old blank-sheet behavior instead.
+- **Import character .json** (optional, also brand-new-character only) — path to a file previously written by `/export` (see Play, below). When filled in, it wins over the name/class fields above entirely — your saved name, class, HP, XP, level, inventory, and notes all carry over, picking up your progression instead of starting fresh.
 
 Press **Join** (or Enter) and you land in the **lobby**: your character sheet on the left (review it before things kick off), a chat log on the right, and a **Start Adventure** button. This is where you can chat with anyone else who's joined, and see them show up in the **Party** list on your sheet, before anything happens in the story. Any joined player can hit Start Adventure — there's no separate host — and everyone's client moves into the real session view together, where the DM narrates the opening scene live.
 
@@ -149,6 +151,7 @@ A couple of special commands, typed into that same input bar:
 
 - `/roll 1d20` (or `/roll 2d6+3 stealth check`) — roll dice yourself, outside the DM's narration.
 - `/chat hello` — out-of-character chat, doesn't affect the story.
+- `/export [filename]` — save your current character (name, class, HP, XP, level, inventory, notes — everything on your sheet) to a local `.json` file, `character.json` by default. Also works in the lobby's chat input, before the adventure even starts. Use the saved file with **Import character .json** on a future Join to pick up right where you left off, on this session or a new one.
 
 **If you're using Ollama on CPU (no dedicated GPU), be patient** — each DM response can genuinely take 30-90 seconds to generate. This is normal, not a hang; the client will show the response streaming in once it starts.
 
