@@ -4,7 +4,8 @@ import uuid
 
 import pytest
 
-from server.engine import GameEngine
+from server.engine import GameEngine, build_starting_character
+from server.rules import RulesIndex
 from server.state import Session
 from shared.protocol import Envelope
 
@@ -124,6 +125,60 @@ async def test_join_seats_player_and_starts_their_turn():
     await join(engine, player_id)
 
     assert session.current_turn == player_id
+
+
+@pytest.mark.parametrize(
+    "character_class,expected_hp,expected_inventory",
+    [
+        ("fighter", 10, ["Longsword", "Leather Armor"]),
+        ("rogue", 8, ["Shortbow", "Leather Armor"]),
+        ("cleric", 8, ["Leather Armor", "Potion of Healing"]),
+        ("wizard", 6, ["Potion of Healing"]),
+    ],
+)
+def test_build_starting_character_gives_a_real_class_kit(character_class, expected_hp, expected_inventory):
+    # Closes the "no character sheet at all" gap: previously every fresh
+    # character was just name + hp=10/10 with nothing else, since stats/
+    # inventory otherwise only get populated if the DM's update_character
+    # tool happens to fire mid-narration - unreliable per this project's
+    # whole tool-call investigation. HP here is the SRD hit_die's max
+    # value (no ability scores/CON modifier yet - see ROADMAP.md).
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", character_class, rules)
+
+    assert sheet.hp == expected_hp
+    assert sheet.max_hp == expected_hp
+    assert sheet.inventory == expected_inventory
+    assert sheet.character_class  # the SRD's display name, e.g. "Fighter"
+
+
+@pytest.mark.parametrize("character_class", ["", "bard", "not-a-real-class"])
+def test_build_starting_character_falls_back_on_blank_or_unknown_class(character_class):
+    # Old clients/tests that never send character_class at all, and a
+    # typo'd/unsupported class, both keep working exactly like before
+    # this feature existed - a blank sheet, not a crash.
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", character_class, rules)
+
+    assert sheet.hp == 10
+    assert sheet.max_hp == 10
+    assert sheet.inventory == []
+    assert sheet.character_class == ""
+
+
+async def test_join_with_character_class_builds_real_starting_sheet_end_to_end():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.hp == 10
+    assert character.character_class == "Fighter"
+    assert character.inventory == ["Longsword", "Leather Armor"]
 
 
 async def test_out_of_turn_action_is_rejected_not_queued():

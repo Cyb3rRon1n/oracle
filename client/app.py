@@ -35,8 +35,12 @@ class CharacterSheetPanel(Static):
         # - self._render() returning None broke get_content_height()'s
         # visual.get_height() call.
         character = self._character
+        name_line = f"[b]{character.get('name', '?')}[/b]"
+        character_class = character.get("character_class")
+        if character_class:
+            name_line += f" ({character_class})"
         lines = [
-            f"[b]{character.get('name', '?')}[/b]",
+            name_line,
             f"HP: {character.get('hp')}/{character.get('max_hp')}",
         ]
         stats = character.get("stats") or {}
@@ -70,11 +74,12 @@ class DungeonMasterApp(App):
     RichLog { width: 70%; border: solid $accent; }
     """
 
-    def __init__(self, uri: str, session_id: str, player_id: str, player_name: str):
+    def __init__(self, uri: str, session_id: str, player_id: str, player_name: str, character_class: str = ""):
         super().__init__()
         self._transport = ClientTransport(uri, session_id, player_id)
         self._player_id = player_id
         self._player_name = player_name
+        self._character_class = character_class
         self._narration_buffer = ""
 
     def compose(self) -> ComposeResult:
@@ -88,7 +93,9 @@ class DungeonMasterApp(App):
     async def on_mount(self) -> None:
         self.query_one("#input", Input).focus()
         await self._transport.connect()
-        await self._transport.send("join_session", {"player_name": self._player_name})
+        await self._transport.send(
+            "join_session", {"player_name": self._player_name, "character_class": self._character_class}
+        )
         asyncio.create_task(self._listen())
 
     async def _listen(self) -> None:

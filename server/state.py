@@ -10,6 +10,7 @@ class CharacterSheet(BaseModel):
     name: str
     hp: int
     max_hp: int
+    character_class: str = ""
     stats: dict[str, int] = Field(default_factory=dict)
     inventory: list[str] = Field(default_factory=list)
     conditions: list[str] = Field(default_factory=list)

@@ -27,11 +27,20 @@ class RulesIndex:
         if key is None:
             return f"Unknown category '{category}'. Valid categories: {', '.join(CATEGORY_KEYS)}."
 
-        entries = self._data.get(key, {})
-        entry = entries.get(_slug(name))
+        entry = self.get_entry(category, name)
         if entry is None:
             return f"No local SRD entry found for {category} '{name}'."
         return json.dumps(entry, indent=2)
+
+    def get_entry(self, category: str, name: str) -> dict | None:
+        """Structured lookup for callers that need real field access (e.g.
+        character creation reading a class's hit_die), as opposed to
+        lookup()'s JSON-string-for-narration shape."""
+        key = CATEGORY_KEYS.get(category)
+        if key is None:
+            return None
+        entries = self._data.get(key, {})
+        return entries.get(_slug(name))
 
 
 def _slug(name: str) -> str:

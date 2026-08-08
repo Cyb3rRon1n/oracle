@@ -131,10 +131,11 @@ python -m server.main
 python -m client.main
 ```
 
-The client will ask you two quick questions right in the terminal before the game screen appears:
+The client will ask you a few quick questions right in the terminal before the game screen appears:
 
 - `Character name:` — type anything, e.g. `Torvin`
 - `Session ID (blank for default):` — just press Enter to use the default session
+- `Class (fighter/wizard/rogue/cleric, blank to skip):` — only asked for a brand-new character, not on reconnect. Picks a real starting HP (from the class's SRD hit die) and a starting item or two, so your sheet isn't just a name and 10 HP with nothing else. Leave it blank for that old blank-sheet behavior instead.
 
 After that, a full-screen terminal interface opens: your character sheet on one side, a scrolling narrative log on the other, and an input bar at the bottom.
 

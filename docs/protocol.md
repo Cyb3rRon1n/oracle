@@ -22,7 +22,7 @@ Every message, both directions, uses the same wrapper:
 
 | type | payload | purpose |
 |---|---|---|
-| `join_session` | `{player_name, character_id?}` | connect/reconnect; `character_id` present on rejoin |
+| `join_session` | `{player_name, character_class?, character_id?}` | connect/reconnect; `character_id` present on rejoin. `character_class` (one of `server/engine.py`'s `CLASS_STARTING_EQUIPMENT` keys - `fighter`/`wizard`/`rogue`/`cleric`) only matters on a genuinely new character: it sets starting HP from the SRD's `hit_die` and a starting item or two, instead of every character beginning blank. Ignored on reconnect (an existing character keeps what it already has); blank or unrecognized falls back to the original hp=10/max_hp=10 empty sheet. |
 | `player_action` | `{text, target?}` | the core "what do you do" free-text input |
 | `chat_message` | `{text}` | out-of-character chat between players, not adjudicated |
 | `character_edit` | `{field, value}` | player-side bookkeeping (inventory note, etc.) that doesn't need DM adjudication |

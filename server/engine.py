@@ -9,6 +9,7 @@ from shared.protocol import Envelope
 from . import dice
 from .narrator import NarratorBackend
 from .persistence import SessionStore
+from .rules import RulesIndex
 from .state import CharacterSheet, Session
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,53 @@ SendTo = Callable[[str, Envelope], Awaitable[None]]
 # player character - the safety net for an NPC introduced without a
 # real max_hp from lookup_rule, not the intended path.
 DEFAULT_NPC_HP = 10
+
+# A real, deterministic starting sheet instead of every new character
+# beginning as a blank name+HP-10 with nothing else - the immersion gap
+# this closes: a fresh character sheet previously showed nothing but a
+# name and HP, since stats/inventory otherwise only get populated if the
+# DM's update_character tool happens to fire, which this project's whole
+# reliability investigation (ROADMAP.md) has shown is unreliable. This
+# stays deliberately small: a class picks starting HP (from the SRD's own
+# hit_die, no ability-score/CON-modifier system - real 5e uses hit die +
+# CON mod, this project has no ability scores at all yet) and a starting
+# item or two from the SRD's existing (limited, CC-BY-4.0) equipment list.
+# Not a full 5e character build - see ROADMAP.md for what's deliberately
+# left for later (ability scores, more classes/equipment).
+CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
+    "fighter": ["Longsword", "Leather Armor"],
+    "rogue": ["Shortbow", "Leather Armor"],
+    "cleric": ["Leather Armor", "Potion of Healing"],
+    "wizard": ["Potion of Healing"],
+}
+
+
+def _hit_die_max(hit_die: str) -> int:
+    # SRD hit_die values are like "d10" - the max roll, used here as this
+    # project's level-1 HP (no ability scores yet to add a CON modifier).
+    return int(hit_die.lstrip("d"))
+
+
+def build_starting_character(
+    player_id: str, name: str, character_class: str, rules: RulesIndex
+) -> CharacterSheet:
+    """Builds a real starting sheet from a chosen class via the SRD data,
+    or falls back to the original blank hp=10/max_hp=10 sheet for a blank
+    or unrecognized class - keeps old clients/tests that don't send
+    character_class at all working unchanged."""
+    class_entry = rules.get_entry("class", character_class) if character_class else None
+    if class_entry is None:
+        return CharacterSheet(player_id=player_id, name=name, hp=10, max_hp=10)
+
+    max_hp = _hit_die_max(class_entry["hit_die"])
+    return CharacterSheet(
+        player_id=player_id,
+        name=name,
+        hp=max_hp,
+        max_hp=max_hp,
+        character_class=class_entry["name"],
+        inventory=list(CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), [])),
+    )
 
 # A visible mitigation, not a fix (ROADMAP.md's tool-call reliability
 # investigation, item 6's remaining-candidates list) - the live qwen2.5:7b/
@@ -60,6 +108,7 @@ class GameEngine:
         send_to: SendTo,
         store: SessionStore | None = None,
         enable_opening_scene: bool = True,
+        rules: RulesIndex | None = None,
     ):
         self._session = session
         self._dm = dm
@@ -67,6 +116,7 @@ class GameEngine:
         self._send_to = send_to
         self._store = store
         self._enable_opening_scene = enable_opening_scene
+        self._rules = rules or RulesIndex.load_default()
 
     def _save(self) -> None:
         if self._store is not None:
@@ -87,8 +137,9 @@ class GameEngine:
 
         if is_new_character:
             name = envelope.payload.get("player_name", player_id)
-            self._session.characters[player_id] = CharacterSheet(
-                player_id=player_id, name=name, hp=10, max_hp=10
+            character_class = envelope.payload.get("character_class", "")
+            self._session.characters[player_id] = build_starting_character(
+                player_id, name, character_class, self._rules
             )
             self._session.turn_order.append(player_id)
             self._save()
