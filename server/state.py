@@ -48,6 +48,25 @@ class CharacterSheet(BaseModel):
     # (e.g. a player picks up different armor mid-session) - see
     # docs/protocol.md's "Structured equipment" section.
     ac: int = 10
+    # Real 5e's death-saving-throw mechanic, closing the gap that's existed
+    # since HP was first tracked: hitting 0 HP was previously just a number
+    # sitting there, cosmetically red on the client's HP bar, with no real
+    # stakes attached. Deliberately scoped to player characters only, never
+    # NPCs - a defeated NPC already has its own, different, already-shipped
+    # 0-HP behavior (server/engine.py's apply_update closure treats an
+    # NPC's own hp>0-to-0 crossing as "defeated", awarding XP immediately -
+    # real 5e's own actual rule for ordinary monsters, which die outright
+    # at 0 HP rather than making death saves; only player characters -  and,
+    # in real 5e, important NPCs the DM chooses to grant the same treatment
+    # to, not modeled here - get this). dying is true from the moment HP
+    # first reaches 0 until either 3 successes stabilize it or 3 failures
+    # end it - a stable-but-unconscious character (3 successes reached) has
+    # dying=False and hp==0 simultaneously, distinct from a fresh full-
+    # health sheet the same way dead below is.
+    dying: bool = False
+    dead: bool = False
+    death_save_successes: int = 0
+    death_save_failures: int = 0
     # A structured, cheaper alternative to the who-knows-whom relationship
     # graph flagged as real future work (see ROADMAP.md) - not who an NPC
     # knows or a full personality, just a coarse attitude the DM can stay
@@ -114,9 +133,27 @@ class CharacterSheet(BaseModel):
 
         hp_delta = update.get("hp_delta")
         if hp_delta:
+            prior_hp = self.hp
+            prior_dying = self.dying
             self.hp = max(0, min(self.max_hp, self.hp + int(hp_delta)))
             sign = "+" if hp_delta > 0 else ""
             changes.append(f"HP {sign}{hp_delta} (now {self.hp}/{self.max_hp})")
+
+            if hp_delta < 0 and prior_hp == 0 and prior_dying and not self.dead:
+                # Already down and dying - taking more damage while at 0 HP
+                # is an automatic death-save failure under real 5e's own
+                # rule, not something that waits for the next /deathsave.
+                # A real, deliberate simplification: real 5e doubles this to
+                # two failures on a critical hit, but nothing in this
+                # project tracks whether a hit was a critical (server/dice.py
+                # has no crit concept at all), so every hit while down counts
+                # as a single failure here.
+                changes.append(self.record_death_save(success=False))
+            elif hp_delta < 0 and prior_hp > 0 and self.hp == 0 and not self.dead:
+                self.dying = True
+                self.death_save_successes = 0
+                self.death_save_failures = 0
+                changes.append(f"{self.name} drops to 0 HP and begins dying - roll a death save")
 
         # A real recovery mechanic, closing a gap that's existed since HP
         # was first tracked: healing had always meant the DM narrating a
@@ -144,6 +181,18 @@ class CharacterSheet(BaseModel):
             if healed > 0:
                 self.hp += healed
                 changes.append(f"short rest: HP +{healed} (now {self.hp}/{self.max_hp})")
+
+        # Healing above 0 HP - whether from hp_delta or either rest branch
+        # above, checked once here rather than duplicated in both - clears
+        # dying and resets the death-save count the same way waking up from
+        # unconsciousness would. Never resurrects a dead character (dead is
+        # permanent in this project's scope - no resurrection mechanic
+        # exists at all, since there's no spellcasting yet either).
+        if self.hp > 0 and self.dying and not self.dead:
+            self.dying = False
+            self.death_save_successes = 0
+            self.death_save_failures = 0
+            changes.append(f"{self.name} is healed above 0 HP and stabilizes")
 
         add_item = update.get("add_item")
         if add_item:
@@ -187,6 +236,42 @@ class CharacterSheet(BaseModel):
         if not changes:
             return "No changes applied (nothing matched, or all deltas were zero)."
         return "Applied: " + "; ".join(changes) + "."
+
+    def record_death_save(self, *, success: bool, count: int = 1) -> str:
+        """Records one or more death-save outcomes and resolves stabilize/
+        death if a threshold is crossed - the one place that logic lives,
+        shared by apply_update's own "took damage while already down"
+        automatic-failure trigger above and GameEngine._on_death_save's
+        explicit /deathsave roll (server/engine.py), so the real 5e
+        3-successes/3-failures threshold can't drift between the two
+        triggers. No leading underscore, unlike this module's other private
+        helpers - engine.py is a real, intended caller of this one, the
+        same "state.py owns bookkeeping, engine.py reaches in for it"
+        relationship apply_update/gain_xp already have. count=2 is a
+        natural 1 on the d20 roll itself (real 5e: counts as two failures)
+        - looped rather than added directly so a nat 1 that would already
+        be the third failure stops there instead of recording a fourth
+        that can never matter."""
+        for _ in range(count):
+            if success:
+                self.death_save_successes += 1
+            else:
+                self.death_save_failures += 1
+
+            if self.death_save_successes >= 3:
+                self.dying = False
+                self.death_save_successes = 0
+                self.death_save_failures = 0
+                return f"{self.name} stabilizes"
+            if self.death_save_failures >= 3:
+                self.dying = False
+                self.dead = True
+                return f"{self.name} has died"
+
+        return (
+            f"death save {'success' if success else 'failure'} "
+            f"({self.death_save_successes} successes, {self.death_save_failures} failures)"
+        )
 
 
 class Objective(BaseModel):

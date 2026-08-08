@@ -465,6 +465,74 @@ async def test_character_edit_notes_and_inventory_over_a_real_session():
             await server_task
 
 
+class DealsLethalSelfDamageDM:
+    """Simulates a DM turn that drops the acting character straight to 0
+    HP - target omitted defaults to "self" (server/engine.py's apply_update
+    closure), the same as any ordinary hp_delta call."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        apply_update({"hp_delta": -100})
+        yield "The blow lands hard and you crumple to the ground."
+
+
+async def test_death_saves_over_a_real_session():
+    """Confirms the whole death-save chain works end to end over a real
+    websocket, not just at the engine-unit level (tests/test_engine.py):
+    a real hp_delta drops a real client's character to 0 HP and into
+    dying (announced via a real system_message), a normal player_action is
+    genuinely rejected while down rather than silently no-oping, and a
+    real /deathsave roll (mocked dice for a deterministic natural-20
+    outcome) revives the character with 1 HP and clears dying - all
+    reflected in the real server-side Session state and the real client's
+    own re-rendered sheet panel."""
+    session = Session(session_id="e2e-session-11")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, DealsLethalSelfDamageDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8810))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8810", player_id=player_id, is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I charge the ogre head-on", "enter")
+            await _wait_until(lambda: "is dying" in _log_text(app.screen.query_one("#log")))
+            assert session.characters[player_id].dying is True
+
+            # A normal action while down is genuinely rejected - a real
+            # round trip, not just the unit-level rejection test.
+            await pilot.click("#input")
+            await pilot.press(*"I try to stand up", "enter")
+            await _wait_until(lambda: "not a normal action" in _log_text(app.screen.query_one("#log")))
+            assert session.characters[player_id].hp == 0  # untouched by the rejected action
+
+            with patch("server.dice.random.randint", return_value=20):
+                await pilot.click("#input")
+                await pilot.press(*"/deathsave", "enter")
+                await _wait_until(lambda: "claws back to consciousness" in _log_text(app.screen.query_one("#log")))
+
+            assert session.characters[player_id].hp == 1
+            assert session.characters[player_id].dying is False
+            sheet = app.screen.query_one("#sheet")
+            assert "HP 1/" in sheet._Static__content
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_transcript_command_saves_a_real_session_over_a_real_websocket(tmp_path):
     """/transcript is entirely client-side (no protocol envelope at all -
     see docs/protocol.md), but the log it reads from is only real once a

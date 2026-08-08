@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from server.engine import GameEngine, build_starting_character, _compute_ac
+from server.engine import GameEngine, build_starting_character, _compute_ac, _public_character_view
 from server.rules import RulesIndex
 from server.state import Session
 from shared.protocol import Envelope
@@ -1959,3 +1959,221 @@ async def test_character_edit_before_joining_warns_and_does_not_crash():
 
     warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
     assert warnings
+
+
+async def _death_save(engine, player_id):
+    await engine.handle(Envelope(type="death_save", session_id="test-session", sender_id=player_id, payload={}))
+
+
+async def test_public_character_view_includes_dying_and_dead():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].dying = True
+
+    view = _public_character_view(session.characters[player_id])
+    assert view["dying"] is True
+    assert view["dead"] is False
+
+
+async def test_player_action_is_rejected_while_dying():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 0
+    session.characters[player_id].dying = True
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id, payload={"text": "I get up"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert "deathsave" in warnings[0][3]["text"]
+    assert not any(r[0] == "broadcast" and r[1] == "log_entry" for r in received)  # no narration attempted
+
+
+async def test_player_action_is_rejected_while_dead():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 0
+    session.characters[player_id].dead = True
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id, payload={"text": "I get up"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert "died" in warnings[0][3]["text"]
+
+
+async def test_player_action_is_rejected_while_stable_but_unconscious():
+    # hp == 0 with neither dying nor dead - reached via 3 death-save
+    # successes (or a same-turn stabilize-then-drop edge case) - still
+    # can't act, distinct message from the actively-dying case.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 0
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id, payload={"text": "I get up"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert "needs healing" in warnings[0][3]["text"]
+
+
+async def test_narrate_and_apply_announces_entering_dying():
+    dm = UpdateCharacterDM({"hp_delta": -10})  # from full HP straight to 0
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id, payload={"text": "I charge in"},
+    ))
+
+    assert session.characters[player_id].dying is True
+    announcements = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message" and "dying" in r[2]["text"]
+    ]
+    assert announcements
+
+
+async def test_death_save_before_dying_warns():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await _death_save(engine, player_id)
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "broadcast" and r[1] == "dice_result" for r in received)
+
+
+async def test_death_save_after_death_warns_and_does_not_reroll():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 0
+    session.characters[player_id].dead = True
+    received.clear()
+
+    await _death_save(engine, player_id)
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert "already died" in warnings[0][3]["text"]
+
+
+async def test_death_save_natural_20_revives_with_one_hp():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 0
+    session.characters[player_id].dying = True
+    received.clear()
+
+    with patch("server.dice.random.randint", return_value=20):
+        await _death_save(engine, player_id)
+
+    character = session.characters[player_id]
+    assert character.hp == 1
+    assert character.dying is False
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results[0][2]["result"] == 20
+    assert results[0][2]["success"] is True
+
+
+async def test_death_save_success_below_three_does_not_stabilize():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 0
+    session.characters[player_id].dying = True
+
+    with patch("server.dice.random.randint", return_value=15):
+        await _death_save(engine, player_id)
+
+    character = session.characters[player_id]
+    assert character.death_save_successes == 1
+    assert character.dying is True
+
+
+async def test_death_save_third_success_stabilizes():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 0
+    session.characters[player_id].dying = True
+    session.characters[player_id].death_save_successes = 2
+    received.clear()
+
+    with patch("server.dice.random.randint", return_value=15):
+        await _death_save(engine, player_id)
+
+    character = session.characters[player_id]
+    assert character.dying is False
+    assert character.dead is False
+    infos = [r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "stabilizes" in r[2]["text"]]
+    assert infos
+
+
+async def test_death_save_third_failure_kills():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 0
+    session.characters[player_id].dying = True
+    session.characters[player_id].death_save_failures = 2
+    received.clear()
+
+    with patch("server.dice.random.randint", return_value=5):
+        await _death_save(engine, player_id)
+
+    character = session.characters[player_id]
+    assert character.dead is True
+    assert character.dying is False
+    errors = [r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "has died" in r[2]["text"]]
+    assert errors
+    assert errors[0][2]["level"] == "warning"
+
+
+async def test_death_save_natural_one_counts_as_two_failures():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 0
+    session.characters[player_id].dying = True
+
+    with patch("server.dice.random.randint", return_value=1):
+        await _death_save(engine, player_id)
+
+    assert session.characters[player_id].death_save_failures == 2
+
+
+async def test_death_save_is_exempt_from_turn_order():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    other_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await join(engine, other_id)
+    assert session.current_turn != other_id
+    session.characters[other_id].hp = 0
+    session.characters[other_id].dying = True
+
+    with patch("server.dice.random.randint", return_value=15):
+        await _death_save(engine, other_id)
+
+    assert session.characters[other_id].death_save_successes == 1
