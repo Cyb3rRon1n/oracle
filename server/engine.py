@@ -136,9 +136,31 @@ class GameEngine:
         self._enable_opening_scene = enable_opening_scene
         self._rules = rules or RulesIndex.load_default()
 
-    def _save(self) -> None:
-        if self._store is not None:
+    async def _save(self, notify_player_id: str | None = None) -> None:
+        """Persists session state - best-effort, not fatal. Previously a
+        save failure propagated uncaught from whichever _on_* handler
+        called it, silently killing that connection with nothing shown to
+        the player - the exact incident logged in ROADMAP.md (a directory
+        that vanished mid-process-life turned every _save() into an
+        unhandled FileNotFoundError). Catches and warns instead, the same
+        "report, don't block the turn" pattern _narrate_and_apply's own
+        failure handling already uses. Narrowed to OSError deliberately -
+        the realistic failure class here (missing directory, disk full,
+        permissions changing mid-run), not a catch-all that would also
+        mask a genuine bug in what's being serialized."""
+        if self._store is None:
+            return
+        try:
             self._store.save(self._session)
+        except OSError:
+            logger.exception("Failed to save session %s", self._session.session_id)
+            if notify_player_id is not None:
+                await self._send_to(
+                    notify_player_id,
+                    self._system_envelope(
+                        "Your progress may not be saving right now - see the server log.", level="warning"
+                    ),
+                )
 
     async def handle(self, envelope: Envelope) -> None:
         handler = getattr(self, f"_on_{envelope.type}", None)
@@ -156,7 +178,7 @@ class GameEngine:
                 player_id, name, character_class, self._rules
             )
             self._session.turn_order.append(player_id)
-            self._save()
+            await self._save(player_id)
 
         character = self._session.characters[player_id]
         await self._send_to(player_id, self._state_sync_envelope(player_id))
@@ -208,7 +230,7 @@ class GameEngine:
             return
 
         self._session.started = True
-        self._save()
+        await self._save(envelope.sender_id)
 
         player_id = envelope.sender_id
         character = self._session.characters.get(player_id) or next(iter(self._session.characters.values()))
@@ -282,7 +304,7 @@ class GameEngine:
 
         self._session.log.append({"kind": "narration", "text": buffer})
         self._session.append_turn("(The adventure begins.)", buffer)
-        self._save()
+        await self._save(character.player_id)
 
     async def _on_player_action(self, envelope: Envelope) -> None:
         player_id = envelope.sender_id
@@ -306,7 +328,7 @@ class GameEngine:
         self._session.log.append({"kind": "narration", "text": buffer})
         self._session.append_turn(text, buffer)
         self._session.advance_turn()
-        self._save()
+        await self._save(player_id)
         await self._broadcast(self._turn_prompt_envelope())
 
     async def _narrate_and_apply(
