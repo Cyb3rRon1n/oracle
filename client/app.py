@@ -64,6 +64,7 @@ class CharacterSheetPanel(Static):
         self._character: dict = {}
         self._world: dict = {}
         self._others: dict = {}
+        self._npcs: dict = {}
 
     def render_sheet(self, character: dict) -> None:
         self._character = character
@@ -71,6 +72,18 @@ class CharacterSheetPanel(Static):
 
     def render_world(self, world: dict) -> None:
         self._world = world
+        self._refresh_display()
+
+    def render_npcs(self, npcs: dict) -> None:
+        # npcs is keyed by name -> its tracked sheet (server/state.py's
+        # CharacterSheet, same shape NPCs always used - no public/private
+        # split needed here, NPCs have no private owner at all, see
+        # docs/protocol.md's "Private vs. shared state"). Real, persistent
+        # NPC status here - replacing the "dim log line" first-pass UI
+        # footprint (still written too, see _npc_status_line below, as a
+        # narrative beat) with a view that stays current instead of
+        # requiring a scroll back through the log to find the latest state.
+        self._npcs = npcs
         self._refresh_display()
 
     def render_others(self, others: dict) -> None:
@@ -159,6 +172,11 @@ class CharacterSheetPanel(Static):
             lines.extend(f"- {o['text']}" for o in active_objectives)
             lines.append("")
 
+        if self._npcs:
+            lines.append(self._DIVIDER)
+            lines.append("[b]NPCs[/b]")
+            lines.extend(self._npc_line(name, npc) for name, npc in self._npcs.items())
+
         if self._others:
             # "Party", not "Other Players" - the genre-standard term both
             # D&D Beyond's Campaign dashboard and Roll20's turn-order
@@ -234,6 +252,29 @@ class CharacterSheetPanel(Static):
             line += f" AC {ac}"
         line += cls._death_status_label(hp, other.get("dying", False), other.get("dead", False))
         conditions = other.get("conditions") or []
+        if conditions:
+            line += f" ({', '.join(conditions)})"
+        return line
+
+    @classmethod
+    def _npc_line(cls, name: str, npc: dict) -> str:
+        hp, max_hp = npc.get("hp"), npc.get("max_hp")
+        line = f"- {name}: HP {hp}/{max_hp} {cls._hp_bar(hp, max_hp, width=6)}"
+        ac = npc.get("ac")
+        if ac is not None:
+            line += f" AC {ac}"
+        # Never STABLE/DYING/DEAD - _death_status_label's trio is player-
+        # only (real 5e death saves, see "Death saves" in docs/protocol.md).
+        # An NPC dies outright at 0 HP with no stabilize concept at all
+        # (server/engine.py's own XP-on-defeat trigger), so a defeated
+        # monster gets its own, simpler label instead of reusing a label
+        # set that would misleadingly imply it could still come back.
+        if (hp or 0) == 0:
+            line += "  [dim](defeated)[/dim]"
+        disposition = npc.get("disposition")
+        if disposition and disposition != "neutral":
+            line += f" {disposition}"
+        conditions = npc.get("conditions") or []
         if conditions:
             line += f" ({', '.join(conditions)})"
         return line
@@ -612,6 +653,7 @@ class DungeonMasterApp(App):
         sheet.render_sheet(self.my_character)
         sheet.render_others(self.others)
         sheet.render_world(self.world)
+        sheet.render_npcs(self.npcs)
 
     def _roller_name(self, roller_id: str) -> str:
         # dice_result's roller_id is always a real player_id - both
@@ -753,9 +795,20 @@ class DungeonMasterApp(App):
         session_screen = self.screen if isinstance(self.screen, SessionScreen) else None
 
         if envelope.type == "npc_update":
+            name = envelope.payload.get("name", "?")
+            sheet_delta = envelope.payload.get("sheet_delta", {})
+            # Keeps the persistent NPCs panel section current - self.npcs
+            # was previously only ever set once, from state_sync, and never
+            # updated by a live npc_update at all (a real staleness bug,
+            # found while wiring the panel up to actually reflect this).
+            self.npcs[name] = sheet_delta
+            self.refresh_sheet_widgets()
             if session_screen is not None:
-                name = envelope.payload.get("name", "?")
-                session_screen.write_log(_npc_status_line(name, envelope.payload.get("sheet_delta", {})))
+                # Still also a log line - a narrative "something happened"
+                # beat distinct from the panel's always-current state,
+                # the same "log entry announces, panel reflects" split
+                # character_update/system_message already establish.
+                session_screen.write_log(_npc_status_line(name, sheet_delta))
             return
 
         if envelope.type == "log_entry":

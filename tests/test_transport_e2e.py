@@ -710,6 +710,69 @@ async def test_npc_disposition_over_a_real_session():
             await server_task
 
 
+class SequentialNPCUpdatesDM:
+    """Applies one update_character call per narrate() invocation, in
+    order - simulates the same goblin taking damage across two separate
+    real turns, to confirm the client's persistent NPCs panel reflects the
+    latest state (one entry, current HP) rather than the old dim-log-line
+    behavior of just accumulating stale text."""
+
+    def __init__(self, updates: list[dict]):
+        self._updates = updates
+        self._index = 0
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        apply_update(self._updates[self._index])
+        self._index += 1
+        yield "The goblin reacts."
+
+
+async def test_npc_status_panel_stays_current_across_real_turns():
+    session = Session(session_id="e2e-session-15")
+    dm = SequentialNPCUpdatesDM([
+        {"target": "goblin", "max_hp": 7, "hp_delta": -4},
+        {"target": "goblin", "hp_delta": -3},
+    ])
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, dm, broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8813))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        app = DungeonMasterApp(uri="ws://localhost:8813", player_id=str(uuid.uuid4()), is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I strike the goblin", "enter")
+            await _wait_until(lambda: "goblin" in app.screen.query_one("#sheet")._Static__content)
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert "HP 3/7" in rendered
+            assert "(defeated)" not in rendered
+
+            await pilot.click("#input")
+            await pilot.press(*"I strike the goblin again", "enter")
+            await _wait_until(lambda: "(defeated)" in app.screen.query_one("#sheet")._Static__content)
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert rendered.count("goblin") == 1  # updated in place, not duplicated
+            assert "HP 0/7" in rendered
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_character_import_over_a_real_session_wins_over_typed_name_and_class(tmp_path):
     """Character export is purely client-side (no server involvement, see
     DungeonMasterApp.export_character) so it doesn't need a websocket to
