@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from server.state import MAX_HISTORY_MESSAGES, CharacterSheet, Session, WorldState, ability_modifier
+from server.state import (
+    MAX_HISTORY_MESSAGES,
+    CharacterSheet,
+    Session,
+    WorldState,
+    ability_modifier,
+    proficiency_bonus_for_level,
+)
 
 
 def make_character(**overrides) -> CharacterSheet:
@@ -27,6 +34,31 @@ def test_ability_modifier_standard_5e_formula():
     assert ability_modifier(8) == -1
     assert ability_modifier(20) == 5
     assert ability_modifier(1) == -5
+
+
+def test_proficiency_bonus_for_level_standard_5e_table():
+    # Real reference points from the SRD's own Proficiency Bonus by Level
+    # table - +2 through level 4, then +1 every 4 levels.
+    assert proficiency_bonus_for_level(1) == 2
+    assert proficiency_bonus_for_level(4) == 2
+    assert proficiency_bonus_for_level(5) == 3
+    assert proficiency_bonus_for_level(8) == 3
+    assert proficiency_bonus_for_level(9) == 4
+    assert proficiency_bonus_for_level(13) == 5
+    assert proficiency_bonus_for_level(17) == 6
+    assert proficiency_bonus_for_level(20) == 6
+
+
+def test_proficiency_bonus_computed_field_tracks_level():
+    character = make_character(level=1)
+    assert character.proficiency_bonus == 2
+    character.level = 5
+    assert character.proficiency_bonus == 3
+
+
+def test_proficiency_bonus_included_in_model_dump():
+    character = make_character(level=9)
+    assert character.model_dump()["proficiency_bonus"] == 4
 
 
 def test_stat_modifiers_computed_field_is_empty_when_stats_is_empty():

@@ -371,6 +371,61 @@ async def test_ability_score_modifier_applies_to_a_dm_requested_roll_over_a_real
             await server_task
 
 
+class RequestsSkillCheckDM:
+    """Simulates a DM turn requesting an athletics check by naming the real
+    skill directly - exercises the full skill-proficiency chain
+    (server/engine.py's request_roll closure resolving ability, roll_kind,
+    and proficiency all from one field) over an actual websocket."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        request_roll({"dice": "1d20", "dc": 15, "reason": "climb the wall", "skill": "athletics"})
+        yield "You attempt to scale the wall."
+
+
+async def test_skill_proficiency_applies_to_a_dm_requested_roll_over_a_real_session():
+    """Confirms the whole skill-proficiency chain works end to end over a
+    real websocket, not just at the engine-unit level: a real fighter
+    joins (proficient in athletics per CLASS_SKILL_PROFICIENCIES), and a
+    DM-requested roll naming only "skill": "athletics" - no ability, no
+    roll_kind - resolves the real STR modifier, the real proficiency
+    bonus, and disadvantage-scoping-relevant roll_kind="check", all
+    automatically."""
+    session = Session(session_id="e2e-session-13")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, RequestsSkillCheckDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8815))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8815", player_id=player_id, is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#class-input")
+            await pilot.press(*"fighter")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I try to climb the wall", "enter")
+            await _wait_until(lambda: "Athletics" in _log_text(app.screen.query_one("#log")))
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "proficiency" in log_text
+            assert "STR" in log_text
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 class RequestsWeaponDamageRollDM:
     """Simulates a DM turn narrating a hit and rolling real weapon damage -
     exercises the real equipment-lookup plumbing (server/engine.py's

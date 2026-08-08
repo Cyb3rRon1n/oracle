@@ -925,6 +925,61 @@ async def test_dice_result_shows_roll_kind_tag_when_present():
             assert "1d20 (save)" in log_text
 
 
+async def test_dice_result_shows_skill_and_proficiency_tag_when_present():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 19, "rolls": [15],
+                    "sides": 20, "purpose": "climb the wall", "dc": 15, "success": True,
+                    "ability": "str", "ability_modifier": 2,
+                    "skill": "athletics", "proficient": True, "proficiency_bonus": 2,
+                    "roll_kind": "check",
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "Athletics, +2 proficiency" in log_text
+
+
+async def test_dice_result_shows_skill_without_proficiency_tag_when_not_proficient():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 13, "rolls": [15],
+                    "sides": 20, "purpose": "sneak past", "dc": 15, "success": False,
+                    "ability": "dex", "ability_modifier": -2,
+                    "skill": "stealth", "proficient": False,
+                    "roll_kind": "check",
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "Stealth" in log_text
+            assert "proficiency" not in log_text
+
+
 async def test_dice_result_shows_damage_type_and_ability_together():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
