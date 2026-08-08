@@ -741,9 +741,16 @@ class DungeonMasterApp(App):
 
         if envelope.type == "system_message":
             text = envelope.payload.get("text", "")
+            # advisory (server/engine.py's missed-change heuristic) is a
+            # genuinely different category from every other system_message -
+            # a "you might want to double check" nudge, not a plain fact
+            # about a connection/turn-order/save event - so it gets a
+            # visually distinct treatment instead of blending in with the
+            # rest at the same dim styling.
+            rendered = f"[yellow]⚠ {text}[/yellow]" if envelope.payload.get("advisory") else f"[dim]{text}[/dim]"
             if session_screen is not None:
                 session_screen.set_thinking(False)  # covers narration-failed, which never reaches a log_entry
-                session_screen.write_log(f"[dim]{text}[/dim]")
+                session_screen.write_log(rendered)
             elif isinstance(self.screen, LobbyScreen):
-                self.screen.query_one("#lobby-status", Static).update(f"[dim]{text}[/dim]")
+                self.screen.query_one("#lobby-status", Static).update(rendered)
             return
