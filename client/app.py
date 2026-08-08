@@ -366,7 +366,10 @@ class LobbyScreen(Screen):
             yield RichLog(id="chat-log", wrap=True, markup=True)
         yield Static("", id="lobby-status")
         yield Button("Start Adventure", id="start", variant="success")
-        yield Input(placeholder="Chat with the party... (/export [file] to save your character)", id="chat-input")
+        yield Input(
+            placeholder="Chat with the party... (/export [file] for your character, /transcript [file] for this chat)",
+            id="chat-input",
+        )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -389,6 +392,25 @@ class LobbyScreen(Screen):
             filename = text[len("/export"):].strip() or "character"
             message = await self.app.export_character(filename)
             self.query_one("#chat-log", RichLog).write(f"[dim]{message}[/dim]")
+            return
+
+        if text.startswith("/transcript"):
+            # Reads #chat-log specifically - the lobby's own separate
+            # RichLog, distinct from SessionScreen's #log. A lobby-only
+            # chat transcript (pre-adventure banter/character review) is a
+            # genuinely different record from the in-session narration one,
+            # so this deliberately isn't "the same transcript, exported
+            # early" - each screen's /transcript only ever sees its own log.
+            filename = text[len("/transcript"):].strip() or "lobby-chat"
+            path = Path(filename)
+            if path.suffix != ".txt":
+                path = path.with_suffix(".txt")
+            try:
+                path.write_text(_transcript_text(self.query_one("#chat-log", RichLog)))
+            except OSError as exc:
+                self.query_one("#chat-log", RichLog).write(f"[dim]Couldn't save transcript: {exc}[/dim]")
+            else:
+                self.query_one("#chat-log", RichLog).write(f"[dim]Transcript saved to {path}[/dim]")
             return
 
         await self.app.transport.send("chat_message", {"text": text})

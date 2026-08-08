@@ -170,7 +170,7 @@ A couple of special commands, typed into that same input bar:
 - `/note <text>` — jot a note on your own sheet, no DM adjudication needed.
 - `/item add <name>` / `/item remove <name>` — manage your own inventory directly, same as `/note`.
 - `/export [filename]` — save your current character (name, class, HP, XP, level, inventory, notes — everything on your sheet) to a local `.json` file, `character.json` by default. Also works in the lobby's chat input, before the adventure even starts. Use the saved file with **Import character .json** on a future Join to pick up right where you left off, on this session or a new one.
-- `/transcript [filename]` — save the running narration log (everything you've seen this session) to a local `.txt` file, `transcript.txt` by default.
+- `/transcript [filename]` — save the running narration log (everything you've seen this session) to a local `.txt` file, `transcript.txt` by default. Also works in the lobby's chat input (exports the lobby chat itself, `lobby-chat.txt` by default) — each screen only ever exports its own log.
 
 **If you're using Ollama on CPU (no dedicated GPU), be patient** — each DM response can genuinely take 30-90 seconds to generate. This is normal, not a hang; the client will show the response streaming in once it starts.
 

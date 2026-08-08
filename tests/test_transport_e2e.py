@@ -572,6 +572,55 @@ async def test_transcript_command_saves_a_real_session_over_a_real_websocket(tmp
             await server_task
 
 
+async def test_lobby_transcript_command_saves_real_chat_over_a_real_websocket(tmp_path):
+    """/transcript in the lobby reads #chat-log specifically - confirms it
+    against a real two-player lobby chat exchange over a real websocket,
+    not just a single FakeTransport-driven client."""
+    session = Session(session_id="e2e-session-14")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, StubDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8812))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        app1 = DungeonMasterApp(uri="ws://localhost:8812", player_id=str(uuid.uuid4()), is_new_character=True)
+        async with app1.run_test() as pilot1:
+            await pilot1.click("#name-input")
+            await pilot1.press(*"Thrain")
+            await pilot1.click("#join")
+            await _wait_until(lambda: isinstance(app1.screen, LobbyScreen))
+
+            ws2 = await connect("ws://localhost:8812")
+            try:
+                await ws2.send(Envelope(
+                    type="join_session", session_id="e2e-session-14", sender_id=str(uuid.uuid4()),
+                    payload={"player_name": "Rowan"},
+                ).to_json())
+                await ws2.send(Envelope(
+                    type="chat_message", session_id="e2e-session-14", sender_id=str(uuid.uuid4()),
+                    payload={"text": "ready when you are"},
+                ).to_json())
+
+                await _wait_until(lambda: "ready when you are" in _log_text(app1.screen.query_one("#chat-log")))
+
+                transcript_path = tmp_path / "e2e-lobby-chat"
+                await pilot1.click("#chat-input")
+                await pilot1.press(*f"/transcript {transcript_path}", "enter")
+                await _wait_until(lambda: (tmp_path / "e2e-lobby-chat.txt").exists())
+
+                written = (tmp_path / "e2e-lobby-chat.txt").read_text()
+                assert "ready when you are" in written
+            finally:
+                await ws2.close()
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 class NarratesLethalDamageWithNoToolCallDM:
     """Reconstructs the exact real failure shape ROADMAP.md's tool-call
     reliability investigation documents - narration confirms lethal damage

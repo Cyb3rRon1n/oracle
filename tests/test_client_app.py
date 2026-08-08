@@ -548,6 +548,53 @@ async def test_transcript_command_with_no_filename_uses_default_name(tmp_path, m
             assert (tmp_path / "transcript.txt").exists()
 
 
+async def test_lobby_transcript_command_writes_chat_log_not_session_log(tmp_path):
+    transcript_path = tmp_path / "lobby_chat"
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="log_entry", session_id="s", sender_id="server",
+                payload={"kind": "chat", "text": "Rowan: see you all soon"},
+            ))
+            await pilot.pause()
+
+            sent_before = len(app.transport.sent)
+            await pilot.click("#chat-input")
+            await pilot.press(*f"/transcript {transcript_path}", "enter")
+            await pilot.pause()
+
+            # A pure client-side read - /transcript must never reach the
+            # server, the same as SessionScreen's own version.
+            assert len(app.transport.sent) == sent_before
+
+            written = (tmp_path / "lobby_chat.txt").read_text()
+            assert "see you all soon" in written
+            assert "Transcript saved" in _log_text(app.screen.query_one("#chat-log"))
+
+
+async def test_lobby_transcript_command_with_no_filename_uses_default_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await pilot.click("#chat-input")
+            await pilot.press(*"/transcript", "enter")
+            await pilot.pause()
+
+            assert (tmp_path / "lobby-chat.txt").exists()
+
+
 async def test_party_updates_render_in_lobby_sheet_panel_without_inventory():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
