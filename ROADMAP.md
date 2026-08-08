@@ -322,10 +322,10 @@ From a direct discussion with the owner after playing the GPU-backed session, pr
 - [x] **A distinct visual treatment for the missed-change warning** (2026-08-08) - done; see "Current state" for the full writeup.
 - [x] **A real NPC status panel** (2026-08-08) - done; see "Current state" for the full writeup.
 - [x] **A session-transcript export in the client** (2026-08-08) - done; see "Current state" for the full writeup.
-- **Presentation polish for the README/GitHub page**, candidate ideas from a 2026-08-07 pass that added the real screenshots currently in `docs/screenshots/` — none started, purely options to pick from later:
+- **Presentation polish for the README/GitHub page**, candidate ideas from a 2026-08-07 pass that added the real screenshots currently in `docs/screenshots/` — purely options to pick from later:
   - A short animated demo (`asciinema` recording → `svg-term` render, or a GIF) instead of/alongside the two static screenshots, to show narration actually streaming in rather than just a before/after pair.
-  - A custom Textual `CSS`/theme for `DungeonMasterApp` (`client/app.py`) — right now it's the framework default palette with a plain `$accent`-bordered box layout; a theme suited to a tabletop/parchment feel would read as more intentional in a screenshot.
-  - An HP bar or similar small visual indicator on `CharacterSheetPanel` instead of the current plain `HP: 10/10` text line.
+  - A custom Textual `CSS`/theme for `DungeonMasterApp` (`client/app.py`) — right now it's the framework default palette with a plain `$accent`-bordered box layout; a theme suited to a tabletop/parchment feel would read as more intentional in a screenshot. Genuinely more a matter of taste than the rest of this checklist (color/mood choices, not a functional gap) - a real candidate for asking the owner's preference rather than guessing at one.
+  - [x] ~~An HP bar or similar small visual indicator on `CharacterSheetPanel`~~ - done as part of the "Character sheet panel design pass" entry (Current state, above; `_hp_bar()`), stale by the time this bullet was still being carried here.
   - A simple wordmark/banner for the top of the README — currently just an `# Oracle` heading plus badges.
 - [x] **Make a mid-session `_save()` failure visible instead of an unhandled exception** (2026-08-08) - done, closing the known limitation the 2026-08-07 startup-writability-check entry explicitly left open; see "Current state" for the full writeup.
 ### Character progression checklist (2026-08-08)
