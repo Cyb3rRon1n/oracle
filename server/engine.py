@@ -22,6 +22,14 @@ SendTo = Callable[[str, Envelope], Awaitable[None]]
 # real max_hp from lookup_rule, not the intended path.
 DEFAULT_NPC_HP = 10
 
+# Fallback XP for defeating an NPC whose name doesn't match a known SRD
+# monster (see _xp_for_npc below) and whose introduction didn't carry an
+# explicit "xp" override - CR 1/4's real SRD value (server/rules/srd.json's
+# xp_by_cr), the same tier every monster currently in the SRD subset except
+# the orc actually sits at, so this is a reasonable floor rather than an
+# arbitrary round number.
+DEFAULT_NPC_XP = 50
+
 # A real, deterministic starting sheet instead of every new character
 # beginning as a blank name+HP-10 with nothing else - the immersion gap
 # this closes: a fresh character sheet previously showed nothing but a
@@ -57,6 +65,14 @@ def _public_character_view(character: CharacterSheet) -> dict:
         "hp": character.hp,
         "max_hp": character.max_hp,
         "conditions": list(character.conditions),
+        # level, not xp - level is a meaningful public fact about a
+        # character (like class or HP), the same way another player's
+        # level is visible on their sheet at a real table. xp itself stays
+        # owner-only (the full model_dump() in _state_sync_envelope/
+        # _character_update_envelope), matching the existing inventory/
+        # stats/notes privacy boundary - raw XP is bookkeeping, not
+        # something other players need to see turn to turn.
+        "level": character.level,
     }
 
 
@@ -64,6 +80,31 @@ def _hit_die_max(hit_die: str) -> int:
     # SRD hit_die values are like "d10" - the max roll, used here as this
     # project's level-1 HP (no ability scores yet to add a CON modifier).
     return int(hit_die.lstrip("d"))
+
+
+def _xp_for_npc(npc: CharacterSheet, update: dict, rules: RulesIndex) -> int:
+    """Decides how much XP defeating this NPC is worth, in priority order:
+    (1) an explicit "xp" in the killing update - the same override pattern
+    max_hp already has for introducing an NPC, lets the DM hand-tune a
+    boss or a trivial mook without touching the SRD data; (2) the NPC's own
+    name matched against the SRD's monster list (the same _slug()-based
+    lookup RulesIndex.get_entry() already does for narration/`lookup_rule`)
+    and its "cr" field run through xp_for_cr - free and automatic whenever
+    an NPC happens to be named after a known monster (the "goblin"/"orc"/
+    etc. targets this project's own existing NPC tests already use); (3)
+    DEFAULT_NPC_XP, the same "not the intended path, just a safety net"
+    role DEFAULT_NPC_HP already plays for max_hp."""
+    explicit = update.get("xp")
+    if isinstance(explicit, int) and not isinstance(explicit, bool):
+        return explicit
+
+    monster_entry = rules.get_entry("monster", npc.name)
+    if monster_entry is not None:
+        cr_xp = rules.xp_for_cr(monster_entry.get("cr", ""))
+        if cr_xp is not None:
+            return cr_xp
+
+    return DEFAULT_NPC_XP
 
 
 def build_starting_character(
@@ -345,6 +386,11 @@ class GameEngine:
         npcs_touched: set[str] = set()
         rolls_made: list[dict] = []
         world_changed = False
+        # (npc_name, xp_awarded, levels_gained) - one entry per NPC this
+        # turn's apply_update calls actually defeated, so a broadcast can
+        # announce each defeat/level-up after narration finishes streaming,
+        # not interrupt it mid-stream.
+        xp_awards: list[tuple[str, int, int]] = []
 
         def request_roll(update: dict) -> str:
             notation = update.get("dice", "1d20")
@@ -404,8 +450,24 @@ class GameEngine:
                 npc = CharacterSheet(player_id=target, name=target, hp=max_hp, max_hp=max_hp)
                 self._session.npcs[npc_key] = npc
 
+            # Captured before apply_update mutates hp - this is the
+            # deterministic trigger for XP, not a tool the DM has to
+            # remember to call. ROADMAP.md's reliability investigation
+            # found tool-call reliability plateaus around 29% across every
+            # local model tested, so awarding XP off "the model also called
+            # an award_xp tool" would silently fail most of the time; hp
+            # crossing from >0 to 0 is already-observed, already-reliable
+            # engine state (this same apply_update path is what the
+            # untracked-change heuristic above exists to catch failures
+            # of). was_alive on a freshly-introduced NPC is True unless it
+            # was introduced already-dead in the same update (max_hp<=0),
+            # which correctly awards no XP for a "corpse" that was never
+            # alive in this session.
+            was_alive = npc.hp > 0
+
             delta_result = npc.apply_update(update)
             changed = not delta_result.startswith("No changes applied")
+            defeated = was_alive and npc.hp == 0
 
             # Introducing a new NPC is itself a real change worth
             # broadcasting even if this same call's deltas were a no-op
@@ -415,11 +477,40 @@ class GameEngine:
             if introduced or changed:
                 npcs_touched.add(npc_key)
 
+            xp_note = ""
+            if defeated:
+                # XP goes to whoever's turn it is, not split across the
+                # whole party - a deliberate simplifying default (real 5e
+                # splits party-wide), chosen because Oracle's turn queue
+                # already anchors every mechanical update on a single
+                # acting character (apply_update/request_roll/update_world
+                # all take just one `character`) - party-wide XP would need
+                # a session-wide "who else is present" notion this turn
+                # loop doesn't have. Revisit if/when a real multi-character-
+                # per-turn scenario shows up.
+                xp_award = _xp_for_npc(npc, update, self._rules)
+                levels_gained = character.gain_xp(xp_award, self._rules.xp_thresholds())
+                if levels_gained:
+                    class_entry = (
+                        self._rules.get_entry("class", character.character_class)
+                        if character.character_class else None
+                    )
+                    if class_entry is not None:
+                        hp_gain = _hit_die_max(class_entry["hit_die"]) * levels_gained
+                        character.max_hp += hp_gain
+                        character.hp += hp_gain
+                sheet_changed = True
+                xp_awards.append((npc.name, xp_award, levels_gained))
+                xp_note = f" {npc.name} is defeated! {character.name} gains {xp_award} XP."
+                if levels_gained:
+                    xp_note += f" {character.name} reaches level {character.level}!"
+
             if introduced:
                 intro = f"Introduced {npc.name} (HP {npc.hp}/{npc.max_hp})."
-                return f"{intro} {delta_result}" if changed else intro
-
-            return delta_result
+                result = f"{intro} {delta_result}" if changed else intro
+            else:
+                result = delta_result
+            return result + xp_note
 
         def update_world(update: dict) -> str:
             nonlocal world_changed
@@ -456,6 +547,18 @@ class GameEngine:
         for npc_key in npcs_touched:
             touched_npc = self._session.npcs[npc_key]
             await self._broadcast(self._npc_update_envelope(touched_npc.name, touched_npc))
+
+        # Broadcast once narration/sheet/npc updates have all gone out, so
+        # this reads as the resolution of what just streamed rather than
+        # interrupting it. system_message rather than a new envelope type -
+        # matches how every other game-flow announcement not itself DM
+        # narration (a join, an out-of-turn refusal) already reaches
+        # clients, so no client-side changes were needed to render this.
+        for npc_name, xp_award, levels_gained in xp_awards:
+            text = f"{character.name} defeats {npc_name} and gains {xp_award} XP!"
+            if levels_gained:
+                text += f" {character.name} reaches level {character.level}!"
+            await self._broadcast(self._system_envelope(text, level="info"))
 
         if world_changed:
             await self._broadcast(self._world_update_envelope())

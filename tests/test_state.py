@@ -65,6 +65,56 @@ def test_apply_update_empty_or_zero_delta_reports_no_change():
     assert result.startswith("No changes applied")
 
 
+XP_THRESHOLDS = {1: 0, 2: 300, 3: 900, 4: 2700, 5: 6500}
+
+
+def test_gain_xp_below_threshold_does_not_level_up():
+    character = make_character()
+    levels_gained = character.gain_xp(200, XP_THRESHOLDS)
+
+    assert character.xp == 200
+    assert character.level == 1
+    assert levels_gained == 0
+
+
+def test_gain_xp_crossing_one_threshold_levels_up_once():
+    character = make_character()
+    levels_gained = character.gain_xp(300, XP_THRESHOLDS)
+
+    assert character.xp == 300
+    assert character.level == 2
+    assert levels_gained == 1
+
+
+def test_gain_xp_crossing_multiple_thresholds_at_once_levels_up_repeatedly():
+    # A single large award (a tough boss, or several stacked kills in one
+    # turn) can plausibly jump more than one level at once - gain_xp loops
+    # rather than checking the next threshold only once.
+    character = make_character()
+    levels_gained = character.gain_xp(2700, XP_THRESHOLDS)
+
+    assert character.xp == 2700
+    assert character.level == 4
+    assert levels_gained == 3
+
+
+def test_gain_xp_caps_at_the_highest_known_level():
+    character = make_character(level=5, xp=6500)
+    levels_gained = character.gain_xp(1_000_000, XP_THRESHOLDS)
+
+    assert character.level == 5  # XP_THRESHOLDS tops out at level 5
+    assert levels_gained == 0
+    assert character.xp == 1_006_500  # xp itself still accumulates
+
+
+def test_gain_xp_zero_or_negative_amount_is_a_no_op():
+    character = make_character()
+    assert character.gain_xp(0, XP_THRESHOLDS) == 0
+    assert character.xp == 0
+    assert character.gain_xp(-10, XP_THRESHOLDS) == 0
+    assert character.xp == 0
+
+
 def test_apply_update_notes():
     character = make_character()
 

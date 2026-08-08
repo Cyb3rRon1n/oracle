@@ -439,6 +439,159 @@ async def test_npc_update_broadcast_keeps_first_seen_casing_after_recase():
     assert [u[2]["name"] for u in updates] == ["Bandit", "Bandit"]
 
 
+async def test_defeating_known_srd_monster_awards_correct_cr_xp():
+    # "goblin" matches server/rules/srd.json's own monster entry (CR 1/4),
+    # so the real SRD xp_by_cr table (50 XP) should apply automatically -
+    # no explicit "xp" needed on the killing update.
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -7}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the goblin down"},
+    ))
+
+    assert session.npcs["goblin"].hp == 0
+    assert session.characters[player_id].xp == 50
+    assert "is defeated" in dm.tool_results[0]
+    assert "gains 50 XP" in dm.tool_results[0]
+
+
+async def test_defeating_unmatched_npc_falls_back_to_default_xp():
+    dm = UpdateSequenceDM([{"target": "shadow_beast", "max_hp": 5, "hp_delta": -5}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the shadow beast down"},
+    ))
+
+    from server.engine import DEFAULT_NPC_XP
+    assert session.characters[player_id].xp == DEFAULT_NPC_XP
+
+
+async def test_explicit_xp_override_takes_precedence_over_cr_lookup():
+    # "goblin" would normally resolve to the SRD's 50 XP - an explicit xp
+    # on the killing update should win anyway, the same override precedent
+    # max_hp already has over DEFAULT_NPC_HP.
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -7, "xp": 999}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the goblin down"},
+    ))
+
+    assert session.characters[player_id].xp == 999
+
+
+async def test_no_xp_awarded_for_repeat_hits_on_an_already_dead_npc():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -7}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the goblin down"},
+    ))
+    assert session.characters[player_id].xp == 50
+
+    dm._updates = [{"target": "goblin", "hp_delta": -1}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I hit the goblin's corpse"},
+    ))
+
+    assert session.characters[player_id].xp == 50, "an already-dead NPC must not re-award XP"
+    assert "is defeated" not in dm.tool_results[-1]
+
+
+async def test_defeat_broadcasts_system_message_announcing_xp():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -7}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the goblin down"},
+    ))
+
+    announcements = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message" and "gains 50 XP" in r[2]["text"]
+    ]
+    assert announcements, "a defeat should broadcast a system_message announcing the XP gained"
+
+
+async def test_level_up_grows_hp_by_class_hit_die_and_broadcasts_level_up():
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 300}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+    character = session.characters[player_id]
+    assert character.level == 1
+    assert character.max_hp == 10  # fighter's hit_die is d10
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    assert character.xp == 300  # exactly the level-2 threshold
+    assert character.level == 2
+    assert character.max_hp == 20  # +10 (fighter's d10 max) for the level gained
+    assert character.hp == 20
+
+    level_ups = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message" and "reaches level 2" in r[2]["text"]
+    ]
+    assert level_ups, "leveling up should broadcast an announcement"
+
+
+async def test_level_up_with_no_known_class_does_not_grow_hp():
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 300}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)  # no character_class - blank class, no hit_die to grow by
+    character = session.characters[player_id]
+    starting_max_hp = character.max_hp
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    assert character.level == 2
+    assert character.max_hp == starting_max_hp
+
+
+async def test_public_character_view_includes_level_but_not_xp():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].xp = 42
+
+    other_id = str(uuid.uuid4())
+    await join(engine, other_id, name="Rowan")
+
+    syncs = [r for r in received if r[0] == "send_to" and r[1] == other_id and r[2] == "state_sync"]
+    view = syncs[-1][3]["characters"][player_id]
+    assert view["level"] == 1
+    assert "xp" not in view
+
+
 async def test_update_character_explicit_self_target_still_updates_own_sheet():
     dm = UpdateCharacterDM({"target": "self", "hp_delta": -1})
     engine, session, _ = make_engine(dm)
