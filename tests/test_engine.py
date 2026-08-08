@@ -1771,3 +1771,114 @@ async def test_save_is_a_silent_no_op_with_no_store_configured():
     await join(engine, player_id)
 
     assert not _save_failure_warnings(received, player_id)
+
+
+async def test_character_edit_notes_updates_own_sheet_privately():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "notes", "value": "the old man owes me a favor"},
+    ))
+
+    assert session.characters[player_id].notes == "the old man owes me a favor"
+    updates = [r for r in received if r[0] == "send_to" and r[2] == "character_update"]
+    assert len(updates) == 1
+    assert updates[0][3]["sheet_delta"]["notes"] == "the old man owes me a favor"
+    # notes is never in the public view - no player_update/player_joined
+    # broadcast should fire for a purely private bookkeeping edit.
+    assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_character_edit_add_item_appends_to_inventory():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "add_item", "value": "a shiny rock"},
+    ))
+
+    assert "a shiny rock" in session.characters[player_id].inventory
+
+
+async def test_character_edit_remove_item_removes_a_present_item():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inventory.append("a torch")
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "remove_item", "value": "a torch"},
+    ))
+
+    assert "a torch" not in session.characters[player_id].inventory
+
+
+async def test_character_edit_remove_item_not_in_inventory_warns_and_makes_no_change():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "remove_item", "value": "a torch"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "send_to" and r[2] == "character_update" for r in received)
+
+
+async def test_character_edit_rejects_a_mechanical_field_not_in_the_allowed_set():
+    # hp/conditions/stats/xp/ac stay DM- or engine-only - character_edit
+    # only ever touches notes/inventory bookkeeping.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "hp", "value": 999},
+    ))
+
+    assert session.characters[player_id].hp == 10
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "send_to" and r[2] == "character_update" for r in received)
+
+
+async def test_character_edit_is_exempt_from_turn_order():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    other_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await join(engine, other_id)
+    assert session.current_turn != other_id
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=other_id,
+        payload={"field": "notes", "value": "not my turn but this should still work"},
+    ))
+
+    assert session.characters[other_id].notes == "not my turn but this should still work"
+
+
+async def test_character_edit_before_joining_warns_and_does_not_crash():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "notes", "value": "too early"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings

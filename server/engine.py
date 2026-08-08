@@ -50,6 +50,15 @@ DEFAULT_NPC_XP = 50
 # condition is active rather than narrowly scoped per roll type.
 DISADVANTAGE_CONDITIONS = frozenset({"poisoned", "frightened", "prone"})
 
+# character_edit's own real scope (docs/protocol.md, ROADMAP.md's "let a
+# player edit their own notes/inventory directly, without DM adjudication"):
+# deliberately just the fields that are pure player-side bookkeeping, not
+# mechanical state. hp/conditions/stats/xp/ac all stay DM- or engine-only -
+# the same "the engine or the DM decides mechanical state, the player only
+# decides fiction/bookkeeping" boundary update_character's own tool schema
+# already draws, just enforced from the other direction here.
+CHARACTER_EDIT_FIELDS = frozenset({"notes", "add_item", "remove_item"})
+
 
 def _has_disadvantage(character: CharacterSheet) -> list[str]:
     """Returns which of the acting character's current conditions actually
@@ -807,6 +816,52 @@ class GameEngine:
 
     async def _on_chat_message(self, envelope: Envelope) -> None:
         await self._broadcast(self._log_envelope("chat", envelope.payload.get("text", "")))
+
+    async def _on_character_edit(self, envelope: Envelope) -> None:
+        """Player-side bookkeeping - notes, or adding/removing an inventory
+        item by name - that doesn't need DM adjudication (docs/protocol.md).
+        Deliberately the mirror image of apply_update's mechanical fields:
+        this handler only ever touches notes/inventory, never hp/conditions/
+        stats/xp, so a player editing their own sheet can't grant themselves
+        healing or gear out of nowhere the DM never narrated. Exempt from
+        turn order like chat_message/dice_roll - only _on_player_action
+        checks current_turn."""
+        player_id = envelope.sender_id
+        character = self._session.characters.get(player_id)
+        if character is None:
+            await self._send_to(
+                player_id, self._system_envelope("You don't have a character to edit yet.", level="warning")
+            )
+            return
+
+        field = envelope.payload.get("field")
+        value = envelope.payload.get("value")
+        if field not in CHARACTER_EDIT_FIELDS or not value:
+            await self._send_to(
+                player_id,
+                self._system_envelope(f"Can't edit '{field}' - try notes, add_item, or remove_item.", level="warning"),
+            )
+            return
+
+        if field == "notes":
+            character.notes = str(value)
+        elif field == "add_item":
+            character.inventory.append(str(value))
+        elif field == "remove_item":
+            item = str(value)
+            if item not in character.inventory:
+                await self._send_to(
+                    player_id, self._system_envelope(f"You don't have '{item}' to remove.", level="warning")
+                )
+                return
+            character.inventory.remove(item)
+
+        # Private only, the same boundary _public_character_view draws -
+        # notes/inventory never appear in player_update/player_joined, so
+        # unlike a mechanical sheet_changed update (_narrate_and_apply) there's
+        # no public counterpart broadcast to send here.
+        await self._send_to(player_id, self._character_update_envelope(player_id, character))
+        await self._save(player_id)
 
     async def _on_dice_roll(self, envelope: Envelope) -> None:
         player_id = envelope.sender_id

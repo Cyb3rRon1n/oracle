@@ -328,6 +328,56 @@ async def test_export_command_with_no_filename_uses_default_name(tmp_path, monke
             assert (tmp_path / "character.json").exists()
 
 
+async def test_note_command_sends_character_edit_not_chat():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/note the old man owes me a favor", "enter")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == (
+                "character_edit", {"field": "notes", "value": "the old man owes me a favor"}
+            )
+
+
+async def test_item_add_command_sends_character_edit():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/item add a shiny rock", "enter")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("character_edit", {"field": "add_item", "value": "a shiny rock"})
+
+
+async def test_item_remove_command_sends_character_edit():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/item remove a torch", "enter")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("character_edit", {"field": "remove_item", "value": "a torch"})
+
+
 async def test_party_updates_render_in_lobby_sheet_panel_without_inventory():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
