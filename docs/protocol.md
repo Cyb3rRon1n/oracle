@@ -81,6 +81,15 @@ NPCs/monsters have no private owner, so `npc_update` is broadcast outright — n
 
 World state (`Session.world`) has no private owner either, same reasoning as NPCs — `world_update` is broadcast outright on any real change from the DM's `update_world` tool call (location, standing summary, objectives, flags).
 
+## Objective expiry and failure
+
+Closes a real, previously-named gap: `Objective.status` only ever had `active`/`completed`, so nothing could represent a quest going stale on its own or being genuinely failed outright — every objective either stayed open forever or eventually got marked a success, even when the fiction called for something else.
+
+- **`Objective.status` gained two real terminal states, `expired` and `failed`**, distinct on purpose rather than one generic "closed" — "the caravan already left without you" (expired) reads differently from "you drove off the bandits, but the merchant died anyway" (failed), and a DM/player shouldn't have to infer which happened from an objective simply vanishing from the active list.
+- **`update_world` gained matching `expire_objective`/`fail_objective` fields** (`AnthropicNarrator` only, same gating every other `update_world`/`request_roll` field already has), each an exact-text match mirroring `complete_objective`'s own shape — no new lookup mechanism.
+- **A real correctness fix found while adding this**: `complete_objective`'s own guard (`status != "completed"`) only worked because `active`/`completed` were the only two states that ever existed — with `expired`/`failed` added, that guard would have let a later `complete_objective` call silently flip an already-failed or already-expired objective to completed. All three (`complete_objective`/`expire_objective`/`fail_objective`) now only fire from `status == "active"`, so a real terminal state can never be overwritten by a different one.
+- **No client rendering added** — the sheet panel's Objectives section already only shows `status == "active"` entries (completed ones already just silently drop out of view, no distinct treatment), so expired/failed objectives are correctly excluded by that same existing filter with zero client changes needed. Matches the precedent `flags` already set in this codebase: real, DM-usable world state with no dedicated UI yet, visible via `state_sync`/`world_update`'s full payload rather than a rendered panel section.
+
 ## Character progression: XP and leveling
 
 The primary mechanical foundation this project is being built around (per the owner's own framing: "the primary end result is having strong mechanics for Oracle") — D&D-style XP and leveling, deliberately **deterministic**, not dependent on the DM model reliably calling a dedicated tool.
@@ -180,6 +189,7 @@ Every `system_message` used to render identically client-side (`[dim]{text}[/dim
 - **`character_edit`, implemented** — see "Character edit: notes and inventory bookkeeping" above. `server/engine.py`'s `_on_character_edit`, scoped to `notes`/`add_item`/`remove_item`; client-side `/note`/`/item add`/`/item remove` commands, `SessionScreen` only.
 - **Session-transcript export, implemented** — see "Session-transcript export" above. `/transcript [filename]` (client-side, `SessionScreen` only), no protocol change.
 - **Missed-change advisory styling, implemented** — see "Missed-change advisory styling" above. `system_message`'s new optional `advisory` field, set only by the missed-change heuristic; client renders it with distinct yellow styling instead of blending in with every other system message.
+- **Objective expiry and failure, implemented** — see "Objective expiry and failure" above. `Objective.status` gained `expired`/`failed`; `update_world`'s new `expire_objective`/`fail_objective` fields, `AnthropicNarrator` only.
 - **Not yet implemented** (defined here, no server handler): `reconnect` as a distinct event — today, reconnecting is just calling `join_session` again with the same `player_id`, which the engine already treats as resuming an existing character rather than creating a new one. A dedicated `reconnect` event may turn out to be unnecessary; revisit before building it.
 
 ## Open questions

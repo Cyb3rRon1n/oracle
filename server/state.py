@@ -168,7 +168,14 @@ class CharacterSheet(BaseModel):
 
 class Objective(BaseModel):
     text: str
-    status: Literal["active", "completed"] = "active"
+    # expired/failed close a real, previously-named gap: only active/
+    # completed existed, so nothing could represent a quest going stale or
+    # being failed outright - every objective either stayed open forever or
+    # eventually got a success. Two distinct terminal states, not one
+    # generic "closed," since "the caravan already left without you" reads
+    # differently from "you drove off the bandits" and a DM/player
+    # shouldn't have to infer which happened from a missing objective alone.
+    status: Literal["active", "completed", "expired", "failed"] = "active"
 
 
 class WorldState(BaseModel):
@@ -198,12 +205,36 @@ class WorldState(BaseModel):
             self.objectives.append(Objective(text=add_objective))
             changes.append(f"new objective: '{add_objective}'")
 
+        # complete/expire/fail all only ever fire from "active" - with a
+        # single terminal state ("completed") the old guard here
+        # (status != "completed") and "status == active" were equivalent,
+        # but adding expired/failed made them genuinely different: without
+        # this, a failed objective could still be flipped to completed by
+        # a later complete_objective call, since "failed" != "completed"
+        # too. A real terminal state shouldn't be overwritten by a
+        # different terminal state, whichever of the three it already is.
         complete_objective = update.get("complete_objective")
         if complete_objective:
             for objective in self.objectives:
-                if objective.text == complete_objective and objective.status != "completed":
+                if objective.text == complete_objective and objective.status == "active":
                     objective.status = "completed"
                     changes.append(f"completed: '{complete_objective}'")
+                    break
+
+        expire_objective = update.get("expire_objective")
+        if expire_objective:
+            for objective in self.objectives:
+                if objective.text == expire_objective and objective.status == "active":
+                    objective.status = "expired"
+                    changes.append(f"expired: '{expire_objective}'")
+                    break
+
+        fail_objective = update.get("fail_objective")
+        if fail_objective:
+            for objective in self.objectives:
+                if objective.text == fail_objective and objective.status == "active":
+                    objective.status = "failed"
+                    changes.append(f"failed: '{fail_objective}'")
                     break
 
         remove_objective = update.get("remove_objective")

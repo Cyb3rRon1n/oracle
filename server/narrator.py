@@ -54,9 +54,13 @@ You have five tools available:
   the engine computes the real amount healed.
 - update_world: call this when something should be remembered for the rest of the
   campaign, not just this scene — a new objective or plot thread emerging, one being
-  completed or abandoned, the location changing, or a durable fact about the world. This
-  is what a player is actually following across a session; don't call it for passing
-  scene detail that doesn't need to persist.
+  resolved, the location changing, or a durable fact about the world. This is what a
+  player is actually following across a session; don't call it for passing scene detail
+  that doesn't need to persist. An objective can resolve three real ways, not just one:
+  complete_objective for a real success, expire_objective when it goes stale on its own
+  (a missed window, events moving on), or fail_objective when the party's own actions
+  genuinely fell short — use whichever one actually happened rather than defaulting to
+  complete_objective or silently leaving it active forever.
 - web_search: use sparingly, only for general inspiration or real-world reference (e.g.
   period-appropriate detail for a setting) — never to look up or reproduce copyrighted
   D&D sourcebook content verbatim. For anything not covered by lookup_rule, invent
@@ -194,9 +198,29 @@ UPDATE_WORLD_TOOL = {
                 "type": "string",
                 "description": "The exact text of an existing active objective to mark completed.",
             },
+            "expire_objective": {
+                "type": "string",
+                "description": (
+                    "The exact text of an existing active objective that's gone stale on its own - "
+                    "e.g. a time-limited opportunity passed, or events moved on without the party "
+                    "acting. Distinct from failed (below): nothing anyone did caused this."
+                ),
+            },
+            "fail_objective": {
+                "type": "string",
+                "description": (
+                    "The exact text of an existing active objective the party genuinely failed - "
+                    "e.g. the target escaped after a fight, or a required condition was violated. "
+                    "Distinct from expired (above): this reflects an outcome, not a missed window."
+                ),
+            },
             "remove_objective": {
                 "type": "string",
-                "description": "The exact text of an existing objective to drop entirely (abandoned, no longer relevant).",
+                "description": (
+                    "The exact text of an existing objective to drop entirely, not just mark expired "
+                    "or failed - use this for tracking mistakes or an objective that turned out to be "
+                    "irrelevant, not for a real story outcome the player should see reflected."
+                ),
             },
             "set_flag": {
                 "type": "string",
