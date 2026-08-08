@@ -141,6 +141,64 @@ CLASS_ABILITY_PRIORITY: dict[str, tuple[str, ...]] = {
     "cleric": ("wis", "con", "str", "dex", "cha", "int"),
 }
 
+# Real 5e's own baseline Ability Score Improvement levels - the SRD's
+# standard progression every class shares. Some subclasses grant extra
+# ASIs (Fighter's own 6/14, in the full rules) - not modeled, since
+# Oracle has no subclass system at all, the same "no ability-score/CON
+# system yet" class of simplification the rest of this project already
+# names rather than hides.
+ASI_LEVELS = frozenset({4, 8, 12, 16, 19})
+
+
+def _apply_ability_score_improvements(
+    character: CharacterSheet, old_level: int, new_level: int
+) -> list[str]:
+    """Applies a real ASI (+2 to one ability, capped at 20 - real 5e's own
+    hard ceiling) for every ASI level actually crossed between old_level
+    (exclusive) and new_level (inclusive) - a loop, not a single check,
+    the same "one big XP award can cross more than one threshold" reasoning
+    CharacterSheet.gain_xp()'s own level-up loop already follows for HP.
+
+    Deterministic, not a player choice - real 5e's other ASI option
+    (a feat instead) isn't modeled either, since Oracle has no feat system
+    at all. Always targets the class's own top CLASS_ABILITY_PRIORITY
+    entry, the same "no player-chosen allocation yet" approach
+    _generate_stats already uses for the initial array - falls through to
+    the next-priority ability if the top one is already capped, rather
+    than wasting a real improvement outright silently. Returns the ability
+    key(s) actually improved, in order (empty if no ASI level was crossed,
+    or a blank/unrecognized class has no priority order to draw from)."""
+    priority = CLASS_ABILITY_PRIORITY.get(character.character_class.strip().lower(), ())
+    if not priority or not character.stats:
+        return []
+    improved: list[str] = []
+    for level in range(old_level + 1, new_level + 1):
+        if level not in ASI_LEVELS:
+            continue
+        for ability in priority:
+            if character.stats.get(ability, 0) < 20:
+                character.stats[ability] = min(20, character.stats[ability] + 2)
+                improved.append(ability)
+                break
+    return improved
+
+
+def _asi_announcement(name: str, asi_abilities: list[str]) -> str:
+    """Builds the "X's STR increases!" (or "STR and CON increase!") text
+    shared by apply_update's own tool_result and the real player-facing
+    system_message broadcast, so the two can't drift apart. Deduplicates
+    first - crossing two ASI levels in one large XP award (rare, but
+    possible) can improve the same ability twice; a real, deliberately
+    small simplification, this doesn't spell out "STR increases by 4"
+    for that case, just names the ability once - the sheet's own real
+    number is the actual source of truth, this is a narrative nudge."""
+    if not asi_abilities:
+        return ""
+    unique = list(dict.fromkeys(asi_abilities))
+    labels = " and ".join(a.upper() for a in unique)
+    verb = "increases" if len(unique) == 1 else "increase"
+    return f" {name}'s {labels} {verb}!"
+
 
 def _generate_stats(character_class: str) -> dict[str, int]:
     """Assigns the SRD's real Standard Array to a class's own ability
@@ -797,7 +855,9 @@ class GameEngine:
                 # loop doesn't have. Revisit if/when a real multi-character-
                 # per-turn scenario shows up.
                 xp_award = _xp_for_npc(npc, update, self._rules)
+                old_level = character.level
                 levels_gained = character.gain_xp(xp_award, self._rules.xp_thresholds())
+                asi_abilities: list[str] = []
                 if levels_gained:
                     class_entry = (
                         self._rules.get_entry("class", character.character_class)
@@ -813,11 +873,21 @@ class GameEngine:
                         hp_gain = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod) * levels_gained
                         character.max_hp += hp_gain
                         character.hp += hp_gain
+                        # AC doesn't recompute here even when DEX is the
+                        # ability improved below (e.g. a rogue's ASI) - the
+                        # exact same already-documented "AC doesn't
+                        # recompute if stats change after character
+                        # creation" simplification the Structured Equipment
+                        # entry (ROADMAP.md) already accepts for inventory
+                        # changes, extended to cover this too rather than
+                        # treated as a new, separate gap.
+                        asi_abilities = _apply_ability_score_improvements(character, old_level, character.level)
                 sheet_changed = True
-                xp_awards.append((npc.name, xp_award, levels_gained))
+                xp_awards.append((npc.name, xp_award, levels_gained, asi_abilities))
                 xp_note = f" {npc.name} is defeated! {character.name} gains {xp_award} XP."
                 if levels_gained:
                     xp_note += f" {character.name} reaches level {character.level}!"
+                xp_note += _asi_announcement(character.name, asi_abilities)
 
             if introduced:
                 intro = f"Introduced {npc.name} (HP {npc.hp}/{npc.max_hp})."
@@ -868,10 +938,11 @@ class GameEngine:
         # matches how every other game-flow announcement not itself DM
         # narration (a join, an out-of-turn refusal) already reaches
         # clients, so no client-side changes were needed to render this.
-        for npc_name, xp_award, levels_gained in xp_awards:
+        for npc_name, xp_award, levels_gained, asi_abilities in xp_awards:
             text = f"{character.name} defeats {npc_name} and gains {xp_award} XP!"
             if levels_gained:
                 text += f" {character.name} reaches level {character.level}!"
+            text += _asi_announcement(character.name, asi_abilities)
             await self._broadcast(self._system_envelope(text, level="info"))
 
         # A dying/dead transition is already reflected in the sheet_changed

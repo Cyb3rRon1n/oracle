@@ -5,7 +5,14 @@ from unittest.mock import patch
 
 import pytest
 
-from server.engine import GameEngine, build_starting_character, _compute_ac, _public_character_view
+from server.engine import (
+    GameEngine,
+    build_starting_character,
+    _apply_ability_score_improvements,
+    _asi_announcement,
+    _compute_ac,
+    _public_character_view,
+)
 from server.rules import RulesIndex
 from server.state import Session
 from shared.protocol import Envelope
@@ -745,6 +752,179 @@ async def test_level_up_with_no_known_class_does_not_grow_hp():
 
     assert character.level == 2
     assert character.max_hp == starting_max_hp
+
+
+async def test_level_4_grants_an_ability_score_improvement_to_the_top_priority_ability():
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 2700}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+    character = session.characters[player_id]
+    assert character.stats["str"] == 15  # fighter's Standard Array starting STR
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    assert character.level == 4
+    assert character.stats["str"] == 17  # +2 - fighter's own top CLASS_ABILITY_PRIORITY entry
+
+    announcements = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message" and "STR increases" in r[2]["text"]
+    ]
+    assert announcements
+
+
+async def test_level_3_grants_no_ability_score_improvement():
+    # 900 XP is exactly the level-3 threshold - not an ASI level, so stats
+    # should be completely untouched, unlike the level-4 case above.
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 900}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+    character = session.characters[player_id]
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    assert character.level == 3
+    assert character.stats["str"] == 15
+
+
+async def test_asi_falls_through_to_next_priority_ability_when_the_top_one_is_capped():
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 2700}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+    character = session.characters[player_id]
+    character.stats["str"] = 20  # already at the real cap
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    assert character.stats["str"] == 20  # untouched - already capped
+    assert character.stats["con"] == 16  # fighter's second-priority ability instead (+2 from 14)
+
+    announcements = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message" and "CON increases" in r[2]["text"]
+    ]
+    assert announcements
+
+
+async def test_asi_never_exceeds_the_real_20_cap():
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 2700}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+    character = session.characters[player_id]
+    character.stats["str"] = 19  # a +2 would overshoot 20 if not capped
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    assert character.stats["str"] == 20  # capped, not 21
+
+
+async def test_asi_crossing_two_thresholds_in_one_award_applies_both():
+    # A single huge XP award (level 1 straight to level 8) crosses both
+    # ASI level 4 and level 8 - CharacterSheet.gain_xp()'s own level-up
+    # loop already handles crossing more than one XP threshold at once;
+    # this confirms ability score improvements track the same real
+    # per-level crossings, not just "did level change at all".
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 34000}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+    character = session.characters[player_id]
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    assert character.level == 8
+    assert character.stats["str"] == 19  # 15 + 2 (level 4) + 2 (level 8)
+
+    # Deduplicated announcement text, not "STR and STR increase!" - see
+    # _asi_announcement's own docstring for why.
+    announcements = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message" and "STR increases" in r[2]["text"]
+    ]
+    assert announcements
+    assert "STR and STR" not in announcements[-1][2]["text"]
+
+
+async def test_asi_does_not_apply_with_no_known_class():
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 2700}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)  # no character_class - no stats to improve at all
+    character = session.characters[player_id]
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    assert character.level == 4
+    assert character.stats == {}
+
+
+def test_apply_ability_score_improvements_no_asi_level_crossed_is_a_no_op():
+    character = build_starting_character("p1", "Thrain", "fighter", RulesIndex.load_default())
+    improved = _apply_ability_score_improvements(character, old_level=1, new_level=3)
+    assert improved == []
+    assert character.stats["str"] == 15
+
+
+def test_apply_ability_score_improvements_blank_class_returns_empty():
+    character = build_starting_character("p1", "Thrain", "", RulesIndex.load_default())
+    improved = _apply_ability_score_improvements(character, old_level=1, new_level=4)
+    assert improved == []
+
+
+def test_asi_announcement_empty_for_no_abilities():
+    assert _asi_announcement("Thrain", []) == ""
+
+
+def test_asi_announcement_singular_for_one_ability():
+    text = _asi_announcement("Thrain", ["str"])
+    assert text == " Thrain's STR increases!"
+
+
+def test_asi_announcement_plural_for_two_distinct_abilities():
+    text = _asi_announcement("Thrain", ["str", "con"])
+    assert text == " Thrain's STR and CON increase!"
+
+
+def test_asi_announcement_dedupes_the_same_ability_twice():
+    text = _asi_announcement("Thrain", ["str", "str"])
+    assert text == " Thrain's STR increases!"
 
 
 async def test_public_character_view_includes_level_but_not_xp():
