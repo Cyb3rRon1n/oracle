@@ -1,12 +1,55 @@
 from __future__ import annotations
 
-from server.state import MAX_HISTORY_MESSAGES, CharacterSheet, Session, WorldState
+from server.state import MAX_HISTORY_MESSAGES, CharacterSheet, Session, WorldState, ability_modifier
 
 
 def make_character(**overrides) -> CharacterSheet:
     defaults = dict(player_id="p1", name="Rook", hp=8, max_hp=10)
     defaults.update(overrides)
     return CharacterSheet(**defaults)
+
+
+def test_ability_modifier_standard_5e_formula():
+    # A handful of real reference points from the SRD's own ability
+    # modifier table - even scores are exact, odd scores round down.
+    assert ability_modifier(10) == 0
+    assert ability_modifier(11) == 0
+    assert ability_modifier(15) == 2
+    assert ability_modifier(8) == -1
+    assert ability_modifier(20) == 5
+    assert ability_modifier(1) == -5
+
+
+def test_stat_modifiers_computed_field_is_empty_when_stats_is_empty():
+    character = make_character()
+    assert character.stats == {}
+    assert character.stat_modifiers == {}
+
+
+def test_stat_modifiers_computed_field_reflects_real_stats():
+    character = make_character(stats={"str": 15, "dex": 8, "con": 10})
+    assert character.stat_modifiers == {"str": 2, "dex": -1, "con": 0}
+
+
+def test_stat_modifiers_included_in_model_dump_and_json():
+    character = make_character(stats={"str": 15})
+    assert character.model_dump()["stat_modifiers"] == {"str": 2}
+    assert '"stat_modifiers":{"str":2}' in character.model_dump_json()
+
+
+def test_constructing_with_a_stat_modifiers_kwarg_is_silently_ignored():
+    # A previously-exported character file (client/app.py's
+    # export_character) carries stat_modifiers in its JSON, since it's
+    # just self.my_character - a real CharacterSheet.model_dump(). Passing
+    # it back into the constructor (server/engine.py's
+    # _character_from_import) must not error just because it's a
+    # read-only computed field, not a real settable one - pydantic's
+    # default extra="ignore" behavior already covers this, this is a
+    # regression lock on that specific real-world shape.
+    character = CharacterSheet(
+        player_id="p1", name="Rook", hp=10, max_hp=10, stats={"str": 15}, stat_modifiers={"str": 999}
+    )
+    assert character.stat_modifiers == {"str": 2}  # recomputed from the real stats, not the bogus input
 
 
 def test_apply_update_hp_delta_damage_and_healing():

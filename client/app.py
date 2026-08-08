@@ -95,10 +95,11 @@ class CharacterSheetPanel(Static):
         # uses (name/class up top, core combat stats grouped together and
         # visually distinct from ability scores/equipment further down) and
         # Roll20's paged sheet mirrors with its "Core Page" vs. the rest.
-        # Oracle has no AC/Initiative/Speed/ability-score data yet (see
-        # ROADMAP.md - not fabricating placeholder fields for those), so
-        # this only carries over the *shape*: an identity+vitals header,
-        # set apart from the sections below it.
+        # Oracle still has no AC/Initiative/Speed data (see ROADMAP.md -
+        # not fabricating placeholder fields for those), so this only
+        # carries over the *shape*: an identity+vitals header, set apart
+        # from the sections below it - ability scores now populate below,
+        # like D&D Beyond's own ability-score block does.
         lines = [name_line, self._hp_line(character.get("hp"), character.get("max_hp"))]
         # xp is only ever present on the owner's own full sheet (never on
         # an "others"/party entry - server/engine.py's _public_character_view
@@ -109,7 +110,20 @@ class CharacterSheetPanel(Static):
         lines.append(self._DIVIDER)
         stats = character.get("stats") or {}
         if stats:
-            lines.extend(f"{k}: {v}" for k, v in stats.items())
+            # stat_modifiers is a server-side @computed_field (real
+            # precomputed modifiers, server/state.py) - present whenever
+            # stats is, so this never recomputes floor((score-10)/2)
+            # client-side. A fixed str/dex/con/int/wis/cha order, not dict
+            # iteration order - stats is keyed the same way SRD monster
+            # blocks already are, but a client shouldn't assume any
+            # particular dict insertion order survived JSON round-tripping.
+            modifiers = character.get("stat_modifiers") or {}
+            lines.append("[b]Ability Scores[/b]")
+            lines.extend(
+                f"{key.upper()} {stats[key]} ({'+' if modifiers.get(key, 0) >= 0 else ''}{modifiers.get(key, 0)})"
+                for key in ("str", "dex", "con", "int", "wis", "cha")
+                if key in stats
+            )
             lines.append("")
         inventory = character.get("inventory") or []
         if inventory:
@@ -494,6 +508,16 @@ class DungeonMasterApp(App):
         sides = payload.get("sides")
         purpose = payload.get("purpose")
         label = f" ({purpose})" if purpose else ""
+
+        # ability/ability_modifier only ever appear on a DM-requested roll
+        # tied to one of the character's own ability scores
+        # (server/engine.py's request_roll closure) - shown as its own
+        # "+N ABIL" tag so the total's makeup stays visible, not folded
+        # invisibly into a total that otherwise wouldn't explain itself.
+        ability_mod = payload.get("ability_modifier")
+        if ability_mod is not None:
+            sign = "+" if ability_mod >= 0 else ""
+            notation = f"{notation} {sign}{ability_mod} {payload['ability'].upper()}"
 
         # Highlight a natural max (a "20" on a d20, but generalized to
         # whatever die was actually rolled) or a natural min the same way -

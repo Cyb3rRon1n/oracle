@@ -37,3 +37,18 @@ def test_roll_defaults_count_to_one():
 def test_roll_rejects_invalid_notation(bad):
     with pytest.raises(dice.InvalidDiceNotation):
         dice.roll(bad)
+
+
+def test_roll_extra_modifier_adds_on_top_of_the_notations_own_modifier():
+    # server/engine.py's request_roll closure uses this for a caller-
+    # supplied ability-score modifier - _DICE_RE's regex only supports one
+    # signed modifier group in the notation string itself ("1d20+3", never
+    # "1d20+3+2"), so a second modifier has to be summed in separately.
+    total, rolls, sides = dice.roll("1d4+1", extra_modifier=2)
+    assert total == rolls[0] + 1 + 2
+    assert sides == 4
+
+
+def test_roll_extra_modifier_defaults_to_zero():
+    total, rolls, sides = dice.roll("1d20")
+    assert total == rolls[0]

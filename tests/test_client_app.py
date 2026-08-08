@@ -353,6 +353,54 @@ async def test_party_updates_render_in_lobby_sheet_panel_without_inventory():
             assert "inventory" not in rendered.lower()
 
 
+async def test_sheet_panel_renders_own_ability_scores_with_modifiers():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12,
+                    "stats": {"str": 15, "dex": 13, "con": 14, "int": 8, "wis": 12, "cha": 10},
+                    "stat_modifiers": {"str": 2, "dex": 1, "con": 2, "int": -1, "wis": 1, "cha": 0},
+                },
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert "Ability Scores" in rendered
+            assert "STR 15 (+2)" in rendered
+            assert "INT 8 (-1)" in rendered
+            assert "CHA 10 (+0)" in rendered
+
+
+async def test_party_view_never_shows_ability_scores():
+    # stats/stat_modifiers are owner-only (server/engine.py's
+    # _public_character_view deliberately excludes them) - a party
+    # member's public view dict simply never carries the key, but this
+    # locks the client's own rendering side of that boundary too.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="player_joined", session_id="s", sender_id="server",
+                payload={
+                    "player_id": "p2", "name": "Rowan", "character_class": "Rogue",
+                    "hp": 8, "max_hp": 8, "conditions": [], "level": 1,
+                },
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert "Ability Scores" not in rendered
+
+
 async def test_turn_prompt_for_another_player_names_them_not_just_your_own_turn():
     # A real gap found only by running two real clients through a real
     # session (ROADMAP.md): turn_prompt used to only ever write something
@@ -443,6 +491,32 @@ async def test_dice_result_does_not_duplicate_the_plain_log_entry_line():
 
             log_text = _log_text(app.screen.query_one("#log"))
             assert log_text.count("rolls 1d20") == 1
+
+
+async def test_dice_result_shows_ability_modifier_tag_when_present():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 15, "rolls": [14],
+                    "sides": 20, "purpose": "dexterity check", "dc": 12, "success": True,
+                    "ability": "dex", "ability_modifier": 1,
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "1d20 +1 DEX" in log_text
+            assert "15" in log_text
 
 
 async def test_dice_result_names_the_other_players_roll():

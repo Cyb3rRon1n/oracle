@@ -26,7 +26,7 @@ The first two are real captures from a live session — local `qwen2.5:7b` via O
 
 **A real level-up** — the engine-driven XP award and HP growth are exactly what a live model would trigger too; only the narration line ("Your blade finds its mark...") is a scripted stand-in, since this dev environment has no live Ollama/Anthropic access to capture from (see [ROADMAP.md](ROADMAP.md)):
 
-![Character sheet showing Lv 2 and full HP after a level-up, with the log showing "Thrain defeats dire wolf and gains 300 XP! Thrain reaches level 2!"](docs/screenshots/xp-level-up.svg)
+![Character sheet showing Lv 2, full HP after a level-up, and real ability scores with modifiers, with the log showing "Thrain defeats dire wolf and gains 300 XP! Thrain reaches level 2!"](docs/screenshots/xp-level-up.svg)
 
 `scripts/generate_screenshots.py` (`python -m scripts.generate_screenshots`) regenerates the two non-live screenshots above after a TUI change — it does not and cannot touch the two live-Ollama captures, which need a real model session to recapture honestly.
 
@@ -40,6 +40,7 @@ Instead of a single-player chatbot, Oracle is a game engine with an LLM in the G
 - **Grounded in real rules, not just vibes**: the DM can look up official D&D 5e SRD data (monster stats, spells, conditions) before improvising mechanics, and can reach for general web search when it needs outside inspiration.
 - **Real D&D-style XP and leveling, awarded deterministically**: defeating a tracked NPC/monster awards real XP (automatically, from the SRD's own Challenge Rating table, whenever the NPC's name matches a known monster) and levels a character up against the SRD's real Character Advancement thresholds — the award itself is triggered by the engine observing an NPC's HP hit 0, not by depending on the DM model reliably calling a dedicated tool, so it works the same regardless of which model is narrating.
 - **Character export/import**: `/export` saves your full character (progression included — XP, level, inventory, notes) to a local file at any point; import it back in on a future Join to pick up exactly where you left off, instead of losing progress once a session ends.
+- **Real ability scores (STR/DEX/CON/INT/WIS/CHA)**, assigned deterministically from the SRD's own real Standard Array per class, driving real HP growth (a genuine CON modifier, not just a flat hit-die roll) and real modifiers on DM-requested rolls — the engine computes and applies the modifier itself rather than trusting the model to do that arithmetic correctly.
 
 ## Planned (later)
 
@@ -209,7 +210,7 @@ That investigation is now backed by a reusable, version-controlled harness (`scr
 
 Beyond reliability, a research-informed pass added the pieces that make a session feel like a story worth following rather than a chatbot answering one prompt at a time: a real `update_world` tool tracking persistent objectives/plot threads/location (Claude-only, same reliability reasoning as `request_roll`), NPC memory via a `notes` field the DM now actually uses (both backends), and a DM-generated opening scene on a fresh session instead of silence until the player acts first (both backends). Also not yet verified live for the same reason as `request_roll` above.
 
-Most recently: real D&D-style XP and leveling, awarded deterministically off engine-observed state (an NPC's HP hitting 0) rather than a DM tool call, so it doesn't inherit the tool-call reliability question above — and character export/import, so a character's progression survives across sessions. Both fully verified end-to-end, including over a real websocket connection; see [ROADMAP.md](ROADMAP.md).
+Most recently: real D&D-style XP and leveling, awarded deterministically off engine-observed state (an NPC's HP hitting 0) rather than a DM tool call, so it doesn't inherit the tool-call reliability question above; character export/import, so a character's progression survives across sessions; and real ability scores, with the engine — not the DM model — computing modifiers and applying them to HP growth and requested rolls. All fully verified end-to-end, including over a real websocket connection; see [ROADMAP.md](ROADMAP.md).
 
 See [ROADMAP.md](ROADMAP.md) for what's next and why, in priority order.
 

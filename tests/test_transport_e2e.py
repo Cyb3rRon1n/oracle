@@ -97,7 +97,7 @@ async def test_second_player_sees_first_redacted_then_first_players_disconnect_b
             sync = await _recv_until(ws2, "state_sync")
             rook_view = sync.payload["characters"][player1_id]
             assert rook_view["name"] == "Rook"
-            assert rook_view["hp"] == rook_view["max_hp"] == 10
+            assert rook_view["hp"] == rook_view["max_hp"] == 12  # fighter's d10 hit die max (10) + CON modifier (+2)
             assert "inventory" not in rook_view, "a real second connection must never receive another player's inventory"
 
             # A live player_joined broadcast for Rowan should also reach
@@ -241,6 +241,64 @@ async def test_defeating_an_npc_awards_xp_and_updates_the_sheet_panel_over_a_rea
             rendered = sheet._Static__content
             assert "XP: 50" in rendered
             assert "Lv 1" in rendered
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
+class RequestsAbilityRollDM:
+    """Simulates a DM turn requesting a DEX check - exercises the real
+    ability-modifier plumbing (server/engine.py's request_roll closure,
+    server/state.py's stat_modifiers computed field) over an actual
+    websocket, not just at the engine-unit level."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        request_roll({"dice": "1d20", "dc": 10, "reason": "tumble past the guard", "ability": "dex"})
+        yield "You attempt to slip past the guard."
+
+
+async def test_ability_score_modifier_applies_to_a_dm_requested_roll_over_a_real_session():
+    """Confirms the whole ability-score chain works end to end over a real
+    websocket: build_starting_character generates real stats for a fighter,
+    the sheet panel renders them, and a DM-requested roll tied to one of
+    those abilities gets the real, correctly-computed modifier - not a
+    mocked stat_modifiers dict like the client-level test uses."""
+    session = Session(session_id="e2e-session-7")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, RequestsAbilityRollDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8805))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8805", player_id=player_id, is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#class-input")
+            await pilot.press(*"fighter")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            sheet = app.screen.query_one("#sheet")
+            rendered = sheet._Static__content
+            assert "Ability Scores" in rendered
+            assert "DEX 13 (+1)" in rendered  # fighter's real Standard Array assignment
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I try to slip past the guard", "enter")
+            await _wait_until(lambda: "+1 DEX" in _log_text(app.screen.query_one("#log")))
+
+            # A real, direct check on server state - the roll the DM
+            # actually requested really did carry a genuine, correct +1.
+            assert session.characters[player_id].stat_modifiers["dex"] == 1
     finally:
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):

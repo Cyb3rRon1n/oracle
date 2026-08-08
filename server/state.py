@@ -2,7 +2,24 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
+
+# The six SRD ability scores, in the SRD's own conventional order - shared
+# by both player CharacterSheets (stats, populated by
+# server/engine.py's build_starting_character) and NPC stat blocks
+# (server/rules/srd.json's monsters already use this exact key set,
+# e.g. goblin's "stats": {"str": 8, "dex": 14, ...} - so a player's own
+# `stats` dict now speaks the same shape the DM already sees for every
+# monster via lookup_rule, not a second, disconnected convention).
+ABILITY_KEYS = ("str", "dex", "con", "int", "wis", "cha")
+
+
+def ability_modifier(score: int) -> int:
+    """The standard 5e ability-modifier formula - floor((score-10)/2).
+    A module-level function, not a method, so server/engine.py can apply it
+    to a bare score (e.g. computing HP growth from a class's hit die plus a
+    CON score) without needing a CharacterSheet instance in hand."""
+    return (score - 10) // 2
 
 
 class CharacterSheet(BaseModel):
@@ -17,6 +34,23 @@ class CharacterSheet(BaseModel):
     notes: str = ""
     xp: int = 0
     level: int = 1
+
+    @computed_field
+    @property
+    def stat_modifiers(self) -> dict[str, int]:
+        """Precomputed ability modifiers, included in model_dump()/
+        model_dump_json() output automatically (a pydantic v2
+        @computed_field) - so the DM's character_summary, and the
+        engine's own request_roll closure, both read a modifier directly
+        rather than recomputing floor((score-10)/2) themselves. This
+        project's whole XP-award design already rejected relying on an
+        LLM to get arithmetic right when the engine can just do it
+        (server/engine.py's DEFAULT_NPC_XP/apply_update comments); this is
+        the same principle applied to ability scores. Empty when `stats`
+        is empty (a blank/unrecognized class, or any NPC/legacy sheet with
+        no stats populated) - not an error, the same "not present isn't
+        an error" convention the rest of this codebase already follows."""
+        return {key: ability_modifier(score) for key, score in self.stats.items()}
 
     def gain_xp(self, amount: int, xp_thresholds: dict[int, int]) -> int:
         """Awards XP and applies any level-ups the new total crosses -

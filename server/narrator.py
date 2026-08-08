@@ -7,6 +7,7 @@ from typing import Protocol
 import anthropic
 
 from .rules import RulesIndex
+from .state import ABILITY_KEYS
 
 DM_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 Narrate outcomes vividly but concisely (3-5 sentences per turn). Track consequences
@@ -20,6 +21,12 @@ You have five tools available:
   actions with an obvious, certain outcome. It returns the roll, and a success/failure
   verdict if you gave it a dc. Narrate the outcome to match what it returns — don't
   decide success or failure yourself and then narrate a roll that would contradict it.
+  The acting character's ability scores and their real modifiers are already in their
+  sheet (character_summary's stats/stat_modifiers) — when a roll is tied to one of
+  those abilities, pass its key (str/dex/con/int/wis/cha) as request_roll's ability
+  field and the engine adds the correct modifier itself; don't also compute and type a
+  modifier into dice by hand for that same ability. Use lookup_rule on the acting
+  character's class to see which two abilities its saving throws use.
 - lookup_rule: use before improvising crunchy mechanics (monster stats, spell details,
   class features, equipment, conditions) so numbers stay consistent from turn to turn.
 - update_character: call this whenever your narration describes something that should
@@ -207,6 +214,20 @@ REQUEST_ROLL_TOOL = {
             "reason": {
                 "type": "string",
                 "description": "Brief description of what's being attempted, e.g. 'attack roll vs the goblin'.",
+            },
+            "ability": {
+                "type": "string",
+                "enum": list(ABILITY_KEYS),
+                "description": (
+                    "If this roll is based on one of the acting character's own ability "
+                    "scores (an ability check, a saving throw, most attacks), name it here "
+                    "and the engine adds the real modifier automatically - don't also type "
+                    "a modifier into dice yourself for this same ability, or it'll be "
+                    "applied twice. The character's scores and modifiers are in their sheet "
+                    "(character_summary's stats/stat_modifiers). Omit for a roll that isn't "
+                    "tied to any ability (e.g. a pure damage roll already using a weapon's "
+                    "own damage dice)."
+                ),
             },
         },
         "required": ["dice"],
