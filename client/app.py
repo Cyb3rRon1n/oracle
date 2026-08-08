@@ -691,6 +691,18 @@ class DungeonMasterApp(App):
             sign = "+" if ability_mod >= 0 else ""
             notation = f"{notation} {sign}{ability_mod} {payload['ability'].upper()}"
 
+        # skill only ever appears on a DM-requested roll that named one
+        # (server/engine.py's request_roll closure) - shown with the real
+        # skill name and, when proficient, the real proficiency bonus that
+        # was actually added, the same "explain the roll, don't just show
+        # a bare number" transparency every other tag here already follows.
+        skill = payload.get("skill")
+        if skill:
+            skill_label = skill.replace("_", " ").title()
+            if payload.get("proficient"):
+                skill_label += f", +{payload['proficiency_bonus']} proficiency"
+            notation = f"{notation} ({skill_label})"
+
         # roll_kind only ever appears on a DM-requested roll that named one
         # (server/engine.py's request_roll closure) - purely descriptive of
         # what the roll represents (attack/save/check), shown the same way

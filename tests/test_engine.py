@@ -1508,6 +1508,113 @@ async def test_roll_kind_absent_when_omitted():
     assert "roll_kind" not in results[-1][2]
 
 
+async def _join_as_fighter(engine, player_id, name="Thrain"):
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": name, "character_class": "fighter"},
+    ))
+
+
+async def test_request_roll_skill_adds_proficiency_bonus_when_proficient():
+    # Fighter is proficient in athletics (CLASS_SKILL_PROFICIENCIES) -
+    # governed by STR, which a fresh fighter has at 15 (+2 modifier).
+    dm = RequestRollDM({"dice": "1d20", "skill": "athletics"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as_fighter(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try to climb the wall"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["skill"] == "athletics"
+    assert payload["proficient"] is True
+    assert payload["proficiency_bonus"] == 2  # level 1
+    assert payload["ability"] == "str"  # resolved automatically from the skill
+    assert payload["ability_modifier"] == 2
+    assert payload["result"] == payload["rolls"][0] + 2 + 2  # both the STR mod and proficiency
+
+
+async def test_request_roll_skill_no_bonus_when_not_proficient():
+    # Stealth isn't in the fighter's own CLASS_SKILL_PROFICIENCIES.
+    dm = RequestRollDM({"dice": "1d20", "skill": "stealth"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as_fighter(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try to sneak past"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["skill"] == "stealth"
+    assert payload["proficient"] is False
+    assert "proficiency_bonus" not in payload
+    assert payload["ability"] == "dex"  # still auto-resolved, just no proficiency added
+
+
+async def test_request_roll_skill_defaults_roll_kind_to_check():
+    # Naming a skill implies roll_kind="check" automatically, which in
+    # turn gets the real per-condition disadvantage scoping for free -
+    # prone excludes "check" (see ROLL_KIND_DISADVANTAGE_EXCLUSIONS).
+    dm = RequestRollDM({"dice": "1d20", "skill": "athletics"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as_fighter(engine, player_id)
+    session.characters[player_id].conditions.append("prone")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try to climb the wall despite being prone"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["roll_kind"] == "check"
+    assert "disadvantage" not in payload  # prone doesn't affect checks, only attacks
+
+
+async def test_request_roll_unrecognized_skill_is_a_graceful_no_op():
+    dm = RequestRollDM({"dice": "1d20", "skill": "juggling"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as_fighter(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attempt something odd"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert "skill" not in payload
+    assert "ability" not in payload  # nothing to auto-resolve from an unrecognized skill
+
+
+async def test_request_roll_explicit_ability_overrides_skill_derived_ability():
+    # A real, if rare, 5e case - some rolls swap a skill's usual ability.
+    # Explicit DM intent wins over the automatic default.
+    dm = RequestRollDM({"dice": "1d20", "skill": "athletics", "ability": "dex"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as_fighter(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try an athletic feat of agility"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["ability"] == "dex"  # explicit override, not athletics' real "str"
+    assert payload["proficient"] is True  # proficiency itself is unaffected by the ability swap
+
+
 async def test_player_initiated_roll_also_applies_disadvantage():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())

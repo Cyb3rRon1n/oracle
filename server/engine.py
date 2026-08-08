@@ -12,7 +12,7 @@ from . import dice
 from .narrator import NarratorBackend
 from .persistence import SessionStore
 from .rules import RulesIndex
-from .state import ABILITY_KEYS, CharacterSheet, Session, ability_modifier
+from .state import ABILITY_KEYS, SKILL_ABILITIES, CharacterSheet, Session, ability_modifier
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,22 @@ CLASS_ABILITY_PRIORITY: dict[str, tuple[str, ...]] = {
     "wizard": ("int", "con", "dex", "wis", "cha", "str"),
     "rogue": ("dex", "con", "int", "wis", "cha", "str"),
     "cleric": ("wis", "con", "str", "dex", "cha", "int"),
+}
+
+# Deterministic per-class skill proficiencies, the same "no player-chosen
+# allocation yet" approach CLASS_ABILITY_PRIORITY/_generate_stats already
+# take for ability scores - real 5e actually lets a player choose (2 for
+# most classes, 4 for rogue) from a class's own longer list; this picks a
+# fixed, thematically sensible subset from that real list rather than
+# modeling the choice itself, the same simplification STANDARD_ARRAY's
+# fixed assignment already makes for ability scores. A blank/unrecognized
+# class has no entry and is proficient in nothing, the same fallback
+# CLASS_ABILITY_PRIORITY's own absence already produces for stats.
+CLASS_SKILL_PROFICIENCIES: dict[str, tuple[str, ...]] = {
+    "fighter": ("athletics", "perception"),
+    "wizard": ("arcana", "investigation"),
+    "rogue": ("stealth", "sleight_of_hand", "perception", "deception"),
+    "cleric": ("insight", "religion"),
 }
 
 # Real 5e's own baseline Ability Score Improvement levels - the SRD's
@@ -708,7 +724,40 @@ class GameEngine:
             # reliability one. Composes naturally with weapon above - a
             # real 5e damage roll is exactly "weapon's die + ability mod".
             ability = update.get("ability")
+
+            # skill, when given (e.g. "stealth"), is real 5e's own name for
+            # what's actually being checked - the engine resolves its real
+            # governing ability (SKILL_ABILITIES) automatically rather than
+            # asking the DM to also separately pass ability for the same
+            # roll, the same "resolve real data server-side" reasoning
+            # weapon already applies to damage dice. An explicit ability
+            # still wins if the DM passes one anyway (a real, if rare, 5e
+            # case - some rolls swap a skill's usual ability), matching the
+            # same "explicit override beats an automatic default" priority
+            # order _xp_for_npc's own explicit-xp-beats-CR-lookup already
+            # establishes. An unrecognized skill name is a graceful no-op,
+            # not an error - the same convention every other name-based
+            # lookup here already follows.
+            skill = update.get("skill")
+            if skill not in SKILL_ABILITIES:
+                skill = None
+            if skill and not ability:
+                ability = SKILL_ABILITIES[skill]
+
             ability_mod = character.stat_modifiers.get(ability) if ability else None
+
+            # Proficiency bonus - real 5e's own level-scaled bonus
+            # (CharacterSheet.proficiency_bonus, a computed field) - added
+            # only when the acting character is actually proficient in the
+            # named skill (CLASS_SKILL_PROFICIENCIES), never as a blanket
+            # bonus on every check. Fully automatic, the same "the engine
+            # computes this from real tracked state" reasoning
+            # disadvantage/XP/ASI already follow - the DM never has to
+            # know or track which skills a character is proficient in.
+            proficient = bool(skill) and skill in CLASS_SKILL_PROFICIENCIES.get(
+                character.character_class.strip().lower(), ()
+            )
+            proficiency_bonus = character.proficiency_bonus if proficient else 0
 
             # roll_kind ("attack"/"save"/"check") is purely descriptive of
             # what the roll represents - unlike every other request_roll
@@ -720,9 +769,14 @@ class GameEngine:
             # the same graceful-miss convention every other name-based
             # field in this closure (weapon, ability) already follows,
             # rather than erroring on a value the model got slightly wrong.
+            # A skill check is, definitionally, a "check" - defaulting to
+            # that here (only when the DM didn't already say otherwise)
+            # means naming a skill also gets the real per-condition
+            # disadvantage scoping for free, without the DM needing to
+            # pass two redundant fields for the same underlying fact.
             roll_kind = update.get("roll_kind")
             if roll_kind not in ("attack", "save", "check"):
-                roll_kind = None
+                roll_kind = "check" if skill else None
 
             # Fully automatic, never a model-supplied field - the same
             # "the engine computes this from real tracked state, not the
@@ -737,7 +791,7 @@ class GameEngine:
 
             try:
                 total, rolls, sides = dice.roll(
-                    notation, extra_modifier=ability_mod or 0, disadvantage=disadvantage
+                    notation, extra_modifier=(ability_mod or 0) + proficiency_bonus, disadvantage=disadvantage
                 )
             except dice.InvalidDiceNotation as exc:
                 return f"Invalid dice notation: {exc}"
@@ -749,15 +803,20 @@ class GameEngine:
                     "dc": dc, "success": success, "reason": reason,
                     "ability": ability, "ability_modifier": ability_mod,
                     "damage_type": damage_type, "roll_kind": roll_kind,
+                    "skill": skill, "proficient": proficient, "proficiency_bonus": proficiency_bonus,
                     "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
                 }
             )
 
             damage_label = f" ({damage_type})" if damage_type else ""
             ability_label = f" +{ability_mod} {ability.upper()}" if ability_mod is not None else ""
+            skill_label = ""
+            if skill:
+                skill_label = f" ({skill.replace('_', ' ').title()}"
+                skill_label += f", +{proficiency_bonus} proficiency)" if proficient else ")"
             roll_kind_label = f" ({roll_kind})" if roll_kind else ""
             disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage else ""
-            label = damage_label + ability_label + roll_kind_label + disadvantage_label
+            label = damage_label + ability_label + skill_label + roll_kind_label + disadvantage_label
             if dc is None:
                 return f"Rolled {notation}{label}: {total} {rolls}."
             return f"Rolled {notation}{label}: {total} {rolls} vs DC {dc} — {'success' if success else 'failure'}."
@@ -1155,14 +1214,19 @@ class GameEngine:
         ability_label = f" +{ability_mod} {roll['ability'].upper()}" if ability_mod is not None else ""
         damage_type = roll.get("damage_type")
         damage_label = f" ({damage_type})" if damage_type else ""
+        skill = roll.get("skill")
+        skill_label = ""
+        if skill:
+            skill_label = f" ({skill.replace('_', ' ').title()}"
+            skill_label += f", +{roll['proficiency_bonus']} proficiency)" if roll.get("proficient") else ")"
         roll_kind = roll.get("roll_kind")
         roll_kind_label = f" ({roll_kind})" if roll_kind else ""
         disadvantage_reasons = roll.get("disadvantage_reasons")
         disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
         label = f" ({roll['reason']})" if roll["reason"] else ""
         text = (
-            f"{name} rolls {roll['dice']}{damage_label}{ability_label}{roll_kind_label}{disadvantage_label}{label}: "
-            f"{roll['total']} {roll['rolls']}"
+            f"{name} rolls {roll['dice']}{damage_label}{ability_label}{skill_label}{roll_kind_label}"
+            f"{disadvantage_label}{label}: {roll['total']} {roll['rolls']}"
         )
         if roll["dc"] is not None:
             text += f" vs DC {roll['dc']}"
@@ -1189,6 +1253,11 @@ class GameEngine:
             payload["damage_type"] = roll["damage_type"]
         if roll.get("roll_kind"):
             payload["roll_kind"] = roll["roll_kind"]
+        if roll.get("skill"):
+            payload["skill"] = roll["skill"]
+            payload["proficient"] = roll["proficient"]
+            if roll["proficient"]:
+                payload["proficiency_bonus"] = roll["proficiency_bonus"]
         if roll.get("disadvantage"):
             payload["disadvantage"] = True
             payload["disadvantage_reasons"] = roll["disadvantage_reasons"]

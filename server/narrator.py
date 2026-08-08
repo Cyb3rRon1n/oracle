@@ -7,7 +7,7 @@ from typing import Protocol
 import anthropic
 
 from .rules import RulesIndex
-from .state import ABILITY_KEYS
+from .state import ABILITY_KEYS, SKILL_ABILITIES
 
 DM_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 Narrate outcomes vividly but concisely (3-5 sentences per turn). Track consequences
@@ -25,8 +25,13 @@ You have five tools available:
   sheet (character_summary's stats/stat_modifiers) — when a roll is tied to one of
   those abilities, pass its key (str/dex/con/int/wis/cha) as request_roll's ability
   field and the engine adds the correct modifier itself; don't also compute and type a
-  modifier into dice by hand for that same ability. Use lookup_rule on the acting
-  character's class to see which two abilities its saving throws use. For an attack
+  modifier into dice by hand for that same ability. For a skill check specifically
+  (e.g. sneaking, spotting something, persuading someone), pass request_roll's skill
+  field (the real 5e skill name, like stealth or perception) instead of ability — the
+  engine resolves the right ability *and* adds the character's real proficiency bonus
+  automatically if they're proficient in it, which you have no way to know or compute
+  yourself. Use lookup_rule on the acting character's class to see which two abilities
+  its saving throws use. For an attack
   roll against a target, use its AC as the dc — the acting character's own AC is in
   their sheet (character_summary's ac); an NPC/monster target's AC is in its stat
   block via lookup_rule. For the damage roll after a hit, use request_roll's weapon
@@ -304,12 +309,29 @@ REQUEST_ROLL_TOOL = {
                     "follow-up damage roll after a hit, not the roll to see if it lands."
                 ),
             },
+            "skill": {
+                "type": "string",
+                "enum": sorted(SKILL_ABILITIES),
+                "description": (
+                    "For a skill check: the real 5e skill name (e.g. 'stealth', "
+                    "'perception'). The engine resolves its real governing ability and "
+                    "adds that modifier automatically - don't also pass ability for the "
+                    "same roll unless you specifically want a different ability applied. "
+                    "Also automatically adds the character's real proficiency bonus if "
+                    "they're proficient in this skill - you don't need to know or track "
+                    "which skills a character is proficient in. Omit for a roll that isn't "
+                    "a skill check (an attack, a saving throw, a raw damage roll)."
+                ),
+            },
             "roll_kind": {
                 "type": "string",
                 "enum": ["attack", "save", "check"],
                 "description": (
                     "What kind of roll this is - an attack roll, a saving throw, or an "
-                    "ability check. Doesn't change the roll's own math, but some tracked "
+                    "ability check. Naming a skill above already implies 'check' "
+                    "automatically - only set this yourself for a roll with no skill "
+                    "(a raw ability check, an attack, a save). Doesn't change the roll's "
+                    "own math, but some tracked "
                     "conditions only affect certain roll kinds under the real rules (e.g. "
                     "poisoned/frightened don't affect saving throws, prone only affects "
                     "attack rolls) - the engine applies that automatically when this is "

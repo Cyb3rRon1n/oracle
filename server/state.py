@@ -13,6 +13,22 @@ from pydantic import BaseModel, Field, computed_field
 # monster via lookup_rule, not a second, disconnected convention).
 ABILITY_KEYS = ("str", "dex", "con", "int", "wis", "cha")
 
+# Real 5e's own 18 skills and the ability each one is governed by (Basic
+# Rules Chapter 7) - fixed, real-world data, not per-class content, so
+# this lives here as a plain dict rather than in server/rules/srd.json
+# alongside monster/equipment/class content. Lives in this module (not
+# server/engine.py, where the per-class proficiency logic that actually
+# uses it lives) so server/narrator.py's request_roll tool schema can
+# import it too without a circular import - narrator.py already imports
+# from this module, and engine.py already imports from narrator.py.
+SKILL_ABILITIES: dict[str, str] = {
+    "athletics": "str",
+    "acrobatics": "dex", "sleight_of_hand": "dex", "stealth": "dex",
+    "arcana": "int", "history": "int", "investigation": "int", "nature": "int", "religion": "int",
+    "animal_handling": "wis", "insight": "wis", "medicine": "wis", "perception": "wis", "survival": "wis",
+    "deception": "cha", "intimidation": "cha", "performance": "cha", "persuasion": "cha",
+}
+
 
 def ability_modifier(score: int) -> int:
     """The standard 5e ability-modifier formula - floor((score-10)/2).
@@ -20,6 +36,16 @@ def ability_modifier(score: int) -> int:
     to a bare score (e.g. computing HP growth from a class's hit die plus a
     CON score) without needing a CharacterSheet instance in hand."""
     return (score - 10) // 2
+
+
+def proficiency_bonus_for_level(level: int) -> int:
+    """The standard 5e proficiency-bonus-by-level formula - +2 at levels
+    1-4, rising by 1 every 4 levels thereafter (5-8: +3, ..., 17-20: +6).
+    A module-level function, not a method, for the same reason
+    ability_modifier is - server/engine.py's request_roll closure applies
+    this to the acting character's real level for a skill check, without
+    needing a full CharacterSheet in hand for the bare formula itself."""
+    return 2 + (level - 1) // 4
 
 
 class CharacterSheet(BaseModel):
@@ -93,6 +119,20 @@ class CharacterSheet(BaseModel):
         no stats populated) - not an error, the same "not present isn't
         an error" convention the rest of this codebase already follows."""
         return {key: ability_modifier(score) for key, score in self.stats.items()}
+
+    @computed_field
+    @property
+    def proficiency_bonus(self) -> int:
+        """Precomputed from the real level-based formula (see
+        proficiency_bonus_for_level above), included in model_dump()/
+        model_dump_json() automatically - the same "don't rely on the LLM
+        to get arithmetic right when the engine can just do it" reasoning
+        stat_modifiers already follows, applied to skill proficiencies.
+        Present on every character regardless of class or whether it has
+        any proficient skills at all - it's purely a function of level,
+        real 5e's own actual rule (proficiency bonus applies to saving
+        throws and other proficient rolls too, not just skills)."""
+        return proficiency_bonus_for_level(self.level)
 
     def gain_xp(self, amount: int, xp_thresholds: dict[int, int]) -> int:
         """Awards XP and applies any level-ups the new total crosses -
