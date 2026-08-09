@@ -23,7 +23,7 @@ class StubDM:
 async def test_join_over_real_websocket():
     session = Session(session_id="e2e-session")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, StubDM(), broadcast, send_to)
 
     transport = Transport(engine_factory)
@@ -65,10 +65,89 @@ async def _recv_until(ws, event_type: str, timeout: float = 5) -> Envelope:
                 return env
 
 
+async def test_two_different_session_ids_are_fully_isolated():
+    """Regression test for a real bug: the server used to load exactly one
+    Session at startup (a fixed SESSION_ID env var) and every connection
+    joined that same game regardless of what session_id it actually sent -
+    a client picking a different Session ID in the welcome screen silently
+    joined someone else's game instead of a fresh or different one.
+    engine_factory here mirrors server/main.py's real per-session-id lookup
+    (a plain dict standing in for JSONFileSessionStore), confirming
+    Transport now creates one GameEngine per session_id and never
+    broadcasts across them."""
+    sessions: dict[str, Session] = {}
+
+    def engine_factory(session_id, broadcast, send_to):
+        session = sessions.setdefault(session_id, Session(session_id=session_id))
+        return GameEngine(session, StubDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8818))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_a = str(uuid.uuid4())
+        player_b = str(uuid.uuid4())
+        ws_a = await connect("ws://localhost:8818")
+        ws_b = await connect("ws://localhost:8818")
+        try:
+            await ws_a.send(
+                Envelope(
+                    type="join_session", session_id="multi-a", sender_id=player_a, payload={"player_name": "Alice"}
+                ).to_json()
+            )
+            state_a = await _recv_until(ws_a, "state_sync")
+            assert list(state_a.payload["characters"].keys()) == [player_a]
+
+            await ws_b.send(
+                Envelope(
+                    type="join_session", session_id="multi-b", sender_id=player_b, payload={"player_name": "Bob"}
+                ).to_json()
+            )
+            state_b = await _recv_until(ws_b, "state_sync")
+            # Confirms a genuinely separate game, not just a separate
+            # character in the same one - Bob's roster has no trace of Alice.
+            assert list(state_b.payload["characters"].keys()) == [player_b]
+
+            # Two real, independent Session objects, not the same object
+            # coincidentally rendering the same for both - the exact thing
+            # the old single-engine-per-process bug would have faked here.
+            assert sessions["multi-a"] is not sessions["multi-b"]
+
+            # Alice chats in her own session...
+            await ws_a.send(
+                Envelope(
+                    type="chat_message", session_id="multi-a", sender_id=player_a, payload={"text": "hello from A"}
+                ).to_json()
+            )
+            chat_a = await _recv_until(ws_a, "log_entry")
+            assert chat_a.payload["text"] == "hello from A"
+
+            # ...and Bob sends his own right after. If Alice's broadcast had
+            # leaked into Bob's connection it would be sitting ahead of his
+            # own message in the queue (broadcast strictly before Bob's send
+            # below), so _recv_until would hand back hers instead - the
+            # actual regression this test exists to catch.
+            await ws_b.send(
+                Envelope(
+                    type="chat_message", session_id="multi-b", sender_id=player_b, payload={"text": "hello from B"}
+                ).to_json()
+            )
+            chat_b = await _recv_until(ws_b, "log_entry")
+            assert chat_b.payload["text"] == "hello from B"
+        finally:
+            await ws_a.close()
+            await ws_b.close()
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 async def test_second_player_sees_first_redacted_then_first_players_disconnect_broadcasts_player_left():
     session = Session(session_id="e2e-session-2")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         # enable_opening_scene=False: keeps this test's message ordering
         # predictable - a real opening scene would interleave several extra
         # log_entry broadcasts between join and turn_prompt.
@@ -157,7 +236,7 @@ async def test_real_client_lobby_to_session_flow_over_real_websocket():
     in isolation)."""
     session = Session(session_id="e2e-session-3")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, NarratesOpeningDM(), broadcast, send_to, enable_opening_scene=True)
 
     transport = Transport(engine_factory)
@@ -213,7 +292,7 @@ async def test_defeating_an_npc_awards_xp_and_updates_the_sheet_panel_over_a_rea
     lines added this feature) actually connect end to end."""
     session = Session(session_id="e2e-session-5")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, DefeatsGoblinDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -269,7 +348,7 @@ async def test_ability_score_improvement_on_level_up_over_a_real_session():
     reflect the improved STR - not just directly-constructed test dicts."""
     session = Session(session_id="e2e-session-6b")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, DefeatsBossForLevel4DM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -332,7 +411,7 @@ async def test_ability_score_modifier_applies_to_a_dm_requested_roll_over_a_real
     mocked stat_modifiers dict like the client-level test uses."""
     session = Session(session_id="e2e-session-7")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, RequestsAbilityRollDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -392,7 +471,7 @@ async def test_skill_proficiency_applies_to_a_dm_requested_roll_over_a_real_sess
     automatically."""
     session = Session(session_id="e2e-session-13")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, RequestsSkillCheckDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -445,7 +524,7 @@ async def test_structured_equipment_ac_and_weapon_damage_over_a_real_session():
     tests use."""
     session = Session(session_id="e2e-session-8")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, RequestsWeaponDamageRollDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -505,7 +584,7 @@ async def test_mechanical_conditions_disadvantage_applies_over_a_real_session():
     condition or a mocked dice.roll() like the unit-level tests use."""
     session = Session(session_id="e2e-session-9")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, RequestsRollWhilePoisonedDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -562,7 +641,7 @@ async def test_roll_kind_save_excludes_poisoned_disadvantage_over_a_real_session
     RAW scoping this feature exists to add."""
     session = Session(session_id="e2e-session-12")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, RequestsRollWhilePoisonedWithSaveKindDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -604,7 +683,7 @@ async def test_character_edit_notes_and_inventory_over_a_real_session():
     the real client's own sheet panel with no narration in the loop."""
     session = Session(session_id="e2e-session-10")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, StubDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -663,7 +742,7 @@ async def test_death_saves_over_a_real_session():
     own re-rendered sheet panel."""
     session = Session(session_id="e2e-session-11")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, DealsLethalSelfDamageDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -716,7 +795,7 @@ async def test_transcript_command_saves_a_real_session_over_a_real_websocket(tmp
     connection, not a FakeTransport-driven unit test."""
     session = Session(session_id="e2e-session-11")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, NarratesOpeningDM(), broadcast, send_to, enable_opening_scene=True)
 
     transport = Transport(engine_factory)
@@ -754,7 +833,7 @@ async def test_lobby_transcript_command_saves_real_chat_over_a_real_websocket(tm
     not just a single FakeTransport-driven client."""
     session = Session(session_id="e2e-session-14")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, StubDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -766,6 +845,15 @@ async def test_lobby_transcript_command_saves_real_chat_over_a_real_websocket(tm
         async with app1.run_test() as pilot1:
             await pilot1.click("#name-input")
             await pilot1.press(*"Thrain")
+            # Left blank, this would default to the "default" session
+            # (client/app.py) - a genuinely different game from the
+            # "e2e-session-14" ws2 explicitly joins below, and Transport now
+            # correctly keeps separate sessions' broadcasts from crossing
+            # (see server/transport.py) - previously masked entirely by a
+            # single-session-per-process bug that made every connection
+            # share the same game regardless of what session_id it sent.
+            await pilot1.click("#session-input")
+            await pilot1.press(*"e2e-session-14")
             await pilot1.click("#join")
             await _wait_until(lambda: isinstance(app1.screen, LobbyScreen))
 
@@ -811,7 +899,7 @@ class NarratesLethalDamageWithNoToolCallDM:
 async def test_missed_change_advisory_renders_with_distinct_styling_over_a_real_session():
     session = Session(session_id="e2e-session-12")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(
             session, NarratesLethalDamageWithNoToolCallDM(), broadcast, send_to, enable_opening_scene=False
         )
@@ -856,7 +944,7 @@ class IntroducesHostileGoblinDM:
 async def test_npc_disposition_over_a_real_session():
     session = Session(session_id="e2e-session-13")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, IntroducesHostileGoblinDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -910,7 +998,7 @@ async def test_npc_status_panel_stays_current_across_real_turns():
         {"target": "goblin", "hp_delta": -3},
     ])
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, dm, broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -967,7 +1055,7 @@ async def test_character_import_over_a_real_session_wins_over_typed_name_and_cla
 
     session = Session(session_id="e2e-session-6")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, StubDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -1010,7 +1098,7 @@ async def test_two_real_clients_trade_turns_over_a_real_session():
     ClientTransport mocking."""
     session = Session(session_id="e2e-session-4")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, NarratesTurnDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -1106,7 +1194,7 @@ async def test_formal_initiative_reorders_turns_over_a_real_session():
     reflects the new order - not the join order either player joined in."""
     session = Session(session_id="e2e-session-14")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, NarratesTurnDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -1198,7 +1286,7 @@ async def test_spellcasting_over_a_real_session():
     ability, and proficiency bonus together."""
     session = Session(session_id="e2e-session-15")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, CastsFireBoltDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)

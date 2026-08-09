@@ -26,18 +26,23 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    session_id = os.environ.get("SESSION_ID", "default")
     store_dir = Path(os.environ.get("SESSION_STORE_DIR", "sessions"))
     try:
         store = JSONFileSessionStore(store_dir)
     except SessionStoreUnwritable as exc:
         logger.error(str(exc))
         raise SystemExit(1) from exc
-    session = store.load(session_id) or Session(session_id=session_id)
 
     dm = create_narrator()
 
-    def engine_factory(broadcast: Broadcast, send_to: SendTo) -> GameEngine:
+    # One process now serves any number of concurrent games - each
+    # session_id gets its own Session loaded (or created fresh) the first
+    # time a client actually joins it, not one fixed session picked at
+    # startup. dm is stateless (just a client/model/rules holder, no
+    # per-session data - see server/narrator.py), so every session's
+    # GameEngine sharing the one instance is safe.
+    def engine_factory(session_id: str, broadcast: Broadcast, send_to: SendTo) -> GameEngine:
+        session = store.load(session_id) or Session(session_id=session_id)
         return GameEngine(session, dm, broadcast, send_to, store=store)
 
     transport = Transport(engine_factory)

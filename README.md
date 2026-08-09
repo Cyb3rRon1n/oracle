@@ -141,7 +141,7 @@ Then open the new `.env` file in any text editor and fill in the one or two line
 - **Ollama**: set `DM_BACKEND=ollama`. `OLLAMA_MODEL` already defaults to `qwen2.5:7b`, matching what you pulled above — leave it as-is unless you want to try a different model.
 - **Anthropic**: set `DM_BACKEND=anthropic` and put your real key on the `ANTHROPIC_API_KEY=` line.
 
-Everything else in `.env` (`SESSION_ID`, `SESSION_STORE_DIR`) can stay at its default for a first run.
+Everything else in `.env` (`SESSION_STORE_DIR`) can stay at its default for a first run.
 
 ### 4. Start it — two terminals
 
@@ -186,7 +186,7 @@ To quit, close the client terminal (`Ctrl+C` works) — the server can stay runn
 
 ### Stopping and picking back up later
 
-Game state (characters, world, turn order, log) is saved to `sessions/<SESSION_ID>.json` after every join and every resolved action, so stopping and restarting the server resumes where you left off. The client remembers its own player ID in a local `.player_id` file, so restarting the client reconnects you to the same character rather than creating a new one — delete that file to start as a fresh character. Delete a session's JSON file under `sessions/` to reset the world itself.
+Game state (characters, world, turn order, log) is saved to `sessions/<Session ID>.json` after every join and every resolved action, so stopping and restarting the server resumes where you left off. One running server can host any number of these side by side — each is created the first time a client actually joins that Session ID and lives independently of the others, so a second, unrelated game on the same server never sees the first one's players or story. The client remembers its own player ID in a local `.player_id` file, so restarting the client reconnects you to the same character rather than creating a new one — delete that file to start as a fresh character. Delete a session's JSON file under `sessions/` to reset that world.
 
 ## Testing
 
