@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from server.narrator_ollama import OLLAMA_TOOLS, OllamaNarrator
+import json
+
+from server.narrator_ollama import (
+    OLLAMA_TOOLS,
+    STRUCTURED_OUTPUT_SCHEMA,
+    STRUCTURED_OUTPUT_SYSTEM_PROMPT,
+    OllamaNarrator,
+    create_ollama_narrator,
+)
 from server.rules import RulesIndex
 
 
@@ -27,6 +35,15 @@ class FakeChunk:
         self.done = done
 
 
+class FakeChatResponse:
+    """A single non-streamed response (chat(..., stream=False)) - the
+    structured-output path's own shape, distinct from FakeChunk's
+    streamed-iteration shape below."""
+
+    def __init__(self, content: str):
+        self.message = FakeMessage(content)
+
+
 class FakeOllamaClient:
     def __init__(self, responses):
         self._responses = list(responses)
@@ -34,17 +51,27 @@ class FakeOllamaClient:
 
     async def chat(self, **kwargs):
         self.calls.append(kwargs)
-        chunks = self._responses.pop(0)
+        response = self._responses.pop(0)
+
+        # stream=False (the structured-output path) gets a single response
+        # object back directly, not an async generator of chunks - the
+        # real ollama.AsyncClient.chat() itself branches the same way on
+        # this same parameter.
+        if kwargs.get("stream") is False:
+            return response
 
         async def gen():
-            for chunk in chunks:
+            for chunk in response:
                 yield chunk
 
         return gen()
 
 
 def make_narrator() -> OllamaNarrator:
-    return OllamaNarrator(rules=RulesIndex.load_default())
+    # structured_output=False - these tests exercise the legacy native
+    # tool-calling path specifically (FakeOllamaClient's streamed-chunk
+    # shape below), now that structured_output defaults to True.
+    return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=False)
 
 
 def noop_apply_update(update: dict) -> str:
@@ -215,3 +242,111 @@ async def test_narrate_accepts_but_ignores_update_world_callback():
     ]
 
     assert "".join(chunks) == "You wait."
+
+
+def make_structured_narrator() -> OllamaNarrator:
+    return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=True)
+
+
+async def test_structured_narrate_yields_narration_and_applies_a_real_change():
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "The bandit staggers back, wounded.",
+        "mechanical_change": True,
+        "target": "bandit",
+        "hp_delta": -4,
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    chunks = [c async for c in narrator.narrate([], "{}", "I attack the bandit", record_apply_update)]
+
+    assert "".join(chunks) == "The bandit staggers back, wounded."
+    assert calls == [{"target": "bandit", "hp_delta": -4}]
+
+
+async def test_structured_narrate_calls_ollama_with_the_real_schema_and_no_streaming():
+    narrator = make_structured_narrator()
+    payload = {"narration": "Nothing happens.", "mechanical_change": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    _ = [c async for c in narrator.narrate([], "{}", "I look around", noop_apply_update)]
+
+    call = narrator._client.calls[0]
+    assert call["format"] == STRUCTURED_OUTPUT_SCHEMA
+    assert call["stream"] is False
+    assert call["messages"][0] == {"role": "system", "content": STRUCTURED_OUTPUT_SYSTEM_PROMPT}
+
+
+async def test_structured_narrate_no_mechanical_change_never_calls_apply_update():
+    narrator = make_structured_narrator()
+    payload = {"narration": "You glance around, finding nothing of note.", "mechanical_change": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    chunks = [c async for c in narrator.narrate([], "{}", "I look around", noop_apply_update)]
+
+    assert "".join(chunks) == "You glance around, finding nothing of note."
+
+
+async def test_structured_narrate_malformed_json_surfaces_raw_content_without_crashing():
+    narrator = make_structured_narrator()
+    narrator._client = FakeOllamaClient([FakeChatResponse("not valid json at all")])
+
+    chunks = [c async for c in narrator.narrate([], "{}", "I do something", noop_apply_update)]
+
+    assert "".join(chunks) == "not valid json at all"
+
+
+async def test_structured_narrate_omits_zero_hp_delta_and_empty_condition():
+    # A schema-conformant but "nothing to add" response (hp_delta: 0,
+    # add_condition: "") shouldn't send those as real update_character
+    # fields - character.apply_update() already treats a falsy hp_delta/
+    # empty condition as a no-op, so this just confirms the structured
+    # path doesn't pass them through needlessly either.
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "You steady your stance.",
+        "mechanical_change": True,
+        "target": "self",
+        "hp_delta": 0,
+        "add_condition": "",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    _ = [c async for c in narrator.narrate([], "{}", "I brace myself", record_apply_update)]
+
+    assert calls == [{"target": "self"}]
+
+
+def test_default_structured_output_is_true():
+    # A live 5-repeat qwen2.5:7b comparison found this roughly doubles
+    # real tool-call correctness over native tool-calling - see
+    # ROADMAP.md item 6. Confirms the constructor default itself, not
+    # just create_ollama_narrator()'s env-var wiring below.
+    assert OllamaNarrator(rules=RulesIndex.load_default())._structured_output is True
+
+
+def test_create_ollama_narrator_defaults_to_structured_output(monkeypatch):
+    monkeypatch.delenv("OLLAMA_STRUCTURED_OUTPUT", raising=False)
+    assert create_ollama_narrator()._structured_output is True
+
+
+def test_create_ollama_narrator_respects_explicit_opt_out(monkeypatch):
+    monkeypatch.setenv("OLLAMA_STRUCTURED_OUTPUT", "0")
+    assert create_ollama_narrator()._structured_output is False
+
+
+def test_create_ollama_narrator_opt_out_is_case_insensitive(monkeypatch):
+    monkeypatch.setenv("OLLAMA_STRUCTURED_OUTPUT", "False")
+    assert create_ollama_narrator()._structured_output is False

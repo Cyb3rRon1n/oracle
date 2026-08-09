@@ -85,6 +85,26 @@ async def test_wrong_target_is_scored_as_incorrect():
     assert results[0].called_targets == ["self"]
 
 
+async def test_a_recased_target_is_still_scored_correct():
+    # A real scoring bug, found while analyzing a structured-output
+    # experiment's results, not introduced by it: the real production
+    # engine keys NPCs by target.casefold() (server/engine.py's
+    # apply_update closure), so "Bandit" and "bandit" are the same
+    # tracked NPC there - this harness's own scoring should agree, not
+    # penalize a model for casing alone when the real engine wouldn't.
+    behaviors = _all_correct_behaviors()
+    behaviors[0] = {
+        "updates": [{"target": "Bandit", "hp_delta": -5, "max_hp": 10}],
+        "text_chunks": ["Hit."],
+    }
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(narrator)
+
+    assert results[0].called_targets == ["Bandit"]  # the real casing is still reported, unchanged
+    assert results[0].correct is True  # but scored correct against the scenario's lowercase "bandit"
+
+
 async def test_leaked_tool_call_text_is_flagged_even_without_a_real_call():
     behaviors = [{"updates": [], "text_chunks": ["Something happens."]} for _ in SCENARIO]
     behaviors[0] = {
