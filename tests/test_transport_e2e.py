@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from websockets.asyncio.client import connect
 
-from client.app import DungeonMasterApp, LobbyScreen, SessionScreen, WelcomeScreen
+from client.app import CharacterSheetPanel, DungeonMasterApp, LobbyScreen, SessionScreen, WelcomeScreen
 from server.engine import GameEngine
 from server.state import Session
 from server.transport import Transport
@@ -239,7 +239,7 @@ async def test_defeating_an_npc_awards_xp_and_updates_the_sheet_panel_over_a_rea
                 "50 XP shouldn't cross the real level-2 threshold (300)"
 
             sheet = app.screen.query_one("#sheet")
-            rendered = sheet._Static__content
+            rendered = sheet.all_text()
             assert "XP: 50" in rendered
             assert "Lv 1" in rendered
     finally:
@@ -306,7 +306,7 @@ async def test_ability_score_improvement_on_level_up_over_a_real_session():
             assert session.characters[player_id].stats["str"] == 17
 
             sheet = app.screen.query_one("#sheet")
-            assert "STR 17" in sheet._Static__content
+            assert "STR 17" in sheet.all_text()
     finally:
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -351,7 +351,7 @@ async def test_ability_score_modifier_applies_to_a_dm_requested_roll_over_a_real
             await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
 
             sheet = app.screen.query_one("#sheet")
-            rendered = sheet._Static__content
+            rendered = sheet.all_text()
             assert "Ability Scores" in rendered
             assert "DEX 13 (+1)" in rendered  # fighter's real Standard Array assignment
 
@@ -464,7 +464,7 @@ async def test_structured_equipment_ac_and_weapon_damage_over_a_real_session():
             await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
 
             sheet = app.screen.query_one("#sheet")
-            rendered = sheet._Static__content
+            rendered = sheet.all_text()
             assert "AC 12" in rendered  # leather armor's real base (11) + fighter's real DEX mod (+1)
 
             await pilot.click("#start")
@@ -625,7 +625,7 @@ async def test_character_edit_notes_and_inventory_over_a_real_session():
 
             await pilot.click("#input")
             await pilot.press(*"/item add a shiny rock", "enter")
-            await _wait_until(lambda: "a shiny rock" in app.screen.query_one("#sheet")._Static__content)
+            await _wait_until(lambda: "a shiny rock" in app.screen.query_one("#sheet", CharacterSheetPanel).all_text())
 
             await pilot.click("#input")
             await pilot.press(*"/note the old man owes me a favor", "enter")
@@ -702,7 +702,7 @@ async def test_death_saves_over_a_real_session():
             assert session.characters[player_id].hp == 1
             assert session.characters[player_id].dying is False
             sheet = app.screen.query_one("#sheet")
-            assert "HP 1/" in sheet._Static__content
+            assert "HP 1/" in sheet.all_text()
     finally:
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -930,17 +930,17 @@ async def test_npc_status_panel_stays_current_across_real_turns():
 
             await pilot.click("#input")
             await pilot.press(*"I strike the goblin", "enter")
-            await _wait_until(lambda: "goblin" in app.screen.query_one("#sheet")._Static__content)
+            await _wait_until(lambda: "goblin" in app.screen.query_one("#sheet", CharacterSheetPanel).all_text())
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert "HP 3/7" in rendered
             assert "(defeated)" not in rendered
 
             await pilot.click("#input")
             await pilot.press(*"I strike the goblin again", "enter")
-            await _wait_until(lambda: "(defeated)" in app.screen.query_one("#sheet")._Static__content)
+            await _wait_until(lambda: "(defeated)" in app.screen.query_one("#sheet", CharacterSheetPanel).all_text())
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert rendered.count("goblin") == 1  # updated in place, not duplicated
             assert "HP 0/7" in rendered
     finally:
@@ -991,7 +991,7 @@ async def test_character_import_over_a_real_session_wins_over_typed_name_and_cla
             assert session.characters[player_id].level == 3
 
             sheet = app.screen.query_one("#sheet")
-            rendered = sheet._Static__content
+            rendered = sheet.all_text()
             assert "Torvin Ironheart" in rendered
             assert "Lv 3" in rendered
     finally:
@@ -1217,8 +1217,8 @@ async def test_spellcasting_over_a_real_session():
             await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
 
             sheet = app.screen.query_one("#sheet")
-            assert "Fire Bolt" in sheet._Static__content
-            assert "Slots: 1 2/2" in sheet._Static__content
+            assert "Fire Bolt" in sheet.all_text()
+            assert "Slots: 1 2/2" in sheet.all_text()
 
             await pilot.click("#start")
             await _wait_until(lambda: isinstance(app.screen, SessionScreen))
@@ -1240,7 +1240,7 @@ async def test_spellcasting_over_a_real_session():
             # specifically for the sheet's own slot count to catch up
             # rather than assuming it already has by the time the log
             # assertion above passed.
-            await _wait_until(lambda: "Slots: 1 1/2" in app.screen.query_one("#sheet")._Static__content)
+            await _wait_until(lambda: "Slots: 1 1/2" in app.screen.query_one("#sheet", CharacterSheetPanel).all_text())
     finally:
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):

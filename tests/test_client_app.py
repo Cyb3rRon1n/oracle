@@ -500,7 +500,7 @@ async def test_state_sync_npcs_render_in_the_persistent_panel():
             ))
             await pilot.pause()
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert "NPCs" in rendered
             assert "goblin" in rendered
 
@@ -519,7 +519,7 @@ async def test_npc_update_refreshes_the_persistent_panel_not_just_the_log():
                 payload={"name": "goblin", "sheet_delta": {"hp": 3, "max_hp": 7}},
             ))
             await pilot.pause()
-            assert "goblin" in app.screen.query_one("#sheet")._Static__content
+            assert "goblin" in app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
 
             # A second update for the same NPC must replace, not duplicate,
             # its panel entry - the exact staleness bug this feature fixes
@@ -531,7 +531,7 @@ async def test_npc_update_refreshes_the_persistent_panel_not_just_the_log():
             ))
             await pilot.pause()
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert rendered.count("goblin") == 1
             assert "(defeated)" in rendered
 
@@ -721,7 +721,7 @@ async def test_party_updates_render_in_lobby_sheet_panel_without_inventory():
 
             sheet = app.screen.query_one("#sheet")
             assert "p2" in sheet._others
-            rendered = sheet._Static__content
+            rendered = sheet.all_text()
             assert "Rowan" in rendered
             assert "inventory" not in rendered.lower()
 
@@ -741,7 +741,7 @@ async def test_sheet_panel_renders_own_ability_scores_with_modifiers():
             }))
             await pilot.pause()
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert "Ability Scores" in rendered
             assert "STR 15 (+2)" in rendered
             assert "INT 8 (-1)" in rendered
@@ -770,7 +770,7 @@ async def test_party_view_never_shows_ability_scores():
             ))
             await pilot.pause()
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert "Ability Scores" not in rendered
 
 
@@ -790,7 +790,7 @@ async def test_sheet_panel_renders_known_spells_and_slots_for_a_caster():
             }))
             await pilot.pause()
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert "Spells" in rendered
             assert "DC 13" in rendered
             assert "Slots: 1 1/2" in rendered
@@ -809,7 +809,7 @@ async def test_sheet_panel_shows_no_spells_section_for_a_non_caster():
             }))
             await pilot.pause()
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert "Spells" not in rendered
 
 
@@ -831,7 +831,7 @@ async def test_party_view_never_shows_spells_since_they_are_private():
             ))
             await pilot.pause()
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert "Spells" not in rendered
 
 
@@ -846,7 +846,7 @@ async def test_sheet_panel_renders_own_ac_next_to_hp():
             }))
             await pilot.pause()
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert "AC 15" in rendered
 
 
@@ -871,8 +871,125 @@ async def test_party_view_shows_ac_since_it_is_public():
             ))
             await pilot.pause()
 
-            rendered = app.screen.query_one("#sheet")._Static__content
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
             assert "AC 13" in rendered
+
+
+async def test_sheet_panel_renders_class_features_and_skill_proficiencies():
+    # class_features/skill_proficiencies are new owner-only fields
+    # (server/engine.py's _owner_character_view, ROADMAP.md item 7) - real
+    # SRD/CLASS_SKILL_PROFICIENCIES data that previously had nowhere to
+    # render at all.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Elowen", "hp": 6, "max_hp": 6,
+                    "class_features": ["Arcane Recovery: recover expended spell slots."],
+                    "skill_proficiencies": ["arcana", "investigation"],
+                },
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            assert "Arcane Recovery" in sheet._features_text()
+            assert "Arcana" in sheet._abilities_text()
+            assert "Investigation" in sheet._abilities_text()
+
+
+async def test_sheet_panel_renders_notes_on_the_features_tab():
+    # notes is set via /note (character_edit) but was never rendered
+    # anywhere on the sheet before the Features & Notes tab existed - a
+    # real pre-existing gap, not new functionality.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12, "notes": "Owes the smith a favor."},
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            assert "Owes the smith a favor." in sheet._features_text()
+
+
+async def test_spells_tab_is_hidden_for_a_non_caster_and_shown_for_a_caster():
+    from textual.widgets import TabbedContent
+
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            tabs = sheet.query_one("#sheet-tabs", TabbedContent)
+            assert tabs.get_tab("tab-spells").has_class("-hidden")
+
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Elowen", "hp": 6, "max_hp": 6,
+                    "known_spells": ["fire_bolt"], "spell_slots": {}, "max_spell_slots": {},
+                },
+            }))
+            await pilot.pause()
+
+            assert not tabs.get_tab("tab-spells").has_class("-hidden")
+
+
+async def test_pagedown_and_pageup_cycle_the_active_sheet_tab():
+    from textual.widgets import TabbedContent
+
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            tabs = sheet.query_one("#sheet-tabs", TabbedContent)
+            assert tabs.active == "tab-overview"
+
+            sheet.action_next_tab()
+            assert tabs.active == "tab-abilities"
+
+            sheet.action_previous_tab()
+            assert tabs.active == "tab-overview"
+
+
+async def test_next_tab_skips_the_hidden_spells_tab_for_a_non_caster():
+    from textual.widgets import TabbedContent
+
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            tabs = sheet.query_one("#sheet-tabs", TabbedContent)
+
+            sheet.action_next_tab()  # overview -> abilities
+            sheet.action_next_tab()  # abilities -> inventory
+            sheet.action_next_tab()  # inventory -> features (spells hidden, skipped)
+            assert tabs.active == "tab-features"
 
 
 async def test_turn_prompt_for_another_player_names_them_not_just_your_own_turn():

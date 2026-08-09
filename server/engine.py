@@ -351,6 +351,29 @@ def _public_character_view(character: CharacterSheet) -> dict:
     }
 
 
+def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
+    """The owner's own full sheet - everything model_dump() already has,
+    plus two fields that exist but were never actually sent: real class
+    features (server/rules/srd.json's own level_1_features, e.g. a
+    wizard's "Arcane Recovery" - SRD data that's been in this dataset all
+    along, just never surfaced past lookup_rule) and a persistent skill-
+    proficiency list (CLASS_SKILL_PROFICIENCIES, which already drives real
+    roll bonuses but previously only ever showed up transiently in a
+    roll's own label text, never as something a player could just look
+    at). Built for the tabbed character sheet UI (ROADMAP.md item 7) -
+    backs both _state_sync_envelope's and _character_update_envelope's
+    owner-only payloads, the same "one place defines the shape" reasoning
+    _public_character_view already follows for the public side."""
+    class_entry = rules.get_entry("class", character.character_class)
+    return {
+        **character.model_dump(),
+        "class_features": list((class_entry or {}).get("level_1_features", [])),
+        "skill_proficiencies": list(
+            CLASS_SKILL_PROFICIENCIES.get(character.character_class.strip().lower(), ())
+        ),
+    }
+
+
 def _hit_die_max(hit_die: str) -> int:
     # SRD hit_die values are like "d10" - the max roll, not an actual per-
     # level roll (real 5e typically rolls past level 1); callers add the
@@ -1494,7 +1517,11 @@ class GameEngine:
                 # player shouldn't see everyone else's inventory just
                 # because it's bundled into their own sync.
                 "characters": {
-                    pid: (c.model_dump() if pid == recipient_id else _public_character_view(c))
+                    pid: (
+                        _owner_character_view(c, self._rules)
+                        if pid == recipient_id
+                        else _public_character_view(c)
+                    )
                     for pid, c in self._session.characters.items()
                 },
                 # Keyed by each NPC's own stored (first-seen-casing) name for
@@ -1519,7 +1546,7 @@ class GameEngine:
             type="character_update",
             session_id=self._session.session_id,
             sender_id="server",
-            payload={"player_id": player_id, "sheet_delta": character.model_dump()},
+            payload={"player_id": player_id, "sheet_delta": _owner_character_view(character, self._rules)},
         )
 
     def _player_joined_envelope(self, character: CharacterSheet) -> Envelope:
