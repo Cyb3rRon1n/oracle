@@ -53,6 +53,18 @@ async def generate_welcome_import_screenshot() -> None:
         app.save_screenshot(filename="welcome-import.svg", path=SCREENSHOT_DIR)
 
 
+class CastsSpellDM:
+    """A scripted stand-in for a real DM - see the module docstring for why
+    this is honestly distinguished from the two live-Ollama screenshots.
+    Spends a real 1st-level spell slot via the new cast_spell field
+    (server/engine.py's _cast_spell) rather than guessing at slot
+    bookkeeping - the same explicit-tool-call path a real DM would use."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        apply_update({"cast_spell": "magic_missile"})
+        yield "Arcane light gathers at your fingertips - three glowing darts of force streak out and slam home."
+
+
 class LevelsUpDM:
     """A scripted stand-in for a real DM - see the module docstring for why
     this is honestly distinguished from the two live-Ollama screenshots.
@@ -110,10 +122,51 @@ async def generate_xp_level_up_screenshot() -> None:
             pass
 
 
+async def generate_spellcasting_screenshot() -> None:
+    """SessionScreen after casting a real leveled spell - real engine-driven
+    spell-slot bookkeeping (2/2 -> 1/2 on the character sheet panel), only
+    the narration line itself is scripted rather than model-generated."""
+    session = Session(session_id="screenshot-session-spellcasting")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, CastsSpellDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8901))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        app = DungeonMasterApp(uri="ws://localhost:8901", player_id=str(uuid.uuid4()), is_new_character=True)
+        async with app.run_test(size=SIZE) as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Elowen")
+            await pilot.click("#class-input")
+            await pilot.press(*"wizard")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I cast Magic Missile at the goblin", "enter")
+            await _wait_until(lambda: "darts" in _log_text(app.screen.query_one("#log")))
+            await pilot.pause()
+
+            app.save_screenshot(filename="spellcasting.svg", path=SCREENSHOT_DIR)
+    finally:
+        server_task.cancel()
+        try:
+            await server_task
+        except asyncio.CancelledError:
+            pass
+
+
 async def main() -> None:
     await generate_welcome_import_screenshot()
     await generate_xp_level_up_screenshot()
-    print(f"Wrote welcome-import.svg and xp-level-up.svg to {SCREENSHOT_DIR}/")
+    await generate_spellcasting_screenshot()
+    print(f"Wrote welcome-import.svg, xp-level-up.svg, and spellcasting.svg to {SCREENSHOT_DIR}/")
 
 
 if __name__ == "__main__":
