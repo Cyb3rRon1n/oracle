@@ -1967,16 +1967,24 @@ async def test_npc_introduction_leaves_stats_empty_for_an_unmatched_name():
 
 def test_compute_ac_unarmored_is_ten_plus_dex_modifier():
     rules = RulesIndex.load_default()
-    assert _compute_ac([], dex_modifier=2, rules=rules) == 12
-    assert _compute_ac(["Potion of Healing"], dex_modifier=1, rules=rules) == 11  # no armor in inventory
+    assert _compute_ac(None, dex_modifier=2, rules=rules) == 12
+    assert _compute_ac("Potion of Healing", dex_modifier=1, rules=rules) == 11  # not real armor
 
 
-def test_compute_ac_uses_the_best_matched_armors_base_value():
+def test_compute_ac_uses_the_equipped_armors_base_value():
     rules = RulesIndex.load_default()
-    assert _compute_ac(["Leather Armor"], dex_modifier=1, rules=rules) == 12  # 11 + 1
-    # Case/whitespace shouldn't matter - the same _slug()-based lookup
+    assert _compute_ac("Leather Armor", dex_modifier=1, rules=rules) == 12  # 11 + 1
+    # Case/whitespace shouldn't matter - the same slug()-based lookup
     # every other equipment/monster name match in this project already uses.
-    assert _compute_ac(["leather armor"], dex_modifier=0, rules=rules) == 11
+    assert _compute_ac("leather armor", dex_modifier=0, rules=rules) == 11
+
+
+def test_compute_ac_only_counts_the_equipped_armor_not_everything_carried():
+    # A real behavior change from _compute_ac's original "any armor
+    # anywhere in inventory counts" shape - carrying a spare suit of
+    # armor you haven't equipped shouldn't silently raise your AC.
+    rules = RulesIndex.load_default()
+    assert _compute_ac(None, dex_modifier=1, rules=rules) == 11  # unarmored, even with armor "around"
 
 
 async def test_npc_introduction_copies_ac_from_a_matched_srd_monster():
@@ -2869,6 +2877,158 @@ async def test_character_edit_remove_item_not_in_inventory_warns_and_makes_no_ch
     warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
     assert warnings
     assert not any(r[0] == "send_to" and r[2] == "character_update" for r in received)
+
+
+async def test_build_starting_character_auto_equips_starting_weapon_and_armor():
+    # Real tabletop chargen starts you already wielding/wearing your
+    # starting gear, not carrying it unequipped until a player remembers
+    # to run /equip - ROADMAP.md's equip/carry item.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.equipped_weapon == "Longsword"
+    assert character.equipped_armor == "Leather Armor"
+    assert character.ac == 11 + character.stat_modifiers["dex"]  # 11 + Dex modifier, leather armor's real SRD AC
+
+
+async def test_character_edit_equip_switches_weapon_and_does_not_touch_ac():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+    session.characters[player_id].inventory.append("Shortbow")
+    original_ac = session.characters[player_id].ac
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "equip", "value": "Shortbow"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.equipped_weapon == "Shortbow"
+    assert character.ac == original_ac  # a weapon swap never touches AC
+    # A weapon swap doesn't change ac, so no public player_update should fire.
+    assert not any(r[0] == "broadcast" and r[1] == "player_update" for r in received)
+
+
+async def test_character_edit_equip_armor_recomputes_ac_and_broadcasts_player_update():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    # A blank/unrecognized class starts unarmored (ac=10, no starting gear)
+    # so equipping real armor for the first time has a real before/after.
+    await join(engine, player_id)
+    session.characters[player_id].inventory.append("Leather Armor")
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "equip", "value": "Leather Armor"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.equipped_armor == "Leather Armor"
+    assert character.ac == 11 + character.stat_modifiers.get("dex", 0)
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
+    assert updates, "a real ac change should broadcast the public player_update"
+    assert updates[-1][2]["ac"] == character.ac
+
+
+async def test_character_edit_equip_item_not_owned_warns():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "equip", "value": "Longsword"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert session.characters[player_id].equipped_weapon is None
+
+
+async def test_character_edit_equip_something_not_a_weapon_or_armor_warns():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inventory.append("Potion of Healing")
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "equip", "value": "Potion of Healing"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert session.characters[player_id].equipped_weapon is None
+    assert session.characters[player_id].equipped_armor is None
+
+
+async def test_character_edit_unequip_clears_the_slot_and_recomputes_ac():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "unequip", "value": "Leather Armor"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.equipped_armor is None
+    assert character.ac == 10 + character.stat_modifiers["dex"]  # back to unarmored
+    assert any(r[0] == "broadcast" and r[1] == "player_update" for r in received)
+
+
+async def test_character_edit_unequip_something_not_equipped_warns():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "unequip", "value": "Longsword"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+
+
+async def test_character_edit_remove_item_that_is_equipped_also_unequips_it():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "remove_item", "value": "Leather Armor"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.equipped_armor is None
+    assert "Leather Armor" not in character.inventory
+    assert character.ac == 10 + character.stat_modifiers["dex"]
+    assert any(r[0] == "broadcast" and r[1] == "player_update" for r in received)
 
 
 async def test_character_edit_rejects_a_mechanical_field_not_in_the_allowed_set():
