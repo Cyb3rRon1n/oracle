@@ -135,8 +135,11 @@ CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
 # is the only gate. Fighter/rogue have no entry (cast nothing), the same
 # fallback CLASS_ABILITY_PRIORITY's own absence already establishes.
 CLASS_KNOWN_SPELLS: dict[str, list[str]] = {
-    "wizard": ["fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball"],
-    "cleric": ["sacred_flame", "guidance", "cure_wounds", "bless"],
+    "wizard": [
+        "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
+        "burning_hands", "misty_step",
+    ],
+    "cleric": ["sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon"],
 }
 
 # The SRD's own real Standard Array (Basic Rules character-creation
