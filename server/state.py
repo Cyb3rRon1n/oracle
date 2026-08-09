@@ -372,6 +372,18 @@ class WorldState(BaseModel):
     summary: str = ""
     flags: dict[str, bool] = Field(default_factory=dict)
     objectives: list[Objective] = Field(default_factory=list)
+    # A real graph, not a 2D grid - ROADMAP.md item 8 scoped this as the
+    # near-term, buildable-now half of "is there room for a map/visual
+    # panel" (the other half, real image rendering, needs a terminal
+    # graphics protocol and a generation pipeline neither of which exist
+    # yet). Keyed by location name -> the names of every location directly
+    # connected to it; edges are always added symmetrically (see
+    # apply_update's connect_locations handling below), so a real dungeon's
+    # two-way passages don't need the DM to declare both directions. No
+    # coordinates/layout - an adjacency list renders correctly regardless
+    # of the graph's real shape, unlike a 2D grid which would need the DM
+    # to supply consistent x/y positions.
+    location_map: dict[str, list[str]] = Field(default_factory=dict)
 
     def apply_update(self, update: dict) -> str:
         """Apply a DM-issued world-state update (the update_world tool).
@@ -442,6 +454,27 @@ class WorldState(BaseModel):
         if clear_flag and self.flags.get(clear_flag):
             self.flags[clear_flag] = False
             changes.append(f"flag cleared: {clear_flag}")
+
+        add_location = update.get("add_location")
+        if add_location and add_location not in self.location_map:
+            self.location_map[add_location] = []
+            changes.append(f"added location: '{add_location}'")
+
+        # A two-way passage, not a one-way exit - real dungeon layouts are
+        # overwhelmingly two-way, and modeling a one-way exit as a distinct
+        # case would need a second tool field for a genuinely rare shape.
+        # a != b guards a degenerate self-connection from appending the
+        # same name to the same list twice (self.location_map[a] and
+        # self.location_map[b] would be the same list object).
+        connect_locations = update.get("connect_locations")
+        if connect_locations and len(connect_locations) == 2 and connect_locations[0] != connect_locations[1]:
+            a, b = connect_locations
+            self.location_map.setdefault(a, [])
+            self.location_map.setdefault(b, [])
+            if b not in self.location_map[a]:
+                self.location_map[a].append(b)
+                self.location_map[b].append(a)
+                changes.append(f"connected '{a}' and '{b}'")
 
         if not changes:
             return "No changes applied (nothing matched, or all deltas were zero)."

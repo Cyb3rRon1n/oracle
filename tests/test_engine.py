@@ -2141,6 +2141,26 @@ async def test_update_world_can_expire_or_fail_an_objective():
     assert updates[-1][2]["objectives"] == [{"text": "Meet the caravan before dawn", "status": "expired"}]
 
 
+async def test_update_world_connect_locations_broadcasts_the_map():
+    # ROADMAP.md item 8 - the map/visual panel design pass. A real
+    # end-to-end check that connect_locations reaches the same
+    # world_update broadcast every other WorldState field already uses,
+    # not just a state.py-level unit test of apply_update itself.
+    dm = UpdateWorldDM({"connect_locations": ["Great Hall", "Armory"]})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I push through the door into the next room"},
+    ))
+
+    assert session.world.location_map == {"Great Hall": ["Armory"], "Armory": ["Great Hall"]}
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "world_update"]
+    assert updates[-1][2]["location_map"] == {"Great Hall": ["Armory"], "Armory": ["Great Hall"]}
+
+
 async def test_update_world_no_op_does_not_broadcast():
     dm = UpdateWorldDM({})
     engine, session, received = make_engine(dm)

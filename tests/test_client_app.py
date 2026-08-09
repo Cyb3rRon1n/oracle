@@ -37,13 +37,15 @@ class FakeTransport:
         yield  # pragma: no cover - never actually iterated; _handle() is called directly instead
 
 
-def _state_sync(player_id: str, *, started: bool, characters: dict | None = None) -> Envelope:
+def _state_sync(
+    player_id: str, *, started: bool, characters: dict | None = None, world_state: dict | None = None
+) -> Envelope:
     return Envelope(
         type="state_sync", session_id="s", sender_id="server",
         payload={
             "characters": characters or {player_id: {"name": "Thrain", "hp": 10, "max_hp": 10}},
             "npcs": {},
-            "world_state": {},
+            "world_state": world_state or {},
             "turn_order": [player_id],
             "current_turn": player_id,
             "log_tail": [],
@@ -986,10 +988,38 @@ async def test_next_tab_skips_the_hidden_spells_tab_for_a_non_caster():
             sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
             tabs = sheet.query_one("#sheet-tabs", TabbedContent)
 
-            sheet.action_next_tab()  # overview -> abilities
+            sheet.action_next_tab()  # overview -> abilities (map hidden, skipped - no location_map)
             sheet.action_next_tab()  # abilities -> inventory
             sheet.action_next_tab()  # inventory -> features (spells hidden, skipped)
             assert tabs.active == "tab-features"
+
+
+async def test_map_tab_is_hidden_with_no_locations_and_shown_once_the_dm_registers_one():
+    from textual.widgets import TabbedContent
+
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            tabs = sheet.query_one("#sheet-tabs", TabbedContent)
+            assert tabs.get_tab("tab-map").has_class("-hidden")
+
+            await app._handle(_state_sync(
+                "p1", started=False,
+                world_state={"location": "Great Hall", "location_map": {"Great Hall": ["Armory"], "Armory": ["Great Hall"]}},
+            ))
+            await pilot.pause()
+
+            assert not tabs.get_tab("tab-map").has_class("-hidden")
+            rendered = sheet._map_text()
+            assert "Great Hall" in rendered
+            assert "(here)" in rendered
+            assert "-> Armory" in rendered
 
 
 async def test_turn_prompt_for_another_player_names_them_not_just_your_own_turn():

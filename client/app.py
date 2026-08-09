@@ -78,7 +78,7 @@ class CharacterSheetPanel(Vertical):
         ("pagedown", "next_tab", "Next tab"),
     ]
 
-    _TAB_IDS = ("tab-overview", "tab-abilities", "tab-inventory", "tab-spells", "tab-features")
+    _TAB_IDS = ("tab-overview", "tab-map", "tab-abilities", "tab-inventory", "tab-spells", "tab-features")
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -91,6 +91,8 @@ class CharacterSheetPanel(Vertical):
         with TabbedContent(id="sheet-tabs", initial="tab-overview"):
             with TabPane("Overview", id="tab-overview"):
                 yield Static(id="tab-overview-content")
+            with TabPane("Map", id="tab-map"):
+                yield Static(id="tab-map-content")
             with TabPane("Abilities", id="tab-abilities"):
                 yield Static(id="tab-abilities-content")
             with TabPane("Inventory", id="tab-inventory"):
@@ -106,8 +108,18 @@ class CharacterSheetPanel(Vertical):
     def action_next_tab(self) -> None:
         self._cycle_tab(1)
 
+    def _is_tab_visible(self, tab_id: str) -> bool:
+        if tab_id == "tab-spells":
+            return bool(self._character.get("known_spells"))
+        if tab_id == "tab-map":
+            # Hidden until the DM has registered at least one location -
+            # an empty map tab would just be dead space on every session
+            # until the DM ever calls add_location/connect_locations.
+            return bool(self._world.get("location_map"))
+        return True
+
     def _cycle_tab(self, direction: int) -> None:
-        visible = [tab_id for tab_id in self._TAB_IDS if tab_id != "tab-spells" or self._character.get("known_spells")]
+        visible = [tab_id for tab_id in self._TAB_IDS if self._is_tab_visible(tab_id)]
         tabs = self.query_one("#sheet-tabs", TabbedContent)
         if tabs.active not in visible:
             return
@@ -285,6 +297,25 @@ class CharacterSheetPanel(Vertical):
             lines.append(notes)
         return "\n".join(lines).rstrip()
 
+    def _map_text(self) -> str:
+        # location_map is a plain adjacency list (ROADMAP.md item 8) - no
+        # coordinates, so this renders each known location and its real
+        # exits rather than attempting a 2D layout, which would need the
+        # DM to supply consistent x/y positions this project doesn't ask
+        # for. Shared world state, not owner-only (unlike stats/inventory) -
+        # every player sees the same map, matching world_state's existing
+        # broadcast-to-everyone treatment.
+        location_map = self._world.get("location_map") or {}
+        if not location_map:
+            return ""
+        current = self._world.get("location")
+        lines = ["[b]Map[/b]"]
+        for name in sorted(location_map):
+            marker = " [dim](here)[/dim]" if name == current else ""
+            lines.append(f"{name}{marker}")
+            lines.extend(f"  -> {exit_name}" for exit_name in location_map.get(name) or [])
+        return "\n".join(lines).rstrip()
+
     def all_text(self) -> str:
         """Every tab's content concatenated - for tests/tooling that just
         need to check whether some text appears anywhere on the sheet,
@@ -292,6 +323,7 @@ class CharacterSheetPanel(Vertical):
         return "\n".join(
             [
                 self._overview_text(),
+                self._map_text(),
                 self._abilities_text(),
                 self._inventory_text(),
                 self._spells_text(),
@@ -310,6 +342,7 @@ class CharacterSheetPanel(Vertical):
         # visual.get_height() call.
         try:
             self.query_one("#tab-overview-content", Static).update(self._overview_text())
+            self.query_one("#tab-map-content", Static).update(self._map_text())
             self.query_one("#tab-abilities-content", Static).update(self._abilities_text())
             self.query_one("#tab-inventory-content", Static).update(self._inventory_text())
             self.query_one("#tab-spells-content", Static).update(self._spells_text())
@@ -322,10 +355,11 @@ class CharacterSheetPanel(Vertical):
             return
 
         tabs = self.query_one("#sheet-tabs", TabbedContent)
-        if self._character.get("known_spells"):
-            tabs.show_tab("tab-spells")
-        else:
-            tabs.hide_tab("tab-spells")
+        for tab_id in ("tab-spells", "tab-map"):
+            if self._is_tab_visible(tab_id):
+                tabs.show_tab(tab_id)
+            else:
+                tabs.hide_tab(tab_id)
 
     _DIVIDER = "[dim]" + "─" * 24 + "[/dim]"
 
