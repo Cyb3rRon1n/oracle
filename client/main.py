@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from .app import DungeonMasterApp
 
@@ -27,8 +30,10 @@ def main() -> None:
     # (client/app.py), the client's actual pre-game main menu entry point.
     # Local player identity (this file's whole remaining job) stays outside
     # the TUI - it's filesystem state, not something to gather via widgets.
+    load_dotenv()
     player_id, is_new = _get_or_create_player_id()
-    app = DungeonMasterApp(uri="ws://localhost:8765", player_id=player_id, is_new_character=is_new)
+    uri = os.environ.get("SERVER_URI", "ws://localhost:8765")
+    app = DungeonMasterApp(uri=uri, player_id=player_id, is_new_character=is_new)
     app.run()
 
 
