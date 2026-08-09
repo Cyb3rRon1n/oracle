@@ -67,11 +67,16 @@ ROLL_KIND_DISADVANTAGE_EXCLUSIONS: dict[str, frozenset[str]] = {
 # character_edit's own real scope (docs/protocol.md, ROADMAP.md's "let a
 # player edit their own notes/inventory directly, without DM adjudication"):
 # deliberately just the fields that are pure player-side bookkeeping, not
-# mechanical state. hp/conditions/stats/xp/ac all stay DM- or engine-only -
+# mechanical state. hp/conditions/stats/xp all stay DM- or engine-only -
 # the same "the engine or the DM decides mechanical state, the player only
 # decides fiction/bookkeeping" boundary update_character's own tool schema
-# already draws, just enforced from the other direction here.
-CHARACTER_EDIT_FIELDS = frozenset({"notes", "add_item", "remove_item"})
+# already draws, just enforced from the other direction here. equip/
+# unequip are the one field pair that also changes a mechanical value
+# (ac) as a side effect - still consistent with that boundary, since the
+# player only ever names which owned item to wear/wield, never the AC
+# number itself; _compute_ac (engine-owned, real SRD data) computes what
+# that actually means, the player never types a value into it directly.
+CHARACTER_EDIT_FIELDS = frozenset({"notes", "add_item", "remove_item", "equip", "unequip"})
 
 
 def _has_disadvantage(character: CharacterSheet, roll_kind: str | None = None) -> list[str]:
@@ -296,23 +301,48 @@ def _armor_base_ac(equipment_entry: dict) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _compute_ac(inventory: list[str], dex_modifier: int, rules: RulesIndex) -> int:
-    """Real 5e's own formula: 10 (unarmored) + DEX modifier, or an equipped
-    armor's own base AC + DEX modifier if better. Generalized over whatever
-    armor actually appears in `inventory` (matched against real SRD
-    equipment data) rather than hardcoded to one item, so it keeps working
-    without a code change if more armor is added to srd.json later - only
-    leather_armor exists there today, and it happens to have no DEX cap,
-    so a capped-armor-type case (medium/heavy armor in real 5e) is real,
-    untested future work, not something this formula already handles."""
+def _compute_ac(equipped_armor: str | None, dex_modifier: int, rules: RulesIndex) -> int:
+    """Real 5e's own formula: 10 (unarmored) + DEX modifier, or the
+    specific equipped armor's own base AC + DEX modifier. Takes a single
+    equipped_armor name, not the whole inventory - a real behavior change
+    from this function's original "any armor anywhere in inventory counts"
+    shape (before the equip/carry distinction existed), so only what a
+    character actually has equipped affects AC, not everything they're
+    carrying. Unrecognized/blank equipped_armor falls back to unarmored,
+    the same graceful-miss convention every other name-based SRD lookup
+    here already follows - only leather_armor exists in srd.json today,
+    and it happens to have no DEX cap, so a capped-armor-type case (medium/
+    heavy armor in real 5e) is real, untested future work."""
     base = 10
-    for item in inventory:
-        entry = rules.get_entry("equipment", item)
+    if equipped_armor:
+        entry = rules.get_entry("equipment", equipped_armor)
         if entry is not None:
             armor_base = _armor_base_ac(entry)
             if armor_base is not None:
-                base = max(base, armor_base)
+                base = armor_base
     return base + dex_modifier
+
+
+def _auto_equip_starting_gear(inventory: list[str], rules: RulesIndex) -> tuple[str | None, str | None]:
+    """Picks the first weapon-like and first armor-like item out of a
+    fresh character's starting inventory (CLASS_STARTING_EQUIPMENT) to
+    equip automatically - real tabletop chargen starts you already
+    wielding/wearing your starting gear, not carrying it unequipped until
+    a player remembers to run /equip. A weapon is any SRD equipment entry
+    with a `damage` field, armor any entry with an `ac` field - the same
+    distinction _armor_base_ac already draws for AC, generalized to also
+    recognize weapons rather than hardcoding "the second item is armor"."""
+    weapon: str | None = None
+    armor: str | None = None
+    for item in inventory:
+        entry = rules.get_entry("equipment", item)
+        if entry is None:
+            continue
+        if weapon is None and entry.get("damage"):
+            weapon = item
+        elif armor is None and entry.get("ac"):
+            armor = item
+    return weapon, armor
 
 
 def _public_character_view(character: CharacterSheet) -> dict:
@@ -431,6 +461,7 @@ def build_starting_character(
     dex_mod = ability_modifier(stats["dex"]) if stats else 0
     known_spells = list(CLASS_KNOWN_SPELLS.get(character_class.strip().lower(), []))
     spell_slots = rules.spell_slots_by_level(1) if known_spells else {}
+    equipped_weapon, equipped_armor = _auto_equip_starting_gear(inventory, rules)
     return CharacterSheet(
         player_id=player_id,
         name=name,
@@ -439,7 +470,9 @@ def build_starting_character(
         character_class=class_entry["name"],
         stats=stats,
         inventory=inventory,
-        ac=_compute_ac(inventory, dex_mod, rules),
+        equipped_weapon=equipped_weapon,
+        equipped_armor=equipped_armor,
+        ac=_compute_ac(equipped_armor, dex_mod, rules),
         known_spells=known_spells,
         spell_slots=dict(spell_slots),
         max_spell_slots=dict(spell_slots),
@@ -1285,14 +1318,16 @@ class GameEngine:
         await self._broadcast(self._log_envelope("chat", envelope.payload.get("text", "")))
 
     async def _on_character_edit(self, envelope: Envelope) -> None:
-        """Player-side bookkeeping - notes, or adding/removing an inventory
-        item by name - that doesn't need DM adjudication (docs/protocol.md).
-        Deliberately the mirror image of apply_update's mechanical fields:
-        this handler only ever touches notes/inventory, never hp/conditions/
-        stats/xp, so a player editing their own sheet can't grant themselves
-        healing or gear out of nowhere the DM never narrated. Exempt from
-        turn order like chat_message/dice_roll - only _on_player_action
-        checks current_turn."""
+        """Player-side bookkeeping - notes, adding/removing/equipping an
+        inventory item by name - that doesn't need DM adjudication
+        (docs/protocol.md). Deliberately the mirror image of apply_update's
+        mechanical fields: this handler only ever touches notes/inventory/
+        equipped_weapon/equipped_armor (and, as a side effect of the
+        latter, ac - see CHARACTER_EDIT_FIELDS above), never hp/conditions/
+        stats/xp, so a player editing their own sheet can't grant
+        themselves healing or gear out of nowhere the DM never narrated.
+        Exempt from turn order like chat_message/dice_roll - only
+        _on_player_action checks current_turn."""
         player_id = envelope.sender_id
         character = self._session.characters.get(player_id)
         if character is None:
@@ -1306,9 +1341,13 @@ class GameEngine:
         if field not in CHARACTER_EDIT_FIELDS or not value:
             await self._send_to(
                 player_id,
-                self._system_envelope(f"Can't edit '{field}' - try notes, add_item, or remove_item.", level="warning"),
+                self._system_envelope(
+                    f"Can't edit '{field}' - try notes, add_item, remove_item, equip, or unequip.", level="warning"
+                ),
             )
             return
+
+        ac_changed = False
 
         if field == "notes":
             character.notes = str(value)
@@ -1322,12 +1361,60 @@ class GameEngine:
                 )
                 return
             character.inventory.remove(item)
+            # Removing an equipped item unequips it too - a dangling
+            # equipped_weapon/equipped_armor pointing at something no
+            # longer owned would be a real, confusing inconsistency.
+            if character.equipped_weapon == item:
+                character.equipped_weapon = None
+            if character.equipped_armor == item:
+                character.equipped_armor = None
+                ac_changed = True
+        elif field == "equip":
+            item = str(value)
+            if item not in character.inventory:
+                await self._send_to(
+                    player_id, self._system_envelope(f"You don't have '{item}' to equip.", level="warning")
+                )
+                return
+            entry = self._rules.get_entry("equipment", item)
+            if entry is not None and entry.get("damage"):
+                character.equipped_weapon = item
+            elif entry is not None and entry.get("ac"):
+                character.equipped_armor = item
+                ac_changed = True
+            else:
+                await self._send_to(
+                    player_id,
+                    self._system_envelope(f"'{item}' isn't a recognized weapon or armor.", level="warning"),
+                )
+                return
+        elif field == "unequip":
+            item = str(value)
+            if character.equipped_weapon == item:
+                character.equipped_weapon = None
+            elif character.equipped_armor == item:
+                character.equipped_armor = None
+                ac_changed = True
+            else:
+                await self._send_to(
+                    player_id, self._system_envelope(f"You don't have '{item}' equipped.", level="warning")
+                )
+                return
 
-        # Private only, the same boundary _public_character_view draws -
-        # notes/inventory never appear in player_update/player_joined, so
-        # unlike a mechanical sheet_changed update (_narrate_and_apply) there's
-        # no public counterpart broadcast to send here.
+        if ac_changed:
+            character.ac = _compute_ac(
+                character.equipped_armor, character.stat_modifiers.get("dex", 0), self._rules
+            )
+
+        # notes/inventory/equipped_weapon/equipped_armor stay private, the
+        # same boundary _public_character_view draws - but ac is public
+        # (visible combat capability, same as hp), so an equip/unequip
+        # that actually changed it also needs the public player_update
+        # broadcast every other ac-changing path already sends, not just
+        # the private character_update every character_edit sends.
         await self._send_to(player_id, self._character_update_envelope(player_id, character))
+        if ac_changed:
+            await self._broadcast(self._player_update_envelope(character))
         await self._save(player_id)
 
     async def _on_death_save(self, envelope: Envelope) -> None:

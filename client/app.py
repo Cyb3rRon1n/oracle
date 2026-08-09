@@ -237,11 +237,28 @@ class CharacterSheetPanel(Vertical):
         return "\n".join(lines).rstrip()
 
     def _inventory_text(self) -> str:
-        inventory = self._character.get("inventory") or []
+        # Equipped (weapon/armor - real slots, server/state.py's
+        # equipped_weapon/equipped_armor) separate from Carried (everything
+        # else you own), not one flat list - a direct owner ask ("not just
+        # a general listing of items"), and the same "closely resemble a
+        # real tabletop sheet" reasoning driving this tab split in the
+        # first place. equipped_weapon/armor are still just names in
+        # inventory, not their own separate store - carried is inventory
+        # minus whichever of those two are currently set.
+        character = self._character
+        inventory = character.get("inventory") or []
         if not inventory:
             return ""
-        lines = ["[b]Inventory[/b]"]
-        lines.extend(f"- {item}" for item in inventory)
+        equipped_weapon = character.get("equipped_weapon")
+        equipped_armor = character.get("equipped_armor")
+        lines = ["[b]Equipped[/b]"]
+        lines.append(f"Weapon: {equipped_weapon}" if equipped_weapon else "Weapon: [dim](none)[/dim]")
+        lines.append(f"Armor: {equipped_armor}" if equipped_armor else "Armor: [dim](none)[/dim]")
+        carried = [item for item in inventory if item not in (equipped_weapon, equipped_armor)]
+        if carried:
+            lines.append("")
+            lines.append("[b]Carried[/b]")
+            lines.extend(f"- {item}" for item in carried)
         return "\n".join(lines).rstrip()
 
     def _spells_text(self) -> str:
@@ -654,7 +671,7 @@ class SessionScreen(Screen):
             yield RichLog(id="log", wrap=True, markup=True)
         yield Static("", id="status")
         yield Input(
-            placeholder="What do you do? (/roll, /chat, /note, /item add|remove, /export, /transcript [file])",
+            placeholder="What do you do? (/roll, /chat, /note, /item add|remove, /equip, /unequip, /export, /transcript [file])",
             id="input",
         )
         yield Footer()
@@ -719,6 +736,14 @@ class SessionScreen(Screen):
         elif text.startswith("/item remove "):
             await self.app.transport.send(
                 "character_edit", {"field": "remove_item", "value": text[len("/item remove "):].strip()}
+            )
+        elif text.startswith("/equip "):
+            await self.app.transport.send(
+                "character_edit", {"field": "equip", "value": text[len("/equip "):].strip()}
+            )
+        elif text.startswith("/unequip "):
+            await self.app.transport.send(
+                "character_edit", {"field": "unequip", "value": text[len("/unequip "):].strip()}
             )
         elif text.startswith("/export"):
             filename = text[len("/export"):].strip() or "character"

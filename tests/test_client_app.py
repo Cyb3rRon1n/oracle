@@ -387,6 +387,38 @@ async def test_item_remove_command_sends_character_edit():
             assert app.transport.sent[-1] == ("character_edit", {"field": "remove_item", "value": "a torch"})
 
 
+async def test_equip_command_sends_character_edit():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/equip Shortbow", "enter")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("character_edit", {"field": "equip", "value": "Shortbow"})
+
+
+async def test_unequip_command_sends_character_edit():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await pilot.click("#input")
+            await pilot.press(*"/unequip Longsword", "enter")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("character_edit", {"field": "unequip", "value": "Longsword"})
+
+
 async def test_advisory_system_message_renders_with_distinct_yellow_styling():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
@@ -918,6 +950,52 @@ async def test_sheet_panel_renders_notes_on_the_features_tab():
 
             sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
             assert "Owes the smith a favor." in sheet._features_text()
+
+
+async def test_inventory_tab_separates_equipped_from_carried():
+    # A direct owner ask - not a flat item list, an Equipped section
+    # (weapon/armor slots) distinct from Carried (everything else).
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Rook", "hp": 12, "max_hp": 12,
+                    "inventory": ["Longsword", "Leather Armor", "a torch", "3 rations"],
+                    "equipped_weapon": "Longsword", "equipped_armor": "Leather Armor",
+                },
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            rendered = sheet._inventory_text()
+            assert "Weapon: Longsword" in rendered
+            assert "Armor: Leather Armor" in rendered
+            assert "a torch" in rendered
+            assert "3 rations" in rendered
+            # Equipped items shouldn't also appear a second time under Carried.
+            assert rendered.count("Longsword") == 1
+            assert rendered.count("Leather Armor") == 1
+
+
+async def test_inventory_tab_shows_none_for_empty_equipment_slots():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Rook", "hp": 12, "max_hp": 12, "inventory": ["a torch"]},
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            rendered = sheet._inventory_text()
+            assert "Weapon: " in rendered and "(none)" in rendered
+            assert "Armor: " in rendered and "(none)" in rendered
+            assert "a torch" in rendered
 
 
 async def test_spells_tab_is_hidden_for_a_non_caster_and_shown_for_a_caster():

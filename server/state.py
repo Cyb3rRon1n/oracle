@@ -67,23 +67,32 @@ class CharacterSheet(BaseModel):
     character_class: str = ""
     stats: dict[str, int] = Field(default_factory=dict)
     inventory: list[str] = Field(default_factory=list)
+    # Pointers into inventory (by name), not a separate item store - a
+    # deliberately small step for now (ROADMAP.md's equip/carry item), not
+    # a full structured-item system. Plain name strings, same as inventory
+    # itself, since equipment with real special properties/abilities
+    # (magic items, unique loot) would need inventory to become a list of
+    # structured item objects, not just names - a genuinely bigger schema
+    # change, explicitly deferred rather than half-built here. None means
+    # nothing in that slot (unarmored, or fighting bare-handed).
+    equipped_weapon: str | None = None
+    equipped_armor: str | None = None
     conditions: list[str] = Field(default_factory=list)
     notes: str = ""
     xp: int = 0
     level: int = 1
-    # Real 5e's own unarmored baseline (10 + DEX modifier), same fallback a
-    # blank/unrecognized class already gets for HP/inventory. A real player
-    # character's actual AC (armor + DEX modifier) is computed once by
-    # server/engine.py's build_starting_character, which has both the SRD
+    # Real 5e's own unarmored baseline (10 + DEX modifier), or an equipped
+    # armor's own base AC + DEX modifier - computed by server/engine.py's
+    # _compute_ac (both at character creation and again on every
+    # equip/unequip via _on_character_edit), which has both the SRD
     # equipment data and the character's own stats in hand; a plain stored
     # field, not a computed one like stat_modifiers, since a real 5e
     # monster's AC (copied verbatim from srd.json onto a tracked NPC) is a
     # flat authored value, not a formula derived from its own stats/gear -
     # the two need genuinely different sources, so one field can't be
-    # computed from the sheet alone for both roles. A real, documented
-    # simplification: this doesn't recompute if inventory changes later
-    # (e.g. a player picks up different armor mid-session) - see
-    # docs/protocol.md's "Structured equipment" section.
+    # computed from the sheet alone for both roles. Now genuinely live
+    # (recomputed on every equip/unequip), closing the gap this comment
+    # used to flag - see docs/protocol.md's "Structured equipment" section.
     ac: int = 10
     # Real 5e's death-saving-throw mechanic, closing the gap that's existed
     # since HP was first tracked: hitting 0 HP was previously just a number
