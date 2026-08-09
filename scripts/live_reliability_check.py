@@ -22,6 +22,7 @@ Usage:
     python -m scripts.live_reliability_check --backend ollama --model qwen2.5:7b
     python -m scripts.live_reliability_check --backend anthropic --out results.json
     python -m scripts.live_reliability_check --model qwen3:8b --repeat 3  # aggregate over 3 runs
+    python -m scripts.live_reliability_check --tool-calling  # reproduce the legacy pre-structured-output baseline
 """
 
 from __future__ import annotations
@@ -176,7 +177,16 @@ async def run_scenario(narrator, max_history_messages: int | None = None) -> lis
         if turn["expected"] == EXPECT_NO_CALL:
             correct = not called
         elif turn["expected"] == EXPECT_CALL:
-            correct = called and turn["target"] in called_targets
+            # Case-insensitive, matching the real production engine's own
+            # NPC matching (server/engine.py's apply_update closure keys
+            # NPCs by target.casefold()) - a real scoring bug found while
+            # analyzing a structured-output experiment's results, not
+            # introduced by it: this harness's own exact-match comparison
+            # was scoring "Bandit" as a miss against a scenario expecting
+            # "bandit", something the real engine has never actually
+            # treated as wrong. Affects every prior experiment this
+            # harness has ever scored, not just this one - see ROADMAP.md.
+            correct = called and turn["target"].casefold() in {t.casefold() for t in called_targets}
         else:
             correct = None
 
@@ -332,7 +342,10 @@ async def main_async(args: argparse.Namespace) -> None:
         from server.rules import RulesIndex
 
         model_label = args.model or "qwen2.5:7b"
-        narrator = OllamaNarrator(model=model_label, host=args.host, rules=RulesIndex.load_default())
+        narrator = OllamaNarrator(
+            model=model_label, host=args.host, rules=RulesIndex.load_default(),
+            structured_output=not args.tool_calling,
+        )
     else:
         from server.narrator import AnthropicNarrator
 
@@ -382,6 +395,19 @@ def main() -> None:
             "run can look like a real signal and just be favorable sampling - see the "
             "qwen3:8b entries in ROADMAP.md item 6 for a real example. Each repeat costs "
             "as much time as one run, so this is expensive on CPU-only inference."
+        ),
+    )
+    parser.add_argument(
+        "--tool-calling",
+        action="store_true",
+        help=(
+            "Ollama backend only - use the legacy native tool-calling path instead of the "
+            "default structured-output one (server/narrator_ollama.py's OllamaNarrator "
+            "structured_output=True is the default for both this harness and "
+            "create_ollama_narrator() - a live 5-repeat comparison found it roughly doubles "
+            "real tool-call correctness, see ROADMAP.md item 6). Pass this to reproduce the "
+            "older baseline numbers documented earlier in that item. Ignored for --backend "
+            "anthropic."
         ),
     )
     args = parser.parse_args()
