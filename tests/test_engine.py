@@ -198,7 +198,10 @@ def test_build_starting_character_gives_wizard_real_known_spells_and_slots():
     rules = RulesIndex.load_default()
     sheet = build_starting_character("p1", "Gandalf", "wizard", rules)
 
-    assert sheet.known_spells == ["fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball"]
+    assert sheet.known_spells == [
+        "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
+        "burning_hands", "misty_step",
+    ]
     assert sheet.spell_slots == {"1": 2}
     assert sheet.max_spell_slots == {"1": 2}
     assert sheet.spell_save_dc is not None
@@ -208,7 +211,7 @@ def test_build_starting_character_gives_cleric_real_known_spells_and_slots():
     rules = RulesIndex.load_default()
     sheet = build_starting_character("p1", "Fenwick", "cleric", rules)
 
-    assert sheet.known_spells == ["sacred_flame", "guidance", "cure_wounds", "bless"]
+    assert sheet.known_spells == ["sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon"]
     assert sheet.spell_slots == {"1": 2}
 
 
@@ -674,6 +677,27 @@ async def test_defeating_known_srd_monster_awards_correct_cr_xp():
     assert session.characters[player_id].xp == 50
     assert "is defeated" in dm.tool_results[0]
     assert "gains 50 XP" in dm.tool_results[0]
+
+
+async def test_defeating_a_newly_added_srd_monster_awards_correct_cr_xp():
+    # "bandit" (added this pass, CR 1/8) matches server/rules/srd.json's
+    # own monster entry - locks that a newly-added monster integrates with
+    # the real xp_by_cr table (25 XP) and copies its real stat block onto
+    # the introduced NPC, not just that the data loads.
+    dm = UpdateSequenceDM([{"target": "bandit", "max_hp": 11, "hp_delta": -11}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit down"},
+    ))
+
+    assert session.npcs["bandit"].hp == 0
+    assert session.npcs["bandit"].ac == 12  # copied from the real SRD stat block
+    assert session.characters[player_id].xp == 25
+    assert "gains 25 XP" in dm.tool_results[0]
 
 
 async def test_defeating_unmatched_npc_falls_back_to_default_xp():
@@ -1898,6 +1922,26 @@ async def test_cast_spell_consumes_a_real_slot_and_broadcasts_character_update()
     assert updates, "a real slot spend should push a character_update"
 
 
+async def test_cast_spell_consumes_a_slot_for_a_newly_added_spell():
+    # burning_hands (added alongside misty_step for wizard) is a real
+    # leveled spell, not just data sitting in srd.json unreachable by any
+    # character - this locks that it's actually in CLASS_KNOWN_SPELLS and
+    # castable, the same way Magic Missile already is above.
+    dm = UpdateCharacterDM({"cast_spell": "Burning Hands"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast burning hands"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.spell_slots == {"1": 1}
+    assert dm.tool_result is not None and "Burning Hands" in dm.tool_result
+
+
 async def test_cast_spell_cantrip_does_not_consume_a_slot():
     dm = UpdateCharacterDM({"cast_spell": "fire_bolt"})
     engine, session, received = make_engine(dm)
@@ -2015,6 +2059,32 @@ async def test_request_roll_spell_resolves_damage_ability_and_proficiency():
     assert payload["ability"] == "int"  # wizard's real spellcasting ability, auto-resolved
     assert payload["proficiency_bonus"] == 2
     assert payload["roll_kind"] == "attack"  # auto-defaulted
+
+
+async def test_request_roll_spell_resolves_spiritual_weapon_as_an_attack():
+    # spiritual_weapon (added alongside healing_word for cleric) is
+    # cleric's own attack-shaped spell, the same real-5e shape fire_bolt
+    # already exercises for wizard - locks that the newly-added spell
+    # integrates with the existing spell-attack resolution, not just that
+    # it loads from srd.json.
+    dm = RequestRollDM({"dice": "1d20", "spell": "spiritual_weapon"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "cleric", name="Fenwick")
+
+    with patch("server.dice.random.randint", return_value=10):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I summon my spiritual weapon and strike"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["spell"] == "Spiritual Weapon"
+    assert payload["dice"] == "1d8"
+    assert payload["damage_type"] == "force"
+    assert payload["ability"] == "wis"  # cleric's real spellcasting ability
+    assert payload["roll_kind"] == "attack"
 
 
 async def test_request_roll_spell_non_attack_spell_is_a_graceful_no_op():
@@ -2541,18 +2611,20 @@ async def test_start_combat_announces_npcs_but_excludes_them_from_turn_order():
 
 
 async def test_start_combat_dex_modifier_fallback_for_npc_without_stats():
-    # "bandit" matches no known SRD monster, so it never gets real stats -
-    # the same fallback every other stat-dependent mechanic here uses.
-    dm = UpdateSequenceDM([{"target": "bandit", "max_hp": 10, "hp_delta": 0}])
+    # "cutpurse" matches no known SRD monster (unlike "bandit", a real SRD
+    # entry - server/rules/srd.json, ROADMAP.md item 11), so it never gets
+    # real stats - the same fallback every other stat-dependent mechanic
+    # here uses.
+    dm = UpdateSequenceDM([{"target": "cutpurse", "max_hp": 10, "hp_delta": 0}])
     engine, session, received = make_engine(dm)
     player_id = str(uuid.uuid4())
     await _join_as(engine, player_id, "fighter", name="Thrain")
 
     await engine.handle(Envelope(
         type="player_action", session_id="test-session", sender_id=player_id,
-        payload={"text": "A bandit appears"},
+        payload={"text": "A cutpurse appears"},
     ))
-    assert session.npcs["bandit"].stats == {}
+    assert session.npcs["cutpurse"].stats == {}
 
     with patch("server.dice.random.randint", return_value=10):
         await _start_combat(engine, player_id)  # would raise/KeyError if the fallback were missing
@@ -2560,7 +2632,7 @@ async def test_start_combat_dex_modifier_fallback_for_npc_without_stats():
     announcements = [
         r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Initiative" in r[2]["text"]
     ]
-    assert "bandit (10)" in announcements[0][2]["text"]  # +0 modifier, bare roll
+    assert "cutpurse (10)" in announcements[0][2]["text"]  # +0 modifier, bare roll
 
 
 async def test_start_combat_is_idempotent():
