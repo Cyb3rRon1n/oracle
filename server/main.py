@@ -41,7 +41,9 @@ def main() -> None:
         return GameEngine(session, dm, broadcast, send_to, store=store)
 
     transport = Transport(engine_factory)
-    asyncio.run(transport.serve())
+    host = os.environ.get("SERVER_HOST", "localhost")
+    port = int(os.environ.get("SERVER_PORT", "8765"))
+    asyncio.run(transport.serve(host=host, port=port))
 
 
 if __name__ == "__main__":
