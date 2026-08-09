@@ -11,6 +11,7 @@ from server.engine import (
     _apply_ability_score_improvements,
     _asi_announcement,
     _compute_ac,
+    _outcome_category,
     _owner_character_view,
     _public_character_view,
 )
@@ -1436,6 +1437,160 @@ async def test_dm_requested_roll_multiple_disadvantage_conditions_still_only_app
     payload = results[-1][2]
     assert payload["disadvantage_reasons"] == ["poisoned", "frightened"]
     assert len(payload["rolls"]) == 2  # still just one roll-twice, not two
+
+
+async def test_request_roll_natural_20_attack_is_a_critical_hit():
+    dm = RequestRollDM({"dice": "1d20", "dc": 15, "roll_kind": "attack", "reason": "sword swing"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    with patch("server.dice.random.randint", return_value=20):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I swing my sword"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results[-1][2]["critical"] is True
+    assert dm.tool_result is not None and "CRITICAL HIT!" in dm.tool_result
+
+
+async def test_request_roll_natural_20_on_a_check_is_not_a_critical_hit():
+    # Real 5e's critical-hit rule only applies to attack rolls - a great
+    # skill check isn't a "critical hit", even on a natural 20.
+    dm = RequestRollDM({"dice": "1d20", "dc": 15, "roll_kind": "check", "reason": "perception"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    with patch("server.dice.random.randint", return_value=20):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I look around carefully"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert "critical" not in results[-1][2]
+
+
+async def test_request_roll_natural_20_on_a_non_d20_attack_notation_is_not_a_critical_hit():
+    # A weapon-damage-shaped roll mislabeled roll_kind="attack" shouldn't
+    # falsely read as a crit just because some die happened to max out -
+    # real 5e's crit rule is specifically about the d20 to-hit roll.
+    dm = RequestRollDM({"dice": "2d6", "roll_kind": "attack", "reason": "damage"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    with patch("server.dice.random.randint", return_value=6):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I roll damage"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert "critical" not in results[-1][2]
+
+
+async def test_request_roll_critical_uses_the_kept_roll_under_disadvantage():
+    # A natural 20 that got discarded under disadvantage was never really
+    # rolled as far as the character's outcome is concerned - mirrors the
+    # same kept-vs-discarded narrowing the disadvantage tests above lock
+    # for highlighting, applied to crit detection instead.
+    dm = RequestRollDM({"dice": "1d20", "dc": 15, "roll_kind": "attack", "reason": "sword swing"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("poisoned")
+
+    with patch("server.dice.random.randint", side_effect=[20, 5]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I swing my sword despite the poison"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["result"] == 5  # the kept (lower) roll
+    assert "critical" not in payload  # the discarded 20 doesn't count
+
+
+@pytest.mark.parametrize(
+    "update,expected",
+    [
+        ({"hp_delta": -5}, "damage"),
+        ({"hp_delta": 5}, "heal"),
+        ({"rest": "long"}, "heal"),
+        ({"add_condition": "poisoned"}, "condition"),
+        ({"remove_condition": "poisoned"}, "condition"),
+        ({"cast_spell": "fire_bolt"}, "spell"),
+        ({"add_item": "a torch"}, "item"),
+        ({"remove_item": "a torch"}, "item"),
+        ({"notes": "just bookkeeping"}, None),
+        ({"disposition": "hostile"}, None),
+        ({}, None),
+        # hp_delta takes priority over a condition in the same call - the
+        # most narratively dominant outcome, real 5e's own "a poisoned
+        # dart" shape (damage + a condition applied in one hit).
+        ({"hp_delta": -3, "add_condition": "poisoned"}, "damage"),
+    ],
+)
+def test_outcome_category(update, expected):
+    assert _outcome_category(update) == expected
+
+
+async def test_update_character_hp_delta_broadcasts_a_colored_outcome_line():
+    dm = UpdateCharacterDM({"hp_delta": -5})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I take a hit"},
+    ))
+
+    outcomes = [r for r in received if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "outcome"]
+    assert outcomes, "a real hp_delta should broadcast a colored outcome line"
+    assert outcomes[-1][2]["category"] == "damage"
+    assert "HP -5" in outcomes[-1][2]["text"]
+    assert outcomes[-1][2]["text"].startswith("Thrain:")
+
+
+async def test_update_character_notes_only_change_does_not_broadcast_an_outcome_line():
+    # notes/disposition-only changes have no dedicated color category
+    # (_outcome_category returns None) - shouldn't spam the log with an
+    # uncategorized line for bookkeeping that isn't a mechanical outcome.
+    dm = UpdateCharacterDM({"notes": "the old man owes me a favor"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I recall a debt owed"},
+    ))
+
+    outcomes = [r for r in received if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "outcome"]
+    assert not outcomes
+
+
+async def test_update_character_npc_damage_broadcasts_a_colored_outcome_line_named_for_the_npc():
+    dm = UpdateCharacterDM({"target": "goblin", "max_hp": 7, "hp_delta": -3})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the goblin"},
+    ))
+
+    outcomes = [r for r in received if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "outcome"]
+    assert outcomes
+    assert outcomes[-1][2]["category"] == "damage"
+    assert outcomes[-1][2]["text"].startswith("goblin:")
 
 
 async def test_dm_requested_roll_with_a_non_disadvantage_condition_is_unaffected():
