@@ -21,6 +21,20 @@ from .transport import ClientTransport
 # validated here.
 CHARACTER_CLASSES = ["fighter", "wizard", "rogue", "cleric"]
 
+# A direct owner ask: an "outcome" log_entry's mechanical category
+# (server/engine.py's _outcome_category) should read differently at a
+# glance - red for damage, green for healing, etc. - rather than every
+# combat/item/spell effect blending into the same plain log text. Kept as
+# a flat lookup, not styling logic scattered across call sites, so the
+# palette is defined exactly once.
+_OUTCOME_COLORS = {
+    "damage": "red",
+    "heal": "green",
+    "spell": "cyan",
+    "condition": "magenta",
+    "item": "yellow",
+}
+
 
 def _load_character_file(path: str) -> tuple[dict | None, str | None]:
     """Reads and parses a character export file for WelcomeScreen's optional
@@ -959,6 +973,13 @@ class DungeonMasterApp(App):
             success = payload.get("success")
             if success is not None:
                 text += " — success" if success else " — failure"
+        # critical only ever appears on a real natural-20 attack roll
+        # (server/engine.py's request_roll closure) - a distinct callout,
+        # not just relying on the green digit highlight above, since that
+        # highlight already fires for any natural max on any roll (a skill
+        # check's nat 20 is just a great check, not a critical hit).
+        if payload.get("critical"):
+            text += " [b red]CRITICAL HIT![/b red]"
         return text
 
     async def _handle(self, envelope: Envelope) -> None:
@@ -1057,6 +1078,14 @@ class DungeonMasterApp(App):
                 # broadcast for every roll (server/engine.py); rendering
                 # both here would show each roll twice.
                 pass
+            elif session_screen is not None and kind == "outcome":
+                # A direct owner ask: damage/heal/spell/item/condition
+                # should read differently at a glance, not blend into
+                # plain narration text. category (server/engine.py's
+                # _outcome_category) picks the color; an unrecognized or
+                # missing category still gets the line, just uncolored.
+                color = _OUTCOME_COLORS.get(envelope.payload.get("category"))
+                session_screen.write_log(f"[{color}]{text}[/{color}]" if color else text)
             elif session_screen is not None:
                 session_screen.write_log(text)
             elif kind == "chat" and isinstance(self.screen, LobbyScreen):

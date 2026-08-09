@@ -404,6 +404,31 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     }
 
 
+def _outcome_category(update: dict) -> str | None:
+    """Picks a single dominant category for a real update_character change,
+    so the client can color-code the resulting log line by what actually
+    happened - a direct owner ask for damage/heal/spell/item to read
+    differently at a glance, not all blend into the same plain text. Takes
+    priority when a call combines several (e.g. a poisoned dart: hp_delta
+    and add_condition in one call) since damage/heal is the most
+    narratively dominant outcome. None means nothing worth a dedicated
+    color (e.g. only notes/disposition changed) - the same "not every
+    change needs a spotlight" restraint _npc_status_line's own dim
+    default already applies."""
+    hp_delta = update.get("hp_delta")
+    if hp_delta:
+        return "damage" if hp_delta < 0 else "heal"
+    if update.get("rest"):
+        return "heal"
+    if update.get("add_condition") or update.get("remove_condition"):
+        return "condition"
+    if update.get("cast_spell"):
+        return "spell"
+    if update.get("add_item") or update.get("remove_item"):
+        return "item"
+    return None
+
+
 def _hit_die_max(hit_die: str) -> int:
     # SRD hit_die values are like "d10" - the max roll, not an actual per-
     # level roll (real 5e typically rolls past level 1); callers add the
@@ -888,6 +913,15 @@ class GameEngine:
         npcs_touched: set[str] = set()
         rolls_made: list[dict] = []
         world_changed = False
+        # (text, category) - one entry per real update_character change
+        # this turn, broadcast as color-coded log lines after narration
+        # finishes streaming (a direct owner ask: damage/heal/spell/item
+        # should read differently at a glance, not blend into plain text
+        # narration - see _outcome_category above). Same deferred-broadcast
+        # shape rolls_made/xp_awards already use, for the same reason -
+        # apply_update is a synchronous tool callback, so nothing here can
+        # await a broadcast directly.
+        outcomes: list[tuple[str, str]] = []
         # (npc_name, xp_awarded, levels_gained) - one entry per NPC this
         # turn's apply_update calls actually defeated, so a broadcast can
         # announce each defeat/level-up after narration finishes streaming,
@@ -1034,6 +1068,23 @@ class GameEngine:
                 return f"Invalid dice notation: {exc}"
 
             success = None if dc is None else total >= dc
+
+            # A critical hit - real 5e's own natural-20-on-an-attack-roll
+            # rule. kept_roll mirrors the client's own disadvantage-
+            # narrowing logic (_dice_result_line): under disadvantage,
+            # rolls holds both d20s but only the worse was actually kept,
+            # so checking either raw entry could wrongly call a discarded
+            # 20 a crit. advantage is never actually set anywhere in this
+            # codebase today (only disadvantage, from tracked conditions),
+            # so rolls always has exactly one entry outside the
+            # disadvantage case. Deliberately just an announced fact for
+            # now, not automatic damage-doubling - that needs the engine
+            # to correlate this roll with a later, separate damage roll
+            # for the same attack, a bigger mechanic than detecting the
+            # crit itself (see ROADMAP.md).
+            kept_roll = min(rolls) if disadvantage else rolls[0]
+            critical = roll_kind == "attack" and sides == 20 and kept_roll == 20
+
             rolls_made.append(
                 {
                     "dice": notation, "total": total, "rolls": rolls, "sides": sides,
@@ -1043,6 +1094,7 @@ class GameEngine:
                     "skill": skill, "proficient": proficient, "proficiency_bonus": proficiency_bonus,
                     "spell": spell_entry["name"] if spell_entry and spell_entry.get("attack") else None,
                     "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
+                    "critical": critical,
                 }
             )
 
@@ -1057,10 +1109,14 @@ class GameEngine:
                 spell_label = f" ({spell_entry['name']}, +{proficiency_bonus} proficiency)"
             roll_kind_label = f" ({roll_kind})" if roll_kind else ""
             disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage else ""
+            critical_label = " CRITICAL HIT!" if critical else ""
             label = damage_label + ability_label + skill_label + spell_label + roll_kind_label + disadvantage_label
             if dc is None:
-                return f"Rolled {notation}{label}: {total} {rolls}."
-            return f"Rolled {notation}{label}: {total} {rolls} vs DC {dc} — {'success' if success else 'failure'}."
+                return f"Rolled {notation}{label}: {total} {rolls}.{critical_label}"
+            return (
+                f"Rolled {notation}{label}: {total} {rolls} vs DC {dc} — "
+                f"{'success' if success else 'failure'}.{critical_label}"
+            )
 
         def apply_update(update: dict) -> str:
             nonlocal sheet_changed
@@ -1074,7 +1130,8 @@ class GameEngine:
             # the player's own id or name.
             if target in ("self", player_id, character.name):
                 result = character.apply_update(update)
-                if not result.startswith("No changes applied"):
+                changed = not result.startswith("No changes applied")
+                if changed:
                     sheet_changed = True
 
                 cast_spell = update.get("cast_spell")
@@ -1082,10 +1139,16 @@ class GameEngine:
                     spell_note, spell_changed = _cast_spell(character, cast_spell, self._rules)
                     if spell_changed:
                         sheet_changed = True
+                        changed = True
                     if result.startswith("No changes applied"):
                         result = f"{character.name} {spell_note}"
                     else:
                         result += f" {character.name} {spell_note}"
+
+                if changed:
+                    category = _outcome_category(update) or ("spell" if cast_spell else None)
+                    if category:
+                        outcomes.append((f"{character.name}: {result}", category))
 
                 return result
 
@@ -1153,6 +1216,11 @@ class GameEngine:
             # change" rule otherwise.
             if introduced or changed:
                 npcs_touched.add(npc_key)
+
+            if changed:
+                category = _outcome_category(update)
+                if category:
+                    outcomes.append((f"{npc.name}: {delta_result}", category))
 
             xp_note = ""
             if defeated:
@@ -1246,6 +1314,14 @@ class GameEngine:
         for roll in rolls_made:
             await self._broadcast(self._log_envelope("dice", self._dice_log_text(character.name, roll)))
             await self._broadcast(self._dice_result_envelope(player_id, roll))
+
+        # A direct owner ask: damage/heal/spell/item/condition should read
+        # differently at a glance in the log, not blend into plain
+        # narration text - broadcast outright (not owner-only) since HP/
+        # conditions changing is already narratively public the same way
+        # player_update/npc_update already are.
+        for text, category in outcomes:
+            await self._broadcast(self._log_envelope("outcome", text, category=category))
 
         if sheet_changed:
             await self._send_to(player_id, self._character_update_envelope(player_id, character))
@@ -1588,6 +1664,8 @@ class GameEngine:
         if roll.get("disadvantage"):
             payload["disadvantage"] = True
             payload["disadvantage_reasons"] = roll["disadvantage_reasons"]
+        if roll.get("critical"):
+            payload["critical"] = True
         return Envelope(
             type="dice_result", session_id=self._session.session_id, sender_id="server", payload=payload
         )
@@ -1711,10 +1789,20 @@ class GameEngine:
             payload={"player_id": self._session.current_turn, "prompt_text": "What do you do?"},
         )
 
-    def _log_envelope(self, kind: str, text: str, done: bool | None = None) -> Envelope:
+    def _log_envelope(
+        self, kind: str, text: str, done: bool | None = None, category: str | None = None
+    ) -> Envelope:
         payload: dict = {"kind": kind, "text": text}
         if done is not None:
             payload["done"] = done
+        # category is deliberately its own field, not folded into kind -
+        # kind ("outcome") says *how* the client should route this line
+        # (append to the log), category ("damage"/"heal"/"spell"/
+        # "condition"/"item") says *what color* - two independent axes,
+        # the same way dice_result already keeps roll_kind and damage_type
+        # as separate fields rather than combining them into one enum.
+        if category is not None:
+            payload["category"] = category
         return Envelope(type="log_entry", session_id=self._session.session_id, sender_id="server", payload=payload)
 
     def _system_envelope(self, text: str, level: str = "info", advisory: bool = False) -> Envelope:

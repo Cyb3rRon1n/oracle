@@ -1218,6 +1218,101 @@ async def test_dice_result_shows_ability_modifier_tag_when_present():
             assert "15" in log_text
 
 
+async def test_dice_result_shows_critical_hit_callout_when_present():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 20, "rolls": [20],
+                    "sides": 20, "purpose": "sword swing", "dc": 15, "success": True,
+                    "roll_kind": "attack", "critical": True,
+                },
+            ))
+            await pilot.pause()
+
+            # Two separate substring checks, not one "CRITICAL HIT!" check -
+            # RichLog wraps long lines at the terminal width, which can
+            # split the phrase across two Strips (and therefore two "\n"-
+            # joined pieces of _log_text's output, with the wrap eating the
+            # space between them) depending on exactly how much text
+            # preceded it on the line.
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "CRITICAL" in log_text
+            assert "HIT!" in log_text
+
+
+async def test_dice_result_no_critical_tag_when_not_a_critical():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 12, "rolls": [12],
+                    "sides": 20, "purpose": "sword swing", "dc": 15, "success": False,
+                    "roll_kind": "attack",
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "CRITICAL HIT!" not in log_text
+
+
+async def test_outcome_log_entry_is_colored_by_category():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="log_entry", session_id="s", sender_id="server",
+                payload={"kind": "outcome", "text": "Thrain: HP -5 (now 5/10)", "category": "damage"},
+            ))
+            await pilot.pause()
+
+            assert _log_has_styled_segment(app.screen.query_one("#log"), "red")
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "HP -5" in log_text
+
+
+async def test_outcome_log_entry_with_unrecognized_category_still_shows_uncolored():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="log_entry", session_id="s", sender_id="server",
+                payload={"kind": "outcome", "text": "Thrain: something happened"},
+            ))
+            await pilot.pause()
+
+            assert "something happened" in _log_text(app.screen.query_one("#log"))
+
+
 async def test_dice_result_shows_roll_kind_tag_when_present():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
