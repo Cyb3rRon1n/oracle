@@ -88,7 +88,7 @@ async def generate_xp_level_up_screenshot() -> None:
     only the narration line itself is scripted rather than model-generated."""
     session = Session(session_id="screenshot-session")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, LevelsUpDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)
@@ -128,7 +128,7 @@ async def generate_spellcasting_screenshot() -> None:
     the narration line itself is scripted rather than model-generated."""
     session = Session(session_id="screenshot-session-spellcasting")
 
-    def engine_factory(broadcast, send_to):
+    def engine_factory(session_id, broadcast, send_to):
         return GameEngine(session, CastsSpellDM(), broadcast, send_to, enable_opening_scene=False)
 
     transport = Transport(engine_factory)

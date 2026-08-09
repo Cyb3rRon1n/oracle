@@ -1269,6 +1269,45 @@ async def test_rejoin_uses_existing_character_name_not_new_input():
     assert joins[-1][2]["text"] == "Thrain joined the session."
 
 
+async def test_rejoin_with_a_different_typed_name_gets_a_private_heads_up():
+    """A player typing a name that doesn't match their existing character
+    (e.g. a stale local .player_id from a previous session) used to have no
+    way of knowing their input was silently ignored - a real, found-live
+    point of confusion, not a hypothetical one. This is private
+    (send_to), not broadcast - it's about what *this* player should
+    understand about their own reconnect, not news for everyone else."""
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+    received.clear()
+
+    await join(engine, player_id, name="SomeoneElse")
+
+    notices = [
+        r for r in received
+        if r[0] == "send_to" and r[1] == player_id and r[2] == "system_message" and "reconnecting" in r[3]["text"]
+    ]
+    assert len(notices) == 1
+    assert "Thrain" in notices[0][3]["text"]
+    assert "SomeoneElse" in notices[0][3]["text"]
+
+
+async def test_rejoin_with_the_same_name_gets_no_heads_up():
+    """The heads-up above only fires when it'd actually be surprising - a
+    plain reconnect (blank name, or the same name typed again) shouldn't
+    get a pointless notice about nothing having changed."""
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+    received.clear()
+
+    await join(engine, player_id, name="Thrain")
+
+    assert not any(
+        r[0] == "send_to" and r[2] == "system_message" and "reconnecting" in r[3]["text"] for r in received
+    )
+
+
 async def test_dice_roll_broadcasts_result_regardless_of_turn():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())
