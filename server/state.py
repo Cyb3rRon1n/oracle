@@ -29,6 +29,17 @@ SKILL_ABILITIES: dict[str, str] = {
     "deception": "cha", "intimidation": "cha", "performance": "cha", "persuasion": "cha",
 }
 
+# Which ability each of Oracle's two real spellcasting classes uses (real
+# 5e Basic Rules - Wizard: Intelligence, Cleric: Wisdom). Lives here
+# rather than server/engine.py for the same circular-import reason
+# SKILL_ABILITIES does - the spell_save_dc computed field just below
+# needs it, and a CharacterSheet computed field can't reach into
+# engine.py (which imports from this module, not the other way around).
+# Fighter/rogue have no entry and cast nothing, the same "no entry means
+# not applicable" convention CLASS_ABILITY_PRIORITY's own absence for an
+# unrecognized class already establishes.
+SPELLCASTING_ABILITY: dict[str, str] = {"wizard": "int", "cleric": "wis"}
+
 
 def ability_modifier(score: int) -> int:
     """The standard 5e ability-modifier formula - floor((score-10)/2).
@@ -102,6 +113,36 @@ class CharacterSheet(BaseModel):
     # shared-model tradeoff notes/ac already make (see their own comments)
     # rather than a second, NPC-only sheet class for one field.
     disposition: Literal["hostile", "neutral", "friendly"] = "neutral"
+    # Spellcasting - real 5e's own two mechanical resources, both plain
+    # stored fields (not computed, unlike stat_modifiers/proficiency_bonus)
+    # since both genuinely mutate over a session: known_spells is set once
+    # at creation (server/engine.py's build_starting_character, the same
+    # "no player-chosen allocation yet" scope every other stat-generation
+    # step here already has) but spell_slots is spent and restored
+    # constantly (casting, resting, leveling up). max_spell_slots is a
+    # separate stored field, not derived live from level, because
+    # spell_slots itself needs a persistent "how many are currently spent"
+    # number that survives a save/reload independent of level - the same
+    # reason max_hp is a real field, not computed from hit_die+level either.
+    # Empty for a non-caster (fighter/rogue, or a blank/unrecognized
+    # class) - the same fallback stats/inventory already use.
+    known_spells: list[str] = Field(default_factory=list)
+    spell_slots: dict[str, int] = Field(default_factory=dict)
+    max_spell_slots: dict[str, int] = Field(default_factory=dict)
+
+    @computed_field
+    @property
+    def spell_save_dc(self) -> int | None:
+        """Real 5e's own formula: 8 + proficiency bonus + spellcasting
+        ability modifier - precomputed the same "don't rely on the LLM for
+        arithmetic" reasoning stat_modifiers/proficiency_bonus already
+        follow. None for a non-caster (SPELLCASTING_ABILITY has no entry
+        for its class, or stats is empty) - a real "not applicable" signal,
+        not a fabricated number for a fighter/rogue/blank-class sheet."""
+        ability = SPELLCASTING_ABILITY.get(self.character_class.strip().lower())
+        if ability is None or ability not in self.stat_modifiers:
+            return None
+        return 8 + self.proficiency_bonus + self.stat_modifiers[ability]
 
     @computed_field
     @property

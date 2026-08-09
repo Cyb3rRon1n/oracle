@@ -36,7 +36,12 @@ You have five tools available:
   their sheet (character_summary's ac); an NPC/monster target's AC is in its stat
   block via lookup_rule. For the damage roll after a hit, use request_roll's weapon
   field (the weapon's name) instead of typing its damage die into dice yourself — the
-  engine looks up the real value and reports the damage type too. Pass roll_kind
+  engine looks up the real value and reports the damage type too. For a spell attack
+  (fire_bolt, ray_of_frost), use request_roll's spell field the same way — real damage
+  die/type, ability, and proficiency all resolved for you. A spell that instead forces
+  a saving throw (sacred_flame, fireball) has no roll of your own to make — narrate
+  against the character's own spell_save_dc (in their sheet) instead, and cast it via
+  update_character's cast_spell field, not request_roll. Pass roll_kind
   (attack/save/check) so the engine can apply real per-condition rules correctly —
   poisoned/frightened don't affect saving throws, and prone only affects attack rolls;
   without roll_kind the engine can't tell these apart and applies disadvantage more
@@ -62,7 +67,12 @@ You have five tools available:
   stay consistent against turn to turn, separate from the free-text `notes`. When
   the character/NPC rests for a meaningful stretch (camping overnight, resting after a
   fight), use the `rest` field ('short' or 'long') instead of guessing an `hp_delta` -
-  the engine computes the real amount healed.
+  the engine computes the real amount healed. For a wizard/cleric casting one of their
+  own known spells (character_summary's known_spells), use `cast_spell` (the spell's
+  name) — the engine deducts the real spell slot itself (or tells you if they don't
+  know it or have none left of that level); cantrips cost no slot. This only tracks
+  the slot spent — still narrate the spell's actual effect and apply it yourself with
+  this same call's other fields (hp_delta, add_condition, ...) or a request_roll.
 - update_world: call this when something should be remembered for the rest of the
   campaign, not just this scene — a new objective or plot thread emerging, one being
   resolved, the location changing, or a durable fact about the world. This is what a
@@ -164,6 +174,22 @@ UPDATE_CHARACTER_TOOL = {
             "remove_condition": {
                 "type": "string",
                 "description": "Condition to clear, if present.",
+            },
+            "cast_spell": {
+                "type": "string",
+                "description": (
+                    "The acting character casts one of their own known spells (e.g. "
+                    "'fire bolt', 'cure wounds') - the engine deducts the real spell "
+                    "slot automatically (nothing to compute yourself), or refuses if "
+                    "they don't know it or have no slot left of the right level. "
+                    "Cantrips (fire_bolt, ray_of_frost, sacred_flame, guidance) cost no "
+                    "slot at all. This only tracks the slot being spent - narrate the "
+                    "spell's actual effect yourself and, if it deals damage, heals, or "
+                    "changes a condition, still apply that separately with this same "
+                    "call's other fields (hp_delta, add_condition, ...) or a following "
+                    "request_roll. Only self can cast - omit target, or this is ignored "
+                    "for an NPC."
+                ),
             },
             "notes": {
                 "type": "string",
@@ -321,6 +347,21 @@ REQUEST_ROLL_TOOL = {
                     "they're proficient in this skill - you don't need to know or track "
                     "which skills a character is proficient in. Omit for a roll that isn't "
                     "a skill check (an attack, a saving throw, a raw damage roll)."
+                ),
+            },
+            "spell": {
+                "type": "string",
+                "description": (
+                    "For a spell attack roll (e.g. 'fire bolt', 'sacred flame'): the "
+                    "engine resolves the spell's real damage die/type and adds the "
+                    "character's spellcasting ability modifier plus proficiency bonus "
+                    "automatically (a spell attack always gets proficiency, unlike a "
+                    "skill check). Only applies to attack-roll spells - a spell that "
+                    "instead forces a saving throw (e.g. sacred_flame, fireball) has no "
+                    "roll of your own to make here; use the character's own spell_save_dc "
+                    "(in their sheet) and narrate whether the target's save succeeds "
+                    "instead. Doesn't consume a spell slot - pair with a separate "
+                    "cast_spell on update_character for that."
                 ),
             },
             "roll_kind": {

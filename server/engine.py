@@ -11,8 +11,8 @@ from shared.protocol import Envelope
 from . import dice
 from .narrator import NarratorBackend
 from .persistence import SessionStore
-from .rules import RulesIndex
-from .state import ABILITY_KEYS, SKILL_ABILITIES, CharacterSheet, Session, ability_modifier
+from .rules import RulesIndex, slug
+from .state import ABILITY_KEYS, SKILL_ABILITIES, SPELLCASTING_ABILITY, CharacterSheet, Session, ability_modifier
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,22 @@ CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
     "wizard": ["Potion of Healing"],
 }
 
+# Deterministic per-class known spells, the same "no player-chosen
+# allocation yet" approach CLASS_STARTING_EQUIPMENT/CLASS_SKILL_PROFICIENCIES
+# already take - real 5e lets a wizard/cleric prepare a chosen subset daily
+# from a much larger list; this assigns a small, fixed set once at creation
+# instead of modeling that choice or the daily re-preparation ritual. A
+# leveled spell above what the character can currently cast (server/rules/
+# srd.json's spell_slots_by_level - e.g. fireball at level 1, no 3rd-level
+# slot until level 5) is still "known", simply not castable yet until a
+# real slot exists - no special-casing needed, the slot check at cast time
+# is the only gate. Fighter/rogue have no entry (cast nothing), the same
+# fallback CLASS_ABILITY_PRIORITY's own absence already establishes.
+CLASS_KNOWN_SPELLS: dict[str, list[str]] = {
+    "wizard": ["fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball"],
+    "cleric": ["sacred_flame", "guidance", "cure_wounds", "bless"],
+}
+
 # The SRD's own real Standard Array (Basic Rules character-creation
 # option), not an invented spread - same "use the official SRD numbers,
 # don't make one up" convention this file's XP-per-CR/XP-per-level tables
@@ -214,6 +230,44 @@ def _asi_announcement(name: str, asi_abilities: list[str]) -> str:
     labels = " and ".join(a.upper() for a in unique)
     verb = "increases" if len(unique) == 1 else "increase"
     return f" {name}'s {labels} {verb}!"
+
+
+def _cast_spell(character: CharacterSheet, spell_name: str, rules: RulesIndex) -> tuple[str, bool]:
+    """Applies update_character's new cast_spell field - deterministic
+    slot bookkeeping (real 5e's own resource), not something the DM has
+    to compute or track itself. Returns (message, changed) - changed is
+    False whenever nothing was actually spent (an unknown spell, one this
+    character doesn't know, or no slot left), the same "only broadcast on
+    a real change" rule every other sheet mutation here already follows.
+
+    Only ever touches known_spells/spell_slots - never validates or
+    resolves a spell's actual in-fiction effect (damage, healing,
+    conditions), the same "the engine resolves real data, doesn't model
+    every unique effect" scope weapon/skill already keep. The DM still
+    narrates the effect and, if one is warranted, applies it through this
+    same update_character call's other fields (hp_delta, add_condition,
+    ...) or a following request_roll - cast_spell only ever answers "was
+    a real slot spent."""
+    entry = rules.get_entry("spell", spell_name)
+    if entry is None:
+        return f"no known spell '{spell_name}'.", False
+
+    spell_slug = slug(entry["name"])
+    if spell_slug not in character.known_spells:
+        return f"{character.name} doesn't know {entry['name']}.", False
+
+    spell_level = entry.get("level", 0)
+    if spell_level == 0:
+        # A cantrip - unlimited use, real 5e's own rule, no slot to spend.
+        return f"casts {entry['name']} (cantrip).", False
+
+    slot_key = str(spell_level)
+    if character.spell_slots.get(slot_key, 0) <= 0:
+        return f"no level {spell_level} spell slots remaining - can't cast {entry['name']}.", False
+
+    character.spell_slots[slot_key] -= 1
+    remaining = character.spell_slots[slot_key]
+    return f"casts {entry['name']} (level {spell_level} slot, {remaining} remaining).", True
 
 
 def _generate_stats(character_class: str) -> dict[str, int]:
@@ -352,6 +406,8 @@ def build_starting_character(
     max_hp = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod)
     inventory = list(CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), []))
     dex_mod = ability_modifier(stats["dex"]) if stats else 0
+    known_spells = list(CLASS_KNOWN_SPELLS.get(character_class.strip().lower(), []))
+    spell_slots = rules.spell_slots_by_level(1) if known_spells else {}
     return CharacterSheet(
         player_id=player_id,
         name=name,
@@ -361,6 +417,9 @@ def build_starting_character(
         stats=stats,
         inventory=inventory,
         ac=_compute_ac(inventory, dex_mod, rules),
+        known_spells=known_spells,
+        spell_slots=dict(spell_slots),
+        max_spell_slots=dict(spell_slots),
     )
 
 
@@ -800,6 +859,23 @@ class GameEngine:
                 if weapon_damage:
                     notation, _, damage_type = weapon_damage.partition(" ")
 
+            # spell, when given (e.g. "fire_bolt"), resolves a real
+            # attack-roll-shaped cantrip/spell the same way weapon resolves
+            # a physical attack - only spells with an "attack": true and a
+            # structured "damage" field in srd.json set anything here (a
+            # save-based spell like sacred_flame, or a non-damaging one
+            # like bless, has nothing an attack roll would resolve, so this
+            # is a graceful no-op for those - see "Spellcasting" in
+            # docs/protocol.md for why request_roll never rolls a target's
+            # saving throw on the caster's behalf). Spell name matching
+            # doesn't check known_spells here (unlike cast_spell on
+            # update_character) - this only ever resolves real dice/damage
+            # data for display, it doesn't consume a slot or need to.
+            spell = update.get("spell")
+            spell_entry = self._rules.get_entry("spell", spell) if spell else None
+            if spell_entry and spell_entry.get("attack") and spell_entry.get("damage"):
+                notation, _, damage_type = spell_entry["damage"].partition(" ")
+
             # ability, when given, is the acting character's own ability
             # key (e.g. "dex") - the engine looks up its real modifier
             # (CharacterSheet.stat_modifiers, already precomputed) and adds
@@ -831,20 +907,32 @@ class GameEngine:
             if skill and not ability:
                 ability = SKILL_ABILITIES[skill]
 
+            # A resolved spell (see above) auto-fills ability from the
+            # character's own real spellcasting ability (SPELLCASTING_ABILITY)
+            # the same way skill does, when the DM didn't already give one.
+            if spell_entry and spell_entry.get("attack") and not ability:
+                ability = SPELLCASTING_ABILITY.get(character.character_class.strip().lower())
+
             ability_mod = character.stat_modifiers.get(ability) if ability else None
 
             # Proficiency bonus - real 5e's own level-scaled bonus
-            # (CharacterSheet.proficiency_bonus, a computed field) - added
-            # only when the acting character is actually proficient in the
-            # named skill (CLASS_SKILL_PROFICIENCIES), never as a blanket
-            # bonus on every check. Fully automatic, the same "the engine
-            # computes this from real tracked state" reasoning
-            # disadvantage/XP/ASI already follow - the DM never has to
-            # know or track which skills a character is proficient in.
+            # (CharacterSheet.proficiency_bonus, a computed field). Two
+            # different rules for when it applies, both real 5e: a skill
+            # check only gets it if the character happens to be proficient
+            # in that specific skill (CLASS_SKILL_PROFICIENCIES); a spell
+            # attack always gets it (5e never lets a caster be "not
+            # proficient" with their own spells) - a real, deliberate
+            # difference between the two, not an inconsistency. Fully
+            # automatic either way, the same "the engine computes this from
+            # real tracked state" reasoning disadvantage/XP/ASI already
+            # follow - the DM never has to know or track proficiencies.
             proficient = bool(skill) and skill in CLASS_SKILL_PROFICIENCIES.get(
                 character.character_class.strip().lower(), ()
             )
             proficiency_bonus = character.proficiency_bonus if proficient else 0
+            if spell_entry and spell_entry.get("attack"):
+                proficient = True
+                proficiency_bonus = character.proficiency_bonus
 
             # roll_kind ("attack"/"save"/"check") is purely descriptive of
             # what the roll represents - unlike every other request_roll
@@ -856,14 +944,20 @@ class GameEngine:
             # the same graceful-miss convention every other name-based
             # field in this closure (weapon, ability) already follows,
             # rather than erroring on a value the model got slightly wrong.
-            # A skill check is, definitionally, a "check" - defaulting to
-            # that here (only when the DM didn't already say otherwise)
-            # means naming a skill also gets the real per-condition
-            # disadvantage scoping for free, without the DM needing to
-            # pass two redundant fields for the same underlying fact.
+            # A skill check is, definitionally, a "check"; a resolved spell
+            # attack is, definitionally, an "attack" - defaulting either
+            # here (only when the DM didn't already say otherwise) means
+            # naming one also gets the real per-condition disadvantage
+            # scoping for free, without the DM needing to pass two
+            # redundant fields for the same underlying fact.
             roll_kind = update.get("roll_kind")
             if roll_kind not in ("attack", "save", "check"):
-                roll_kind = "check" if skill else None
+                if skill:
+                    roll_kind = "check"
+                elif spell_entry and spell_entry.get("attack"):
+                    roll_kind = "attack"
+                else:
+                    roll_kind = None
 
             # Fully automatic, never a model-supplied field - the same
             # "the engine computes this from real tracked state, not the
@@ -891,6 +985,7 @@ class GameEngine:
                     "ability": ability, "ability_modifier": ability_mod,
                     "damage_type": damage_type, "roll_kind": roll_kind,
                     "skill": skill, "proficient": proficient, "proficiency_bonus": proficiency_bonus,
+                    "spell": spell_entry["name"] if spell_entry and spell_entry.get("attack") else None,
                     "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
                 }
             )
@@ -901,9 +996,12 @@ class GameEngine:
             if skill:
                 skill_label = f" ({skill.replace('_', ' ').title()}"
                 skill_label += f", +{proficiency_bonus} proficiency)" if proficient else ")"
+            spell_label = ""
+            if spell_entry and spell_entry.get("attack"):
+                spell_label = f" ({spell_entry['name']}, +{proficiency_bonus} proficiency)"
             roll_kind_label = f" ({roll_kind})" if roll_kind else ""
             disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage else ""
-            label = damage_label + ability_label + skill_label + roll_kind_label + disadvantage_label
+            label = damage_label + ability_label + skill_label + spell_label + roll_kind_label + disadvantage_label
             if dc is None:
                 return f"Rolled {notation}{label}: {total} {rolls}."
             return f"Rolled {notation}{label}: {total} {rolls} vs DC {dc} — {'success' if success else 'failure'}."
@@ -922,6 +1020,17 @@ class GameEngine:
                 result = character.apply_update(update)
                 if not result.startswith("No changes applied"):
                     sheet_changed = True
+
+                cast_spell = update.get("cast_spell")
+                if cast_spell:
+                    spell_note, spell_changed = _cast_spell(character, cast_spell, self._rules)
+                    if spell_changed:
+                        sheet_changed = True
+                    if result.startswith("No changes applied"):
+                        result = f"{character.name} {spell_note}"
+                    else:
+                        result += f" {character.name} {spell_note}"
+
                 return result
 
             # Keyed by a casefolded form of the name, not the raw target
@@ -1028,6 +1137,22 @@ class GameEngine:
                         # changes, extended to cover this too rather than
                         # treated as a new, separate gap.
                         asi_abilities = _apply_ability_score_improvements(character, old_level, character.level)
+
+                        # Spell slots grow by the real delta between the
+                        # old and new level's max, not a full reset to the
+                        # new max - the same "level-up grants more, it
+                        # isn't a free rest" reasoning HP growth above
+                        # already follows, applied to a resource that can
+                        # also be partially spent already. A non-caster
+                        # (max_spell_slots already empty) sees no change,
+                        # since new_max is also {} for it.
+                        if character.max_spell_slots or character.known_spells:
+                            new_max = self._rules.spell_slots_by_level(character.level)
+                            for slot_level, count in new_max.items():
+                                gained = count - character.max_spell_slots.get(slot_level, 0)
+                                if gained > 0:
+                                    character.spell_slots[slot_level] = character.spell_slots.get(slot_level, 0) + gained
+                            character.max_spell_slots = new_max
                 sheet_changed = True
                 xp_awards.append((npc.name, xp_award, levels_gained, asi_abilities))
                 xp_note = f" {npc.name} is defeated! {character.name} gains {xp_award} XP."
@@ -1306,13 +1431,15 @@ class GameEngine:
         if skill:
             skill_label = f" ({skill.replace('_', ' ').title()}"
             skill_label += f", +{roll['proficiency_bonus']} proficiency)" if roll.get("proficient") else ")"
+        spell = roll.get("spell")
+        spell_label = f" ({spell}, +{roll['proficiency_bonus']} proficiency)" if spell else ""
         roll_kind = roll.get("roll_kind")
         roll_kind_label = f" ({roll_kind})" if roll_kind else ""
         disadvantage_reasons = roll.get("disadvantage_reasons")
         disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
         label = f" ({roll['reason']})" if roll["reason"] else ""
         text = (
-            f"{name} rolls {roll['dice']}{damage_label}{ability_label}{skill_label}{roll_kind_label}"
+            f"{name} rolls {roll['dice']}{damage_label}{ability_label}{skill_label}{spell_label}{roll_kind_label}"
             f"{disadvantage_label}{label}: {roll['total']} {roll['rolls']}"
         )
         if roll["dc"] is not None:
@@ -1345,6 +1472,9 @@ class GameEngine:
             payload["proficient"] = roll["proficient"]
             if roll["proficient"]:
                 payload["proficiency_bonus"] = roll["proficiency_bonus"]
+        if roll.get("spell"):
+            payload["spell"] = roll["spell"]
+            payload["proficiency_bonus"] = roll["proficiency_bonus"]
         if roll.get("disadvantage"):
             payload["disadvantage"] = True
             payload["disadvantage_reasons"] = roll["disadvantage_reasons"]
