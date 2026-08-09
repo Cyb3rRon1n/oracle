@@ -477,6 +477,47 @@ def test_world_apply_update_flags_set_and_clear():
     assert "flag cleared" in result
 
 
+def test_world_apply_update_add_location():
+    world = WorldState()
+
+    result = world.apply_update({"add_location": "Great Hall"})
+    assert world.location_map == {"Great Hall": []}
+    assert "added location" in result
+
+    # adding an already-registered location again is a no-op
+    result = world.apply_update({"add_location": "Great Hall"})
+    assert result.startswith("No changes applied")
+
+
+def test_world_apply_update_connect_locations_is_two_way_and_adds_new_endpoints():
+    world = WorldState()
+
+    result = world.apply_update({"connect_locations": ["Great Hall", "Armory"]})
+    assert world.location_map["Great Hall"] == ["Armory"]
+    assert world.location_map["Armory"] == ["Great Hall"]
+    assert "connected" in result
+
+
+def test_world_apply_update_connect_locations_repeat_call_is_a_no_op():
+    world = WorldState()
+    world.apply_update({"connect_locations": ["Great Hall", "Armory"]})
+
+    result = world.apply_update({"connect_locations": ["Great Hall", "Armory"]})
+    assert result.startswith("No changes applied")
+    assert world.location_map["Great Hall"] == ["Armory"]  # not duplicated
+
+
+def test_world_apply_update_connect_locations_ignores_a_self_connection():
+    # a == b would otherwise append the same name to the same list twice
+    # (location_map[a] and location_map[b] are the same list object) -
+    # this locks the guard that prevents that corruption.
+    world = WorldState()
+
+    result = world.apply_update({"connect_locations": ["Great Hall", "Great Hall"]})
+    assert result.startswith("No changes applied")
+    assert world.location_map == {}
+
+
 def test_world_apply_update_no_matching_keys_reports_no_change():
     world = WorldState()
     result = world.apply_update({})

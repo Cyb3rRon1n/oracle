@@ -278,6 +278,26 @@ UPDATE_WORLD_TOOL = {
                 "type": "string",
                 "description": "Name of a world flag to clear (set false / remove).",
             },
+            "add_location": {
+                "type": "string",
+                "description": (
+                    "Register a new location on the party's map, even before any exits to or "
+                    "from it are known yet - use this the moment a new place is discovered."
+                ),
+            },
+            "connect_locations": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 2,
+                "maxItems": 2,
+                "description": (
+                    "Two location names to connect with a passage or exit, e.g. "
+                    "['Great Hall', 'Armory'] - adds both to the map if either is new, and "
+                    "records a two-way connection between them. Call this whenever the party "
+                    "discovers or moves through a connection between two places, so a return "
+                    "visit's layout stays consistent instead of being reinvented each time."
+                ),
+            },
         },
     },
 }
