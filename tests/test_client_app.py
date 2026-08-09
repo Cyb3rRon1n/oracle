@@ -774,6 +774,67 @@ async def test_party_view_never_shows_ability_scores():
             assert "Ability Scores" not in rendered
 
 
+async def test_sheet_panel_renders_known_spells_and_slots_for_a_caster():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Gandalf", "hp": 6, "max_hp": 6,
+                    "known_spells": ["fire_bolt", "magic_missile"],
+                    "spell_slots": {"1": 1}, "max_spell_slots": {"1": 2},
+                    "spell_save_dc": 13,
+                },
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert "Spells" in rendered
+            assert "DC 13" in rendered
+            assert "Slots: 1 1/2" in rendered
+            assert "Fire Bolt" in rendered
+            assert "Magic Missile" in rendered
+
+
+async def test_sheet_panel_shows_no_spells_section_for_a_non_caster():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert "Spells" not in rendered
+
+
+async def test_party_view_never_shows_spells_since_they_are_private():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="player_joined", session_id="s", sender_id="server",
+                payload={
+                    "player_id": "p2", "name": "Gandalf", "character_class": "Wizard",
+                    "hp": 6, "max_hp": 6, "conditions": [], "level": 1,
+                },
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet")._Static__content
+            assert "Spells" not in rendered
+
+
 async def test_sheet_panel_renders_own_ac_next_to_hp():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
@@ -982,6 +1043,33 @@ async def test_dice_result_shows_skill_and_proficiency_tag_when_present():
 
             log_text = _log_text(app.screen.query_one("#log"))
             assert "Athletics, +2 proficiency" in log_text
+
+
+async def test_dice_result_shows_spell_and_proficiency_tag_when_present():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Gandalf", "hp": 6, "max_hp": 6},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d10", "result": 12, "rolls": [10],
+                    "sides": 10, "purpose": "", "dc": 12, "success": True,
+                    "ability": "int", "ability_modifier": 3,
+                    "damage_type": "fire", "spell": "Fire Bolt", "proficiency_bonus": 2,
+                    "roll_kind": "attack",
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "Fire Bolt, +2 proficiency" in log_text
 
 
 async def test_dice_result_shows_skill_without_proficiency_tag_when_not_proficient():

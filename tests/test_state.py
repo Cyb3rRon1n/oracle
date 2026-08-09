@@ -61,6 +61,34 @@ def test_proficiency_bonus_included_in_model_dump():
     assert character.model_dump()["proficiency_bonus"] == 4
 
 
+def test_spell_save_dc_for_a_real_caster():
+    # wizard, level 1 (+2 proficiency), INT 16 (+3 modifier): 8 + 2 + 3 = 13.
+    character = make_character(character_class="wizard", stats={"int": 16}, level=1)
+    assert character.spell_save_dc == 13
+
+
+def test_spell_save_dc_scales_with_proficiency_bonus():
+    character = make_character(character_class="cleric", stats={"wis": 14}, level=9)
+    assert character.spell_save_dc == 8 + 4 + 2  # level 9 -> +4 proficiency, WIS 14 -> +2
+
+
+def test_spell_save_dc_is_none_for_a_non_caster():
+    character = make_character(character_class="fighter", stats={"str": 15})
+    assert character.spell_save_dc is None
+
+
+def test_spell_save_dc_is_none_for_a_blank_class():
+    character = make_character()
+    assert character.spell_save_dc is None
+
+
+def test_known_spells_and_spell_slots_default_to_empty():
+    character = make_character()
+    assert character.known_spells == []
+    assert character.spell_slots == {}
+    assert character.max_spell_slots == {}
+
+
 def test_stat_modifiers_computed_field_is_empty_when_stats_is_empty():
     character = make_character()
     assert character.stats == {}

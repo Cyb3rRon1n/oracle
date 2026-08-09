@@ -155,6 +155,30 @@ class CharacterSheetPanel(Static):
                 if key in stats
             )
             lines.append("")
+        # known_spells/spell_slots/spell_save_dc are only ever present on
+        # the owner's own full sheet (server/engine.py's
+        # _public_character_view keeps them private, same boundary
+        # inventory/stats already have), so this section only ever shows
+        # up on your own sheet, never a Party row - matches the Ability
+        # Scores section just above. The client has no SRD spell data of
+        # its own (that's server-only), so this can't distinguish a
+        # cantrip from a leveled spell in the list below - just the flat
+        # known list plus the real slot counts already sent.
+        known_spells = character.get("known_spells") or []
+        if known_spells:
+            dc = character.get("spell_save_dc")
+            header = "[b]Spells[/b]" + (f" (DC {dc})" if dc is not None else "")
+            lines.append(header)
+            slots = character.get("spell_slots") or {}
+            max_slots = character.get("max_spell_slots") or {}
+            if max_slots:
+                slot_text = ", ".join(
+                    f"{level} {slots.get(level, 0)}/{count}"
+                    for level, count in sorted(max_slots.items(), key=lambda kv: int(kv[0]))
+                )
+                lines.append(f"[dim]Slots: {slot_text}[/dim]")
+            lines.extend(f"- {name.replace('_', ' ').title()}" for name in known_spells)
+            lines.append("")
         inventory = character.get("inventory") or []
         if inventory:
             lines.append("[b]Inventory[/b]")
@@ -708,6 +732,15 @@ class DungeonMasterApp(App):
             if payload.get("proficient"):
                 skill_label += f", +{payload['proficiency_bonus']} proficiency"
             notation = f"{notation} ({skill_label})"
+
+        # spell only ever appears on a DM-requested attack-roll-shaped
+        # spell (server/engine.py's request_roll closure resolving a real
+        # "attack": true srd.json entry) - a spell attack always gets
+        # proficiency in real 5e, unlike a skill check, so this tag always
+        # includes it rather than conditionally like skill's does above.
+        spell = payload.get("spell")
+        if spell:
+            notation = f"{notation} ({spell}, +{payload['proficiency_bonus']} proficiency)"
 
         # roll_kind only ever appears on a DM-requested roll that named one
         # (server/engine.py's request_roll closure) - purely descriptive of

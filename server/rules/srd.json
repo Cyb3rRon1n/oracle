@@ -103,7 +103,10 @@
       "components": "V, S, M (a tiny ball of bat guano and sulfur)",
       "duration": "Instantaneous",
       "description": "A bright streak flashes from you to a point you choose within range and then blossoms with a low roar into an explosion of flame. Each creature in a 20-foot-radius sphere centered on that point must make a Dexterity saving throw, taking 8d6 fire damage on a failed save, or half as much on a successful one.",
-      "at_higher_levels": "When you cast this spell using a spell slot of 4th level or higher, the damage increases by 1d6 for each slot level above 3rd."
+      "at_higher_levels": "When you cast this spell using a spell slot of 4th level or higher, the damage increases by 1d6 for each slot level above 3rd.",
+      "classes": ["wizard"],
+      "damage": "8d6 fire",
+      "save_ability": "dex"
     },
     "magic_missile": {
       "name": "Magic Missile",
@@ -114,7 +117,8 @@
       "components": "V, S",
       "duration": "Instantaneous",
       "description": "You create three glowing darts of magical force. Each dart hits a creature of your choice that you can see within range. A dart deals 1d4+1 force damage to its target. The darts all strike simultaneously.",
-      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, the spell creates one more dart for each slot level above 1st."
+      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, the spell creates one more dart for each slot level above 1st.",
+      "classes": ["wizard"]
     },
     "cure_wounds": {
       "name": "Cure Wounds",
@@ -125,7 +129,8 @@
       "components": "V, S",
       "duration": "Instantaneous",
       "description": "A creature you touch regains a number of hit points equal to 1d8 + your spellcasting ability modifier. This spell has no effect on undead or constructs.",
-      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, the healing increases by 1d8 for each slot level above 1st."
+      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, the healing increases by 1d8 for each slot level above 1st.",
+      "classes": ["cleric"]
     },
     "mage_armor": {
       "name": "Mage Armor",
@@ -135,7 +140,8 @@
       "range": "Touch",
       "components": "V, S, M (a piece of cured leather)",
       "duration": "8 hours",
-      "description": "You touch a willing creature who isn't wearing armor, and a protective magical force surrounds it until the spell ends. The target's base AC becomes 13 + its Dexterity modifier."
+      "description": "You touch a willing creature who isn't wearing armor, and a protective magical force surrounds it until the spell ends. The target's base AC becomes 13 + its Dexterity modifier.",
+      "classes": ["wizard"]
     },
     "shield": {
       "name": "Shield",
@@ -145,7 +151,69 @@
       "range": "Self",
       "components": "V, S",
       "duration": "1 round",
-      "description": "An invisible barrier of magical force appears and protects you. Until the start of your next turn, you have a +5 bonus to AC, including against the triggering attack, and you take no damage from magic missile."
+      "description": "An invisible barrier of magical force appears and protects you. Until the start of your next turn, you have a +5 bonus to AC, including against the triggering attack, and you take no damage from magic missile.",
+      "classes": ["wizard"]
+    },
+    "fire_bolt": {
+      "name": "Fire Bolt",
+      "level": 0,
+      "school": "Evocation",
+      "casting_time": "1 action",
+      "range": "120 feet",
+      "components": "V, S",
+      "duration": "Instantaneous",
+      "description": "You hurl a mote of fire at a creature or object within range. Make a ranged spell attack against the target. On a hit, the target takes 1d10 fire damage. A flammable object hit by this spell ignites if it isn't being worn or carried.",
+      "classes": ["wizard"],
+      "damage": "1d10 fire",
+      "attack": true
+    },
+    "ray_of_frost": {
+      "name": "Ray of Frost",
+      "level": 0,
+      "school": "Evocation",
+      "casting_time": "1 action",
+      "range": "60 feet",
+      "components": "V, S",
+      "duration": "Instantaneous",
+      "description": "A frigid beam of blue-white light streaks toward a creature within range. Make a ranged spell attack against the target. On a hit, it takes 1d8 cold damage, and its speed is reduced by 10 feet until the start of your next turn.",
+      "classes": ["wizard"],
+      "damage": "1d8 cold",
+      "attack": true
+    },
+    "sacred_flame": {
+      "name": "Sacred Flame",
+      "level": 0,
+      "school": "Evocation",
+      "casting_time": "1 action",
+      "range": "60 feet",
+      "components": "V, S",
+      "duration": "Instantaneous",
+      "description": "Flame-like radiance descends on a creature you can see within range. The target must succeed on a Dexterity saving throw or take 1d8 radiant damage. The target gains no benefit from cover for this saving throw.",
+      "classes": ["cleric"],
+      "damage": "1d8 radiant",
+      "save_ability": "dex"
+    },
+    "guidance": {
+      "name": "Guidance",
+      "level": 0,
+      "school": "Divination",
+      "casting_time": "1 action",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "Concentration, up to 1 minute",
+      "description": "You touch one willing creature. Once before the spell ends, the target can roll a d4 and add the number rolled to one ability check of its choice.",
+      "classes": ["cleric"]
+    },
+    "bless": {
+      "name": "Bless",
+      "level": 1,
+      "school": "Enchantment",
+      "casting_time": "1 action",
+      "range": "30 feet",
+      "components": "V, S, M (a sprinkling of holy water)",
+      "duration": "Concentration, up to 1 minute",
+      "description": "You bless up to three creatures of your choice within range. Whenever a target makes an attack roll or a saving throw before the spell ends, the target can add a d4 to the attack roll or saving throw.",
+      "classes": ["cleric"]
     }
   },
   "conditions": {
@@ -241,6 +309,28 @@
     }
   },
   "leveling": {
+    "spell_slots_by_level": {
+      "1": {"1": 2},
+      "2": {"1": 3},
+      "3": {"1": 4, "2": 2},
+      "4": {"1": 4, "2": 3},
+      "5": {"1": 4, "2": 3, "3": 2},
+      "6": {"1": 4, "2": 3, "3": 3},
+      "7": {"1": 4, "2": 3, "3": 3, "4": 1},
+      "8": {"1": 4, "2": 3, "3": 3, "4": 2},
+      "9": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 1},
+      "10": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2},
+      "11": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1},
+      "12": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1},
+      "13": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1, "7": 1},
+      "14": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1, "7": 1},
+      "15": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1, "7": 1, "8": 1},
+      "16": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1, "7": 1, "8": 1},
+      "17": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 3, "6": 1, "7": 1, "8": 1, "9": 1},
+      "18": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 3, "6": 1, "7": 1, "8": 1, "9": 1},
+      "19": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 3, "6": 2, "7": 1, "8": 1, "9": 1},
+      "20": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 3, "6": 2, "7": 2, "8": 1, "9": 1}
+    },
     "xp_by_level": {
       "1": 0, "2": 300, "3": 900, "4": 2700, "5": 6500,
       "6": 14000, "7": 23000, "8": 34000, "9": 48000, "10": 64000,

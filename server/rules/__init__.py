@@ -40,7 +40,7 @@ class RulesIndex:
         if key is None:
             return None
         entries = self._data.get(key, {})
-        return entries.get(_slug(name))
+        return entries.get(slug(name))
 
     def xp_thresholds(self) -> dict[int, int]:
         """Level -> cumulative XP required to reach it, from the SRD's own
@@ -49,6 +49,15 @@ class RulesIndex:
         get_entry() - server/state.py's CharacterSheet.gain_xp() takes this
         directly."""
         return {int(level): xp for level, xp in self._data["leveling"]["xp_by_level"].items()}
+
+    def spell_slots_by_level(self, level: int) -> dict[str, int]:
+        """Real 5e's full-caster spell slot table (slot level -> count) for
+        a given character level, from the SRD's own Spell Slots by Level
+        table. {} for a level with no entry (shouldn't happen for 1-20, but
+        graceful rather than a KeyError for a level outside that range) -
+        the same "not present isn't an error" convention xp_for_cr already
+        follows."""
+        return dict(self._data["leveling"]["spell_slots_by_level"].get(str(level), {}))
 
     def xp_for_cr(self, challenge_rating: str) -> int | None:
         """XP awarded for defeating a monster of the given challenge rating
@@ -60,5 +69,13 @@ class RulesIndex:
         return self._data["leveling"]["xp_by_cr"].get(challenge_rating)
 
 
-def _slug(name: str) -> str:
+def slug(name: str) -> str:
+    """Normalizes a display name (or an already-slugged one) to srd.json's
+    own key format - e.g. "Fire Bolt" and "fire_bolt" both become
+    "fire_bolt". Public (not the get_entry()-only private helper this used
+    to be) since server/engine.py's cast_spell handling needs the exact
+    same normalization to check a spell name against a character's
+    known_spells (itself stored pre-slugged, e.g. CLASS_KNOWN_SPELLS) -
+    one place defines this instead of two independent implementations
+    drifting apart."""
     return name.strip().lower().replace(" ", "_").replace("'", "")

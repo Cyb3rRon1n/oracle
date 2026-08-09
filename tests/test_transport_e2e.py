@@ -1171,3 +1171,77 @@ async def test_formal_initiative_reorders_turns_over_a_real_session():
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await server_task
+
+
+class CastsFireBoltDM:
+    """Simulates a DM turn that both spends a real spell slot
+    (update_character's cast_spell, a leveled spell) and rolls a real
+    spell attack (request_roll's spell field, a cantrip - deliberately a
+    different spell, so this also confirms a cantrip attack roll doesn't
+    accidentally touch slot bookkeeping meant for the leveled spell) in
+    the same turn - exercises the full spellcasting chain over an actual
+    websocket, not just each half in isolation."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+        apply_update({"cast_spell": "Magic Missile"})
+        request_roll({"dice": "1d20", "spell": "fire_bolt"})
+        yield "You hurl a mote of fire at the rat."
+
+
+async def test_spellcasting_over_a_real_session():
+    """Confirms the whole spellcasting chain works end to end over a real
+    websocket, not just at the engine-unit level (tests/test_engine.py):
+    a real wizard joins with its real known_spells/spell_slots, a real
+    cast_spell call over an actual websocket genuinely spends a slot (the
+    real re-rendered sheet panel reflects it), and a real request_roll
+    naming only "spell": "fire_bolt" resolves the real damage die,
+    ability, and proficiency bonus together."""
+    session = Session(session_id="e2e-session-15")
+
+    def engine_factory(broadcast, send_to):
+        return GameEngine(session, CastsFireBoltDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8817))
+    await asyncio.sleep(0.3)  # let the server bind
+
+    try:
+        player_id = str(uuid.uuid4())
+        app = DungeonMasterApp(uri="ws://localhost:8817", player_id=player_id, is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Gandalf")
+            await pilot.click("#class-input")
+            await pilot.press(*"wizard")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            sheet = app.screen.query_one("#sheet")
+            assert "Fire Bolt" in sheet._Static__content
+            assert "Slots: 1 2/2" in sheet._Static__content
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I cast fire bolt at the rat", "enter")
+            await _wait_until(lambda: "Fire Bolt" in _log_text(app.screen.query_one("#log")))
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "proficiency" in log_text
+            assert "INT" in log_text
+
+            # A real, direct check on server state - the slot was really
+            # spent, not just narrated.
+            assert session.characters[player_id].spell_slots == {"1": 1}
+
+            # character_update broadcasts after dice_result in the same
+            # turn (server/engine.py's _narrate_and_apply ordering) - wait
+            # specifically for the sheet's own slot count to catch up
+            # rather than assuming it already has by the time the log
+            # assertion above passed.
+            await _wait_until(lambda: "Slots: 1 1/2" in app.screen.query_one("#sheet")._Static__content)
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task

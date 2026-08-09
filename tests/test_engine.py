@@ -192,6 +192,44 @@ def test_build_starting_character_falls_back_on_blank_or_unknown_class(character
     assert sheet.ac == 10  # unarmored baseline, no DEX modifier to add (no stats)
 
 
+def test_build_starting_character_gives_wizard_real_known_spells_and_slots():
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Gandalf", "wizard", rules)
+
+    assert sheet.known_spells == ["fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball"]
+    assert sheet.spell_slots == {"1": 2}
+    assert sheet.max_spell_slots == {"1": 2}
+    assert sheet.spell_save_dc is not None
+
+
+def test_build_starting_character_gives_cleric_real_known_spells_and_slots():
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Fenwick", "cleric", rules)
+
+    assert sheet.known_spells == ["sacred_flame", "guidance", "cure_wounds", "bless"]
+    assert sheet.spell_slots == {"1": 2}
+
+
+def test_build_starting_character_gives_a_non_caster_no_spells():
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules)
+
+    assert sheet.known_spells == []
+    assert sheet.spell_slots == {}
+    assert sheet.max_spell_slots == {}
+
+
+def test_rules_index_spell_slots_by_level_real_progression():
+    rules = RulesIndex.load_default()
+    assert rules.spell_slots_by_level(1) == {"1": 2}
+    assert rules.spell_slots_by_level(5) == {"1": 4, "2": 3, "3": 2}
+
+
+def test_rules_index_spell_slots_by_level_unknown_level_is_empty():
+    rules = RulesIndex.load_default()
+    assert rules.spell_slots_by_level(999) == {}
+
+
 async def test_join_with_character_class_builds_real_starting_sheet_end_to_end():
     engine, session, _ = make_engine(StubDM())
     player_id = str(uuid.uuid4())
@@ -1613,6 +1651,178 @@ async def test_request_roll_explicit_ability_overrides_skill_derived_ability():
     payload = results[-1][2]
     assert payload["ability"] == "dex"  # explicit override, not athletics' real "str"
     assert payload["proficient"] is True  # proficiency itself is unaffected by the ability swap
+
+
+async def test_cast_spell_consumes_a_real_slot_and_broadcasts_character_update():
+    dm = UpdateCharacterDM({"cast_spell": "Magic Missile"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+    assert session.characters[player_id].spell_slots == {"1": 2}
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast magic missile"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.spell_slots == {"1": 1}
+    assert dm.tool_result is not None and "Magic Missile" in dm.tool_result
+    updates = [r for r in received if r[0] == "send_to" and r[2] == "character_update"]
+    assert updates, "a real slot spend should push a character_update"
+
+
+async def test_cast_spell_cantrip_does_not_consume_a_slot():
+    dm = UpdateCharacterDM({"cast_spell": "fire_bolt"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast fire bolt"},
+    ))
+
+    assert session.characters[player_id].spell_slots == {"1": 2}  # untouched
+    assert dm.tool_result is not None and "cantrip" in dm.tool_result
+
+
+async def test_cast_spell_unrecognized_name_is_a_graceful_no_op():
+    dm = UpdateCharacterDM({"cast_spell": "abracadabra"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast a made-up spell"},
+    ))
+
+    assert session.characters[player_id].spell_slots == {"1": 2}
+    assert dm.tool_result is not None and "no known spell" in dm.tool_result
+
+
+async def test_cast_spell_not_in_known_spells_is_a_graceful_no_op():
+    # cure_wounds is a real spell, just not one a wizard actually knows.
+    dm = UpdateCharacterDM({"cast_spell": "cure_wounds"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try to cast cure wounds"},
+    ))
+
+    assert session.characters[player_id].spell_slots == {"1": 2}
+    assert dm.tool_result is not None and "doesn't know" in dm.tool_result
+
+
+async def test_cast_spell_with_no_slots_remaining_is_a_graceful_no_op():
+    dm = UpdateSequenceDM([{"cast_spell": "Magic Missile"}, {"cast_spell": "Shield"}, {"cast_spell": "Mage Armor"}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")  # only 2 level-1 slots
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast three spells in a row"},
+    ))
+
+    assert session.characters[player_id].spell_slots == {"1": 0}
+    assert "no level 1 spell slots remaining" in dm.tool_results[-1]
+
+
+async def test_cast_spell_only_applies_to_self_never_an_npc():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": 0, "cast_spell": "Magic Missile"}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "A goblin appears"},
+    ))
+
+    assert session.characters[player_id].spell_slots == {"1": 2}  # untouched - cast_spell ignored for an NPC target
+
+
+async def test_level_up_grows_spell_slots_by_the_real_delta():
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 300}])  # level-2 threshold
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+    assert session.characters[player_id].spell_slots == {"1": 2}
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.level == 2
+    # Level 2's real max is 3 - grown by the delta (1), not reset to 3
+    # outright, so an already-spent slot would stay spent through a
+    # level-up (not exercised here, but the addition-not-reset logic is
+    # what this confirms).
+    assert character.spell_slots == {"1": 3}
+    assert character.max_spell_slots == {"1": 3}
+
+
+async def test_request_roll_spell_resolves_damage_ability_and_proficiency():
+    dm = RequestRollDM({"dice": "1d20", "spell": "fire_bolt"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+
+    with patch("server.dice.random.randint", return_value=10):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I cast fire bolt at the rat"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["spell"] == "Fire Bolt"
+    assert payload["dice"] == "1d10"
+    assert payload["damage_type"] == "fire"
+    assert payload["ability"] == "int"  # wizard's real spellcasting ability, auto-resolved
+    assert payload["proficiency_bonus"] == 2
+    assert payload["roll_kind"] == "attack"  # auto-defaulted
+
+
+async def test_request_roll_spell_non_attack_spell_is_a_graceful_no_op():
+    # bless has no "attack": true / "damage" in srd.json - nothing for
+    # request_roll to resolve, so the roll falls through to plain 1d20.
+    dm = RequestRollDM({"dice": "1d20", "spell": "bless"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "cleric", name="Fenwick")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast bless"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert "spell" not in payload
+    assert payload["dice"] == "1d20"
+
+
+async def test_request_roll_spell_explicit_ability_overrides_the_default():
+    dm = RequestRollDM({"dice": "1d20", "spell": "fire_bolt", "ability": "dex"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast fire bolt with a flourish"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert results[-1][2]["ability"] == "dex"  # explicit override, not INT
 
 
 async def test_player_initiated_roll_also_applies_disadvantage():
