@@ -8,7 +8,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, RichLog, Static
+from textual.widgets import Button, Footer, Header, Input, RichLog, Static, TabbedContent, TabPane
 
 from shared.protocol import Envelope
 
@@ -58,13 +58,61 @@ def _transcript_text(rich_log: RichLog) -> str:
     return "\n".join(strip.text for strip in rich_log.lines)
 
 
-class CharacterSheetPanel(Static):
+class CharacterSheetPanel(Vertical):
+    """A tabbed character sheet (ROADMAP.md item 7) - Overview/Abilities/
+    Inventory/Spells/Features & Notes, replacing the original single
+    scrolling Static blob so there's real room for detail (class features,
+    skill proficiencies) that had nowhere to live before. Each tab is its
+    own Static, rebuilt in full on every update (not lazily on tab switch)
+    so a tab you're not currently looking at is never stale by the time
+    you do switch to it."""
+
+    # pageup/pagedown, not ctrl+left/right as ROADMAP.md's own design pass
+    # first suggested - Input (the action/chat box, where focus normally
+    # sits) already binds ctrl+left/ctrl+right for word-cursor movement,
+    # so that choice would have silently stolen a real editing shortcut
+    # from the widget doing the actual work. Checked against Textual's own
+    # Input BINDINGS before picking these instead of assuming.
+    BINDINGS = [
+        ("pageup", "previous_tab", "Prev tab"),
+        ("pagedown", "next_tab", "Next tab"),
+    ]
+
+    _TAB_IDS = ("tab-overview", "tab-abilities", "tab-inventory", "tab-spells", "tab-features")
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._character: dict = {}
         self._world: dict = {}
         self._others: dict = {}
         self._npcs: dict = {}
+
+    def compose(self) -> ComposeResult:
+        with TabbedContent(id="sheet-tabs", initial="tab-overview"):
+            with TabPane("Overview", id="tab-overview"):
+                yield Static(id="tab-overview-content")
+            with TabPane("Abilities", id="tab-abilities"):
+                yield Static(id="tab-abilities-content")
+            with TabPane("Inventory", id="tab-inventory"):
+                yield Static(id="tab-inventory-content")
+            with TabPane("Spells", id="tab-spells"):
+                yield Static(id="tab-spells-content")
+            with TabPane("Features & Notes", id="tab-features"):
+                yield Static(id="tab-features-content")
+
+    def action_previous_tab(self) -> None:
+        self._cycle_tab(-1)
+
+    def action_next_tab(self) -> None:
+        self._cycle_tab(1)
+
+    def _cycle_tab(self, direction: int) -> None:
+        visible = [tab_id for tab_id in self._TAB_IDS if tab_id != "tab-spells" or self._character.get("known_spells")]
+        tabs = self.query_one("#sheet-tabs", TabbedContent)
+        if tabs.active not in visible:
+            return
+        index = visible.index(tabs.active)
+        tabs.active = visible[(index + direction) % len(visible)]
 
     def render_sheet(self, character: dict) -> None:
         self._character = character
@@ -93,15 +141,7 @@ class CharacterSheetPanel(Static):
         self._others = others
         self._refresh_display()
 
-    def _refresh_display(self) -> None:
-        # Deliberately not named _render - Textual's own Widget._render() is
-        # a real internal method (returns a Visual for the content-height
-        # pipeline), and a same-named subclass method silently shadows it
-        # instead of erroring at definition time. That collision is exactly
-        # what crashed this app on startup against Textual 8.2.8's newer
-        # internals (pyproject.toml only pins textual>=0.58, no upper bound)
-        # - self._render() returning None broke get_content_height()'s
-        # visual.get_height() call.
+    def _overview_text(self) -> str:
         character = self._character
         name_line = f"[b]{character.get('name', '?')}[/b]"
         character_class = character.get("character_class")
@@ -115,15 +155,6 @@ class CharacterSheetPanel(Static):
         # (e.g. an NPC view, which has no level at all) would fall through
         # to the default here.
         name_line += f"  Lv {character.get('level', 1)}"
-        # A header block (identity + HP/AC) set off by a divider, then
-        # everything else below it - the same shape D&D Beyond's own sheet
-        # uses (name/class up top, core combat stats grouped together and
-        # visually distinct from ability scores/equipment further down) and
-        # Roll20's paged sheet mirrors with its "Core Page" vs. the rest.
-        # Oracle still has no Initiative/Speed data (see ROADMAP.md - not
-        # fabricating placeholder fields for those); AC joins HP in this
-        # header now, ability scores populate further below, like D&D
-        # Beyond's own sheet layout.
         lines = [
             name_line,
             self._hp_line(
@@ -137,8 +168,35 @@ class CharacterSheetPanel(Static):
         # already have), so this line only shows up on your own sheet.
         if "xp" in character:
             lines.append(f"[dim]XP: {character.get('xp', 0)}[/dim]")
-        lines.append(self._DIVIDER)
+
+        active_objectives = [o for o in (self._world.get("objectives") or []) if o.get("status") == "active"]
+        if active_objectives:
+            lines.append("")
+            lines.append("[b]Objectives[/b]")
+            lines.extend(f"- {o['text']}" for o in active_objectives)
+
+        if self._npcs:
+            lines.append("")
+            lines.append(self._DIVIDER)
+            lines.append("[b]NPCs[/b]")
+            lines.extend(self._npc_line(name, npc) for name, npc in self._npcs.items())
+
+        if self._others:
+            # "Party", not "Other Players" - the genre-standard term both
+            # D&D Beyond's Campaign dashboard and Roll20's turn-order
+            # tracker use for this exact "everyone else, at a glance" view,
+            # as opposed to a single character's own full sheet.
+            lines.append("")
+            lines.append(self._DIVIDER)
+            lines.append("[b]Party[/b]")
+            lines.extend(self._other_player_line(other) for other in self._others.values())
+
+        return "\n".join(lines).rstrip()
+
+    def _abilities_text(self) -> str:
+        character = self._character
         stats = character.get("stats") or {}
+        lines: list[str] = []
         if stats:
             # stat_modifiers is a server-side @computed_field (real
             # precomputed modifiers, server/state.py) - present whenever
@@ -154,63 +212,120 @@ class CharacterSheetPanel(Static):
                 for key in ("str", "dex", "con", "int", "wis", "cha")
                 if key in stats
             )
-            lines.append("")
+        # skill_proficiencies is owner-only, added by server/engine.py's
+        # _owner_character_view (ROADMAP.md item 7) - previously this was
+        # only ever visible transiently in a roll's own label text after
+        # the fact, never as something a player could just look at.
+        skill_proficiencies = character.get("skill_proficiencies") or []
+        if skill_proficiencies:
+            if lines:
+                lines.append("")
+            lines.append("[b]Skill Proficiencies[/b]")
+            lines.extend(f"- {skill.replace('_', ' ').title()}" for skill in skill_proficiencies)
+        return "\n".join(lines).rstrip()
+
+    def _inventory_text(self) -> str:
+        inventory = self._character.get("inventory") or []
+        if not inventory:
+            return ""
+        lines = ["[b]Inventory[/b]"]
+        lines.extend(f"- {item}" for item in inventory)
+        return "\n".join(lines).rstrip()
+
+    def _spells_text(self) -> str:
         # known_spells/spell_slots/spell_save_dc are only ever present on
         # the owner's own full sheet (server/engine.py's
         # _public_character_view keeps them private, same boundary
-        # inventory/stats already have), so this section only ever shows
-        # up on your own sheet, never a Party row - matches the Ability
-        # Scores section just above. The client has no SRD spell data of
-        # its own (that's server-only), so this can't distinguish a
+        # inventory/stats already have) - the client has no SRD spell data
+        # of its own (that's server-only), so this can't distinguish a
         # cantrip from a leveled spell in the list below - just the flat
         # known list plus the real slot counts already sent.
+        character = self._character
         known_spells = character.get("known_spells") or []
-        if known_spells:
-            dc = character.get("spell_save_dc")
-            header = "[b]Spells[/b]" + (f" (DC {dc})" if dc is not None else "")
-            lines.append(header)
-            slots = character.get("spell_slots") or {}
-            max_slots = character.get("max_spell_slots") or {}
-            if max_slots:
-                slot_text = ", ".join(
-                    f"{level} {slots.get(level, 0)}/{count}"
-                    for level, count in sorted(max_slots.items(), key=lambda kv: int(kv[0]))
-                )
-                lines.append(f"[dim]Slots: {slot_text}[/dim]")
-            lines.extend(f"- {name.replace('_', ' ').title()}" for name in known_spells)
-            lines.append("")
-        inventory = character.get("inventory") or []
-        if inventory:
-            lines.append("[b]Inventory[/b]")
-            lines.extend(f"- {item}" for item in inventory)
-            lines.append("")
+        if not known_spells:
+            return ""
+        dc = character.get("spell_save_dc")
+        lines = ["[b]Spells[/b]" + (f" (DC {dc})" if dc is not None else "")]
+        slots = character.get("spell_slots") or {}
+        max_slots = character.get("max_spell_slots") or {}
+        if max_slots:
+            slot_text = ", ".join(
+                f"{level} {slots.get(level, 0)}/{count}"
+                for level, count in sorted(max_slots.items(), key=lambda kv: int(kv[0]))
+            )
+            lines.append(f"[dim]Slots: {slot_text}[/dim]")
+        lines.extend(f"- {name.replace('_', ' ').title()}" for name in known_spells)
+        return "\n".join(lines).rstrip()
+
+    def _features_text(self) -> str:
+        character = self._character
+        lines: list[str] = []
+        # class_features is owner-only, added by server/engine.py's
+        # _owner_character_view (ROADMAP.md item 7) - real SRD data
+        # (server/rules/srd.json's level_1_features) that existed all
+        # along but was never actually sent to the client before this.
+        class_features = character.get("class_features") or []
+        if class_features:
+            lines.append("[b]Class Features[/b]")
+            lines.extend(f"- {feature}" for feature in class_features)
         conditions = character.get("conditions") or []
         if conditions:
+            if lines:
+                lines.append("")
             lines.append("[b]Conditions[/b]")
             lines.extend(f"- {c}" for c in conditions)
-            lines.append("")
+        # notes is set via /note (character_edit) but was never actually
+        # rendered anywhere on the sheet before this tab existed - a real
+        # pre-existing gap this closes, not new functionality.
+        notes = character.get("notes")
+        if notes:
+            if lines:
+                lines.append("")
+            lines.append("[b]Notes[/b]")
+            lines.append(notes)
+        return "\n".join(lines).rstrip()
 
-        active_objectives = [o for o in (self._world.get("objectives") or []) if o.get("status") == "active"]
-        if active_objectives:
-            lines.append("[b]Objectives[/b]")
-            lines.extend(f"- {o['text']}" for o in active_objectives)
-            lines.append("")
+    def all_text(self) -> str:
+        """Every tab's content concatenated - for tests/tooling that just
+        need to check whether some text appears anywhere on the sheet,
+        regardless of which tab it lives on."""
+        return "\n".join(
+            [
+                self._overview_text(),
+                self._abilities_text(),
+                self._inventory_text(),
+                self._spells_text(),
+                self._features_text(),
+            ]
+        )
 
-        if self._npcs:
-            lines.append(self._DIVIDER)
-            lines.append("[b]NPCs[/b]")
-            lines.extend(self._npc_line(name, npc) for name, npc in self._npcs.items())
+    def _refresh_display(self) -> None:
+        # Deliberately not named _render - Textual's own Widget._render() is
+        # a real internal method (returns a Visual for the content-height
+        # pipeline), and a same-named subclass method silently shadows it
+        # instead of erroring at definition time. That collision is exactly
+        # what crashed this app on startup against Textual 8.2.8's newer
+        # internals (pyproject.toml only pins textual>=0.58, no upper bound)
+        # - self._render() returning None broke get_content_height()'s
+        # visual.get_height() call.
+        try:
+            self.query_one("#tab-overview-content", Static).update(self._overview_text())
+            self.query_one("#tab-abilities-content", Static).update(self._abilities_text())
+            self.query_one("#tab-inventory-content", Static).update(self._inventory_text())
+            self.query_one("#tab-spells-content", Static).update(self._spells_text())
+            self.query_one("#tab-features-content", Static).update(self._features_text())
+        except NoMatches:
+            # A render call can land before compose()'s children are
+            # mounted (e.g. a very first state_sync racing on_mount) - a
+            # no-op here is fine, on_mount's own refresh_sheet_widgets call
+            # covers the real first paint once mounting completes.
+            return
 
-        if self._others:
-            # "Party", not "Other Players" - the genre-standard term both
-            # D&D Beyond's Campaign dashboard and Roll20's turn-order
-            # tracker use for this exact "everyone else, at a glance" view,
-            # as opposed to a single character's own full sheet.
-            lines.append(self._DIVIDER)
-            lines.append("[b]Party[/b]")
-            lines.extend(self._other_player_line(other) for other in self._others.values())
-
-        self.update("\n".join(lines).rstrip())
+        tabs = self.query_one("#sheet-tabs", TabbedContent)
+        if self._character.get("known_spells"):
+            tabs.show_tab("tab-spells")
+        else:
+            tabs.hide_tab("tab-spells")
 
     _DIVIDER = "[dim]" + "─" * 24 + "[/dim]"
 
@@ -419,7 +534,7 @@ class LobbyScreen(Screen):
 
     CSS = """
     LobbyScreen Horizontal { height: 1fr; }
-    LobbyScreen CharacterSheetPanel { width: 30%; border: solid $accent; padding: 1; }
+    LobbyScreen CharacterSheetPanel { width: 30%; height: 1fr; border: solid $accent; padding: 1; }
     LobbyScreen RichLog { width: 70%; border: solid $accent; }
     #lobby-status { height: 1; padding: 0 1; }
     """
@@ -489,7 +604,7 @@ class SessionScreen(Screen):
 
     CSS = """
     SessionScreen Horizontal { height: 1fr; }
-    SessionScreen CharacterSheetPanel { width: 30%; border: solid $accent; padding: 1; }
+    SessionScreen CharacterSheetPanel { width: 30%; height: 1fr; border: solid $accent; padding: 1; }
     SessionScreen RichLog { width: 70%; border: solid $accent; }
     #status { height: 1; padding: 0 1; }
     """

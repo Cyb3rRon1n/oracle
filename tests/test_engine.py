@@ -11,6 +11,7 @@ from server.engine import (
     _apply_ability_score_improvements,
     _asi_announcement,
     _compute_ac,
+    _owner_character_view,
     _public_character_view,
 )
 from server.rules import RulesIndex
@@ -978,6 +979,76 @@ async def test_public_character_view_includes_level_but_not_xp():
     view = syncs[-1][3]["characters"][player_id]
     assert view["level"] == 1
     assert "xp" not in view
+
+
+async def test_owner_character_view_includes_class_features_and_skill_proficiencies():
+    # ROADMAP.md item 7 - the tabbed character sheet needed this data sent
+    # at all, not just computed server-side. Both already existed before
+    # this (level_1_features in server/rules/srd.json, CLASS_SKILL_
+    # PROFICIENCIES in this module) but neither was ever part of any
+    # payload a client actually receives.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Elowen", "character_class": "wizard"},
+    ))
+
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert "Arcane Recovery" in " ".join(view["class_features"])
+    assert view["skill_proficiencies"] == ["arcana", "investigation"]
+
+
+async def test_owner_character_view_still_includes_everything_model_dump_has():
+    # A thin wrapper, not a replacement - the owner's own state_sync/
+    # character_update payloads shouldn't lose any existing field (hp,
+    # inventory, xp, ...) just because two new ones were added on top.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["hp"] == session.characters[player_id].hp
+    assert "xp" in view
+
+
+async def test_owner_character_view_handles_a_blank_or_unrecognized_class():
+    # No class_entry in the SRD dataset for "" or an unrecognized class -
+    # the same graceful "not present isn't an error" fallback
+    # CLASS_ABILITY_PRIORITY's own absence already produces for stats,
+    # not a KeyError.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["class_features"] == []
+    assert view["skill_proficiencies"] == []
+
+
+async def test_state_sync_sends_owner_view_with_class_features_to_the_owner_only():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Elowen", "character_class": "wizard"},
+    ))
+
+    other_id = str(uuid.uuid4())
+    await join(engine, other_id, name="Rowan")
+
+    # Elowen's own state_sync: her own entry is the owner view.
+    own_syncs = [r for r in received if r[0] == "send_to" and r[1] == player_id and r[2] == "state_sync"]
+    own_view = own_syncs[-1][3]["characters"][player_id]
+    assert "Arcane Recovery" in " ".join(own_view["class_features"])
+
+    # Rowan's state_sync: Elowen's entry there is the *public* view - same
+    # inventory/stats/notes privacy boundary _public_character_view already
+    # draws, just extended to the two fields this test adds.
+    others_syncs = [r for r in received if r[0] == "send_to" and r[1] == other_id and r[2] == "state_sync"]
+    elowen_as_seen_by_rowan = others_syncs[-1][3]["characters"][player_id]
+    assert "class_features" not in elowen_as_seen_by_rowan
+    assert "skill_proficiencies" not in elowen_as_seen_by_rowan
 
 
 async def test_update_character_explicit_self_target_still_updates_own_sheet():
