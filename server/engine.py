@@ -1330,11 +1330,22 @@ class GameEngine:
             target = update.get("target") or "self"
 
             # A model given the character sheet as JSON (which includes its own
-            # player_id and name) sometimes echoes one of those back as target
-            # instead of "self" - without this, that misroutes into the NPC
-            # branch below and silently creates a phantom NPC sheet named after
-            # the player's own id or name.
-            if target in ("self", player_id, character.name):
+            # player_id, name, and conditions) sometimes echoes one of those
+            # back as target instead of "self" - without this, that misroutes
+            # into the NPC branch below and silently creates a phantom NPC
+            # sheet named after the player's own id, name, or (found live
+            # during a campaign dry-run, ROADMAP.md, 2026-08-10) one of their
+            # own already-applied conditions (e.g. "Veil-Touched", every
+            # character's own origin condition) - a mistargeted hit on the
+            # acting character routes here as a normal self-update instead of
+            # spawning a bogus NPC, the same resolution this exact class of
+            # mistargeting already gets for player_id/name confusion. Scoped
+            # to the acting character's own *current* conditions, not a fixed
+            # list - the coincidence of an unrelated real NPC sharing a name
+            # with a condition string is negligible, but a static list would
+            # need to know every condition any origin/narration could ever
+            # apply.
+            if target in ("self", player_id, character.name) or target in character.conditions:
                 result = character.apply_update(update)
                 changed = not result.startswith("No changes applied")
                 if changed:
