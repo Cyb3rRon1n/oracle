@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Input, RichLog, Static, TabbedContent, TabPane
@@ -102,18 +102,24 @@ class CharacterSheetPanel(Vertical):
         self._npcs: dict = {}
 
     def compose(self) -> ComposeResult:
+        # Each pane's Static sits inside its own VerticalScroll - the panel
+        # itself now lives in a fixed-height horizontal band (LobbyScreen/
+        # SessionScreen CSS, below the now-full-width log) rather than a
+        # tall side column, so a longer sheet (many known spells, a big
+        # inventory) needs to scroll internally instead of just being fully
+        # visible at a glance the way the old tall column allowed.
         with TabbedContent(id="sheet-tabs", initial="tab-overview"):
-            with TabPane("Overview", id="tab-overview"):
+            with TabPane("Overview", id="tab-overview"), VerticalScroll():
                 yield Static(id="tab-overview-content")
-            with TabPane("Map", id="tab-map"):
+            with TabPane("Map", id="tab-map"), VerticalScroll():
                 yield Static(id="tab-map-content")
-            with TabPane("Abilities", id="tab-abilities"):
+            with TabPane("Abilities", id="tab-abilities"), VerticalScroll():
                 yield Static(id="tab-abilities-content")
-            with TabPane("Inventory", id="tab-inventory"):
+            with TabPane("Inventory", id="tab-inventory"), VerticalScroll():
                 yield Static(id="tab-inventory-content")
-            with TabPane("Spells", id="tab-spells"):
+            with TabPane("Spells", id="tab-spells"), VerticalScroll():
                 yield Static(id="tab-spells-content")
-            with TabPane("Features & Notes", id="tab-features"):
+            with TabPane("Features & Notes", id="tab-features"), VerticalScroll():
                 yield Static(id="tab-features-content")
 
     def action_previous_tab(self) -> None:
@@ -598,17 +604,21 @@ class LobbyScreen(Screen):
     their character... then when start dm begins narrating the scene."""
 
     CSS = """
-    LobbyScreen Horizontal { height: 1fr; }
-    LobbyScreen CharacterSheetPanel { width: 30%; height: 1fr; border: solid $accent; padding: 1; }
-    LobbyScreen RichLog { width: 70%; border: solid $accent; }
+    LobbyScreen RichLog { height: 1fr; border: solid $accent; }
+    LobbyScreen CharacterSheetPanel { height: 12; border: solid $accent; padding: 0 1; }
+    LobbyScreen CharacterSheetPanel TabbedContent { height: 1fr; }
     #lobby-status { height: 1; padding: 0 1; }
     """
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Horizontal():
-            yield CharacterSheetPanel(id="sheet")
-            yield RichLog(id="chat-log", wrap=True, markup=True)
+        # Chat log full-width on top (majority of the screen - it's the
+        # primary content, and RichLog's own wrap benefits from the extra
+        # width more than the sheet's list-shaped content does), the sheet
+        # (with its own tab-label row, now genuinely visible instead of
+        # tucked into a side column) as a compact band underneath.
+        yield RichLog(id="chat-log", wrap=True, markup=True)
+        yield CharacterSheetPanel(id="sheet")
         yield Static("", id="lobby-status")
         yield Button("Start Adventure", id="start", variant="success")
         yield Input(
@@ -668,9 +678,9 @@ class SessionScreen(Screen):
     into its own Screen, pushed once session_started arrives."""
 
     CSS = """
-    SessionScreen Horizontal { height: 1fr; }
-    SessionScreen CharacterSheetPanel { width: 30%; height: 1fr; border: solid $accent; padding: 1; }
-    SessionScreen RichLog { width: 70%; border: solid $accent; }
+    SessionScreen RichLog { height: 1fr; border: solid $accent; }
+    SessionScreen CharacterSheetPanel { height: 12; border: solid $accent; padding: 0 1; }
+    SessionScreen CharacterSheetPanel TabbedContent { height: 1fr; }
     #status { height: 1; padding: 0 1; }
     """
 
@@ -680,9 +690,10 @@ class SessionScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Horizontal():
-            yield CharacterSheetPanel(id="sheet")
-            yield RichLog(id="log", wrap=True, markup=True)
+        # Narration log full-width on top, sheet as a compact band below -
+        # see LobbyScreen's identical layout for the reasoning.
+        yield RichLog(id="log", wrap=True, markup=True)
+        yield CharacterSheetPanel(id="sheet")
         yield Static("", id="status")
         yield Input(
             placeholder="What do you do? (/roll, /chat, /note, /item add|remove, /equip, /unequip, /export, /transcript [file])",

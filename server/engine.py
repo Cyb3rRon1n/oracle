@@ -635,6 +635,27 @@ class GameEngine:
             self._session.characters[player_id] = character
             self._session.turn_order.append(player_id)
             await self._save(player_id)
+        else:
+            # A reconnect (this player_id already has a character here, most
+            # often a stale local .player_id file from a previous session)
+            # keeps that character's existing name/class regardless of what
+            # was just typed on the welcome screen - real found-live
+            # confusion, not hypothetical: a player types a fresh name
+            # expecting a new character, silently gets an old one back
+            # with zero indication their input was ignored. A private
+            # heads-up only when it'd actually be surprising - the typed
+            # name genuinely differs from what they're really playing.
+            typed_name = envelope.payload.get("player_name")
+            existing_character = self._session.characters[player_id]
+            if typed_name and typed_name != existing_character.name:
+                await self._send_to(
+                    player_id,
+                    self._system_envelope(
+                        f"Welcome back - you're reconnecting as your existing character "
+                        f"'{existing_character.name}', not a new '{typed_name}'.",
+                        level="info",
+                    ),
+                )
 
         character = self._session.characters[player_id]
         await self._send_to(player_id, self._state_sync_envelope(player_id))

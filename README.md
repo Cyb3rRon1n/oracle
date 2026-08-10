@@ -10,11 +10,11 @@ A solo engineering project built around one central, unglamorous question: when 
 
 ## Screenshots
 
-The first two are real captures from a live session — local `qwen2.5:7b` via Ollama, no mocked output. Left panel is the persistent character sheet; right panel is the scrolling narrative log.
+The first two are real captures from a live session — `qwen2.5:7b` on a real GPU-backed Ollama server, no mocked output. The narrative log sits full-width on top; the character sheet (with its tab bar — Overview/Map/Abilities/Inventory/Spells/Features & Notes, whichever apply) is a compact scrollable band underneath.
 
 **A fresh session's DM-generated opening scene:**
 
-![Opening scene — character sheet on the left, streamed DM narration on the right, ending on a turn prompt](docs/screenshots/opening-scene.svg)
+![Opening scene — full-width streamed DM narration on top, the character sheet's tab bar and compact HP/AC band underneath, ending on a turn prompt](docs/screenshots/opening-scene.svg)
 
 **After submitting a player action, mid-story:**
 
@@ -24,7 +24,7 @@ The first two are real captures from a live session — local `qwen2.5:7b` via O
 
 ![Welcome screen showing the name/session/class fields plus the new "Import character .json" field for loading a previously exported character](docs/screenshots/welcome-import.svg)
 
-**A real level-up** — the engine-driven XP award and HP growth are exactly what a live model would trigger too; only the narration line ("Your blade finds its mark...") is a scripted stand-in, since this dev environment has no live Ollama/Anthropic access to capture from (see [ROADMAP.md](ROADMAP.md)):
+**A real level-up** — the engine-driven XP award and HP growth are exactly what a live model would trigger too; only the narration line ("Your blade finds its mark...") is a scripted stand-in, kept that way deliberately so this one stays deterministic and reproducible rather than depending on a live model call:
 
 ![Character sheet showing Lv 2, full HP after a level-up, real AC, and real ability scores with modifiers, with the log showing "Thrain defeats dire wolf and gains 300 XP! Thrain reaches level 2!"](docs/screenshots/xp-level-up.svg)
 
@@ -32,7 +32,7 @@ The first two are real captures from a live session — local `qwen2.5:7b` via O
 
 ![Character sheet showing Elowen's known spells and "Slots: 1 1/2" after casting Magic Missile, with the log showing the cast narrated and the spent slot reflected on the sheet](docs/screenshots/spellcasting.svg)
 
-`scripts/generate_screenshots.py` (`python -m scripts.generate_screenshots`) regenerates the three non-live screenshots above after a TUI change — it does not and cannot touch the two live-Ollama captures, which need a real model session to recapture honestly.
+`scripts/generate_screenshots.py` (`python -m scripts.generate_screenshots`) regenerates the three deterministic, mocked-narration screenshots above after a TUI change. The two live-Ollama captures need a real running server behind a real model instead — `scripts/generate_live_screenshots.py` (`SERVER_URI=ws://<host>:8765 python -m scripts.generate_live_screenshots`) does that, kept separate since it can't run without one.
 
 ## Concept
 
@@ -169,7 +169,7 @@ Reconnecting mid-game (the client remembers you via `.player_id`, see below) ski
 
 ### 5. Play
 
-Once the adventure starts, the interface is your character sheet on one side, a scrolling narrative log on the other, and an input bar at the bottom. The DM opens with a short scene as everyone watches it stream in — no blank prompt to stare at. From there, type what your character does in plain English and press Enter — e.g. `I open the door` or `I attack the goblin with my sword`. The DM (Ollama or Claude, whichever you configured) responds with narration, streamed in as it's generated.
+Once the adventure starts, the interface is a full-width scrolling narrative log on top, your character sheet (with its own tab bar) as a compact band underneath, and an input bar at the bottom. The DM opens with a short scene as everyone watches it stream in — no blank prompt to stare at. From there, type what your character does in plain English and press Enter — e.g. `I open the door` or `I attack the goblin with my sword`. The DM (Ollama or Claude, whichever you configured) responds with narration, streamed in as it's generated.
 
 A couple of special commands, typed into that same input bar:
 
