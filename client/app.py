@@ -919,6 +919,7 @@ class SessionScreen(Screen):
 
     def on_mount(self) -> None:
         self.app.refresh_sheet_widgets()
+        self.app.refresh_turn_status()
         log = self.query_one("#log", RichLog)
         for name, npc in self.app.npcs.items():
             log.write(_npc_status_line(name, npc))
@@ -927,7 +928,10 @@ class SessionScreen(Screen):
         self.query_one("#input", Input).focus()
 
     def set_thinking(self, thinking: bool) -> None:
-        self.query_one("#status", Static).update("[dim]The DM is thinking...[/dim]" if thinking else "")
+        if thinking:
+            self.query_one("#status", Static).update("[dim]The DM is thinking...[/dim]")
+        else:
+            self.app.refresh_turn_status()
 
     def write_log(self, text: str) -> None:
         self.query_one("#log", RichLog).write(text)
@@ -1031,6 +1035,7 @@ class DungeonMasterApp(App):
         self.world: dict = {}
         self.npcs: dict = {}
         self.log_tail: list[dict] = []
+        self.current_turn: str | None = None
         self._listening = False
 
     @property
@@ -1115,6 +1120,33 @@ class DungeonMasterApp(App):
         sheet.render_others(self.others)
         sheet.render_world(self.world)
         sheet.render_npcs(self.npcs)
+
+    def refresh_turn_status(self) -> None:
+        # Persistent, unlike turn_prompt's own one-shot log line - closes a
+        # real, verified gap (ROADMAP.md's 2026-08-09 owner playtest
+        # findings): current_turn was already synced to every client via
+        # state_sync, but nothing ever rendered it, so a (re)joining player
+        # had no way to tell whose turn it was without waiting for the next
+        # turn_prompt. Reuses #status, the same persistent indicator
+        # "The DM is thinking..." already uses (SessionScreen.set_thinking)
+        # - the owner's own framing ("some indicator... if waiting for
+        # response from DM or processing") named exactly this widget.
+        # Safe to call any time (state_sync, turn_prompt, or narration
+        # finishing) - a no-op if #status doesn't exist yet, e.g. still on
+        # WelcomeScreen/LobbyScreen, the same guard refresh_sheet_widgets
+        # above already uses for #sheet.
+        status = self._try_query_one("#status", Static)
+        if status is None:
+            return
+        if self.current_turn is None:
+            status.update("")
+            return
+        if self.current_turn == self._player_id:
+            text = "Your turn."
+        else:
+            name = self.others.get(self.current_turn, {}).get("name", "Someone")
+            text = f"{name}'s turn."
+        status.update(f"[dim]{text}[/dim]")
 
     def _roller_name(self, roller_id: str) -> str:
         # dice_result's roller_id is always a real player_id - both
@@ -1244,6 +1276,7 @@ class DungeonMasterApp(App):
             self.world = payload.get("world_state", {})
             self.npcs = payload.get("npcs", {})
             self.log_tail = payload.get("log_tail", [])
+            self.current_turn = payload.get("current_turn")
 
             if isinstance(self.screen, WelcomeScreen):
                 # started: whether the adventure has already begun (see
@@ -1256,6 +1289,7 @@ class DungeonMasterApp(App):
                     await self.push_screen(LobbyScreen())
             else:
                 self.refresh_sheet_widgets()
+                self.refresh_turn_status()
             return
 
         if envelope.type == "character_update":
@@ -1356,8 +1390,10 @@ class DungeonMasterApp(App):
             # player's public view (name included) is already tracked in
             # self.others from player_joined/state_sync, so this needs no
             # new protocol field - just using data already on hand.
+            turn_player_id = envelope.payload.get("player_id")
+            self.current_turn = turn_player_id
+            self.refresh_turn_status()
             if session_screen is not None:
-                turn_player_id = envelope.payload.get("player_id")
                 if turn_player_id == self._player_id:
                     session_screen.write_log("[i]Your turn.[/i]")
                 else:
