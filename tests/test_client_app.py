@@ -1421,6 +1421,70 @@ async def test_turn_prompt_for_another_player_names_them_not_just_your_own_turn(
             assert "Your turn" in log_text
 
 
+async def test_state_sync_shows_a_persistent_turn_indicator_on_reconnect():
+    # The other real, verified gap from the same playtest finding
+    # (ROADMAP.md): turn_prompt is a one-shot log line, easy to miss and
+    # never re-shown - state_sync always carried current_turn, but nothing
+    # ever rendered it, so a (re)joining player had no way to tell whose
+    # turn it was without waiting for the next turn_prompt. #status
+    # (the same persistent widget "The DM is thinking..." already uses)
+    # should reflect it immediately once the session screen mounts.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=False)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            assert "Your turn" in str(app.screen.query_one("#status")._Static__content)
+
+
+async def test_state_sync_shows_another_players_turn_on_reconnect():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=False)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            # _state_sync's own current_turn default is the player_id passed
+            # in as its first argument - overridden directly here to
+            # exercise the other-player branch.
+            envelope = _state_sync(
+                "p1", started=True,
+                characters={
+                    "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+                    "p2": {"name": "Rowan", "hp": 8, "max_hp": 8},
+                },
+            )
+            envelope.payload["current_turn"] = "p2"
+            await app._handle(envelope)
+            await pilot.pause()
+
+            assert "Rowan's turn" in str(app.screen.query_one("#status")._Static__content)
+
+
+async def test_turn_status_survives_narration_finishing():
+    # set_thinking(False) fires on every narration chunk (streaming) and
+    # again on the final done=True chunk - must restore the turn status,
+    # not just blank the indicator out from under it.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=False)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            app.screen.set_thinking(True)
+            await app._handle(Envelope(
+                type="log_entry", session_id="s", sender_id="server",
+                payload={"kind": "narration", "text": "The torch flickers.", "done": True},
+            ))
+            await pilot.pause()
+
+            assert "Your turn" in str(app.screen.query_one("#status")._Static__content)
+
+
 async def test_dice_result_renders_with_natural_max_highlighted():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
