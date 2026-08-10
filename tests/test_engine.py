@@ -269,6 +269,27 @@ async def test_join_with_character_class_builds_real_starting_sheet_end_to_end()
     assert character.inventory == ["Longsword", "Leather Armor"]
 
 
+async def test_join_generates_a_random_origin_regardless_of_class():
+    # The near-death/transport premise (server/lore) applies to every new
+    # character, not just ones who picked a recognized class - covers
+    # both build_starting_character's real-class path and its blank/
+    # unrecognized-class fallback.
+    engine, session, _ = make_engine(StubDM())
+    with_class_id, blank_class_id = str(uuid.uuid4()), str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=with_class_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=blank_class_id,
+        payload={"player_name": "Nameless"},
+    ))
+
+    assert session.characters[with_class_id].background != ""
+    assert session.characters[blank_class_id].background != ""
+
+
 async def test_join_with_imported_character_uses_imported_sheet():
     engine, session, _ = make_engine(StubDM())
     player_id = str(uuid.uuid4())
@@ -2524,6 +2545,38 @@ async def test_opening_scene_prompt_is_grounded_in_the_world_bible():
     assert "Ashwren" in prompt  # the default world bible's Guardian
     assert "Aetherfall" in prompt  # the default world bible's setting name
     assert "nearly died" in prompt
+
+
+async def test_opening_scene_prompt_includes_the_solo_players_own_origin():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm, enable_opening_scene=True)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+
+    await start_session(engine, player_id)
+
+    prompt = dm.action_texts[0]
+    background = session.characters[player_id].background
+    assert background  # the join above should have generated a real one
+    assert background in prompt
+
+
+async def test_opening_scene_prompt_omits_origin_for_a_multiplayer_start():
+    # No single character's origin should be singled out over the others'
+    # when several players are present - see WorldBible.opening_scene_prompt.
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm, enable_opening_scene=True)
+    first_id, second_id = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, first_id, name="Thrain")
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=second_id,
+        payload={"player_name": "Rowan", "character_class": "rogue"},
+    ))
+
+    await start_session(engine, first_id)
+
+    prompt = dm.action_texts[0]
+    assert "specific background" not in prompt
 
 
 async def test_start_session_uses_a_custom_world_bible_when_given():

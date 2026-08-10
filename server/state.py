@@ -79,6 +79,15 @@ class CharacterSheet(BaseModel):
     equipped_armor: str | None = None
     conditions: list[str] = Field(default_factory=list)
     notes: str = ""
+    # Who this character was before Aetherfall - generated once at
+    # creation (server/engine.py's build_starting_character, via
+    # server/lore's random_origin) and never regenerated, a fixed fact
+    # about the character rather than something that should drift.
+    # Blank for an NPC (server/engine.py's introduce-on-first-mention
+    # path never sets this) and for any character sheet predating this
+    # field - real, old sessions/*.json data, not required by
+    # model_validate_json's own default.
+    background: str = ""
     xp: int = 0
     level: int = 1
     # Real 5e's own unarmored baseline (10 + DEX modifier), or an equipped

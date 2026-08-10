@@ -320,6 +320,18 @@ class CharacterSheetPanel(Vertical):
     def _features_text(self) -> str:
         character = self._character
         lines: list[str] = []
+        # background is owner-only (server/state.py's CharacterSheet,
+        # generated once at creation by server/engine.py's
+        # build_starting_character via server/lore's random_origin) - who
+        # this character was before Aetherfall. Blank for a sheet that
+        # predates this field (an old sessions/*.json) or an imported
+        # character (_character_from_import doesn't set it) - same
+        # "don't render the absent default" rule every other optional
+        # section here already follows.
+        background = character.get("background")
+        if background:
+            lines.append("[b]Background[/b]")
+            lines.append(background)
         # class_features is owner-only, added by server/engine.py's
         # _owner_character_view (ROADMAP.md item 7) - real SRD data
         # (server/rules/srd.json's level_1_features) that existed all

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 from pydantic import BaseModel
 
 DEFAULT_LORE_PATH = Path(__file__).parent / "isekai.json"
+DEFAULT_ORIGIN_TABLE_PATH = Path(__file__).parent / "origins.json"
 
 
 class Guardian(BaseModel):
@@ -64,7 +66,7 @@ class WorldBible(BaseModel):
             "but you are not limited to only what's listed here; invent freely within this frame."
         )
 
-    def opening_scene_prompt(self, present_description: str, plural: bool) -> str:
+    def opening_scene_prompt(self, present_description: str, plural: bool, origin_detail: str = "") -> str:
         """A deterministically-composed action_text for a genuinely fresh
         campaign's very first turn (server/engine.py's _on_start_session/
         _narrate_opening_scene) - the near-death/transport/Guardian-
@@ -73,7 +75,16 @@ class WorldBible(BaseModel):
         contradict) on its own - the same "engine computes it, DM narrates
         around it" split every other mechanic in this project already
         uses, applied to the campaign's opening premise instead of a
-        combat number."""
+        combat number.
+
+        origin_detail (see Origin.sheet_summary below - the same text
+        stored on the character sheet and shown there, reused here rather
+        than maintained as a second phrasing) personalizes a solo
+        player's specific near-death moment instead of the generic
+        who_what_where_when_why phrasing alone - left blank for a
+        multi-player start, since there's no single origin to anchor a
+        shared greeting on without picking one character's over the
+        others'."""
         w = self.who_what_where_when_why
         pronoun_clause = "each nearly died, in their own separate life, at nearly the same moment" if plural else "nearly died"
         intro = (
@@ -83,6 +94,11 @@ class WorldBible(BaseModel):
             f"words and voice, dramatized in scene - don't quote them verbatim or recite them "
             f"as a list: {w.who} {w.what} {w.where} {w.when} {w.why}"
         )
+        if origin_detail:
+            intro += (
+                f" {present_description}'s specific background, for {self.guardian.name} to sense "
+                f"or reference naturally rather than recite outright: {origin_detail}"
+            )
         if plural:
             intro += " Consider inviting everyone to introduce themselves."
         return intro + " End the scene inviting the next real action.)"
@@ -90,3 +106,48 @@ class WorldBible(BaseModel):
 
 def load_default_world_bible() -> WorldBible:
     return WorldBible.model_validate_json(DEFAULT_LORE_PATH.read_text())
+
+
+class Origin(BaseModel):
+    """A randomly-generated pre-Aetherfall identity for one character -
+    who they were, a defining trait, and how they nearly died. Generated
+    once at character creation (server/engine.py's build_starting_character)
+    and stored on the sheet, not regenerated each time it's referenced -
+    a character's origin is a fixed fact about them, not something that
+    should drift."""
+
+    background: str
+    trait: str
+    near_death: str
+
+    def sheet_summary(self) -> str:
+        """Player/DM-facing text for the character sheet's Features &
+        Notes tab (client/app.py's CharacterSheetPanel) - who this
+        character was before Aetherfall, at a glance. Reused as-is for
+        WorldBible.opening_scene_prompt's origin_detail rather than
+        maintained as a second phrasing."""
+        return f"{self.background.capitalize()}. Known for being {self.trait}. Nearly died: {self.near_death}."
+
+
+class OriginTable(BaseModel):
+    backgrounds: list[str]
+    traits: list[str]
+    near_death_events: list[str]
+
+
+def load_default_origin_table() -> OriginTable:
+    return OriginTable.model_validate_json(DEFAULT_ORIGIN_TABLE_PATH.read_text())
+
+
+def random_origin(table: OriginTable) -> Origin:
+    # random.choice, not the engine's own dice.roll() - this isn't a game
+    # mechanic with a real probability distribution to get right, just an
+    # even pick from a curated table, the same "plain random.choice" this
+    # project's other flavor-text generation (none existed before this)
+    # would use. Mockable the same way tests/test_engine.py already mocks
+    # server.dice.random.randint for reproducible dice-roll tests.
+    return Origin(
+        background=random.choice(table.backgrounds),
+        trait=random.choice(table.traits),
+        near_death=random.choice(table.near_death_events),
+    )

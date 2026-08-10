@@ -1,0 +1,38 @@
+{
+  "backgrounds": [
+    "a dockworker down at the harbor",
+    "a night-shift nurse in a city hospital",
+    "a rideshare driver working late shifts",
+    "a line cook at a diner that never quite closed",
+    "a small-town schoolteacher",
+    "an office worker three years into a job they never loved",
+    "a freelance mechanic who fixed cars out of a garage",
+    "a college student one semester from graduating",
+    "a volunteer firefighter in a town too small to pay one",
+    "a barista who'd been saving up to travel"
+  ],
+  "traits": [
+    "stubborn to a fault",
+    "quick with a joke to defuse tension",
+    "can't resist helping a stranger, even at real cost to themselves",
+    "distrusts authority on principle",
+    "always the one making the plan, whether anyone asked or not",
+    "keeps every promise, even small ones, like it matters more than it should",
+    "curious to a fault, unable to leave a mystery alone",
+    "guarded with strangers, fiercely loyal once trust is earned",
+    "prone to speaking their mind before thinking it through",
+    "calm in a crisis, in a way that unsettles people who aren't"
+  ],
+  "near_death_events": [
+    "a car accident on a rain-slicked highway",
+    "a sudden cardiac arrest that stopped their heart for nearly four minutes",
+    "a house fire they didn't escape in time",
+    "a fall from scaffolding at a job site",
+    "a drowning nobody pulled them from until it was almost too late",
+    "a severe allergic reaction with no epinephrine in reach",
+    "a violent mugging that went further than either side intended",
+    "a climbing accident on a route they'd done a dozen times before",
+    "a bridge collapse during rush hour",
+    "a stroke that hit without a single warning sign"
+  ]
+}
