@@ -79,8 +79,9 @@ class WorldBible(BaseModel):
         intro = (
             f"(The adventure begins. Moments ago, {present_description} {pronoun_clause} - "
             f"now they awaken in {self.setting_name}, greeted by {self.guardian.name}, "
-            f"{self.guardian.title}. Weave these facts into {self.guardian.name}'s own words "
-            f"naturally, in character, not as a list: {w.who} {w.what} {w.where} {w.when} {w.why}"
+            f"{self.guardian.title}. Paraphrase these facts into {self.guardian.name}'s own "
+            f"words and voice, dramatized in scene - don't quote them verbatim or recite them "
+            f"as a list: {w.who} {w.what} {w.where} {w.when} {w.why}"
         )
         if plural:
             intro += " Consider inviting everyone to introduce themselves."
