@@ -269,6 +269,46 @@ async def test_join_with_character_class_builds_real_starting_sheet_end_to_end()
     assert character.inventory == ["Longsword", "Leather Armor"]
 
 
+async def test_join_with_stat_priority_overrides_the_class_default():
+    # Fighter's own CLASS_ABILITY_PRIORITY defaults to str-first
+    # (see server/engine.py) - an explicit override should win instead,
+    # the "broader stats survey" the original brainstorm asked for beyond
+    # just a recommended class.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={
+            "player_name": "Rook", "character_class": "fighter",
+            "stat_priority": ["cha", "con", "dex", "wis", "int", "str"],
+        },
+    ))
+
+    character = session.characters[player_id]
+    assert character.stats == {"cha": 15, "con": 14, "dex": 13, "wis": 12, "int": 10, "str": 8}
+
+
+async def test_join_with_invalid_stat_priority_falls_back_to_class_default():
+    # Missing "cha"/duplicate "con" - not a real permutation of the 6
+    # ability keys. The same graceful-miss convention every other name-
+    # based field in this file already follows, rather than a
+    # ValidationError on a malformed/adversarial payload.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={
+            "player_name": "Rook", "character_class": "fighter",
+            "stat_priority": ["con", "con", "dex", "wis", "int", "str"],
+        },
+    ))
+
+    character = session.characters[player_id]
+    assert character.stats == {"str": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "int": 8}
+
+
 async def test_join_generates_a_random_origin_regardless_of_class():
     # The near-death/transport premise (server/lore) applies to every new
     # character, not just ones who picked a recognized class - covers

@@ -307,15 +307,26 @@ def _cast_spell(character: CharacterSheet, spell_name: str, rules: RulesIndex) -
     return f"casts {entry['name']} (level {spell_level} slot, {remaining} remaining).", True
 
 
-def _generate_stats(character_class: str) -> dict[str, int]:
-    """Assigns the SRD's real Standard Array to a class's own ability
-    priority order - deterministic (the same class always gets the same
-    array), matching this project's existing "no ability-score system
-    should depend on chance" stance nowhere written down but implied by
-    every other deterministic mechanic here (XP awards, level-1 HP).
-    Player-chosen stat allocation is real future work, not attempted here
-    - see ROADMAP.md."""
-    priority = CLASS_ABILITY_PRIORITY.get(character_class.strip().lower())
+def _generate_stats(character_class: str, stat_priority: tuple[str, ...] | None = None) -> dict[str, int]:
+    """Assigns the SRD's real Standard Array to an ability priority order -
+    deterministic (the same inputs always produce the same array), matching
+    this project's existing "no ability-score system should depend on
+    chance" stance nowhere written down but implied by every other
+    deterministic mechanic here (XP awards, level-1 HP).
+
+    stat_priority, when given, is a player's own explicit override (welcome-
+    screen join payload's "stat_priority" - see _on_join_session) - the
+    "broader stats survey" the original brainstorm asked for, beyond just a
+    recommended class: a player who wants a str-primary rogue instead of
+    the class's own dex-primary default can now say so directly. Falls back
+    to the class's own CLASS_ABILITY_PRIORITY when absent or invalid (not
+    exactly the 6 real ability keys, each exactly once) - the same graceful-
+    miss convention every other name-based field in this file already
+    follows, rather than a ValidationError on a malformed payload."""
+    if stat_priority is not None and set(stat_priority) == set(ABILITY_KEYS) and len(stat_priority) == len(ABILITY_KEYS):
+        priority = stat_priority
+    else:
+        priority = CLASS_ABILITY_PRIORITY.get(character_class.strip().lower())
     if priority is None:
         return {}
     return dict(zip(priority, STANDARD_ARRAY))
@@ -502,6 +513,7 @@ def build_starting_character(
     character_class: str,
     rules: RulesIndex,
     origin_table: OriginTable | None = None,
+    stat_priority: tuple[str, ...] | None = None,
 ) -> CharacterSheet:
     """Builds a real starting sheet from a chosen class via the SRD data,
     or falls back to the original blank hp=10/max_hp=10 sheet for a blank
@@ -511,14 +523,19 @@ def build_starting_character(
     Every new character gets a random pre-Aetherfall origin (server/lore's
     random_origin) regardless of class choice - the near-death/transport
     premise applies to everyone, not just characters who picked a real
-    class."""
+    class.
+
+    stat_priority is a player's own optional override of which ability
+    gets which Standard Array slot (see _generate_stats) - ignored
+    entirely for a blank/unrecognized class, the same way the class's own
+    equipment/spells are."""
     background = random_origin(origin_table or load_default_origin_table()).sheet_summary()
 
     class_entry = rules.get_entry("class", character_class) if character_class else None
     if class_entry is None:
         return CharacterSheet(player_id=player_id, name=name, hp=10, max_hp=10, background=background)
 
-    stats = _generate_stats(character_class)
+    stats = _generate_stats(character_class, stat_priority)
     con_mod = ability_modifier(stats["con"]) if stats else 0
     # Real 5e's level-1 HP formula: hit die max + CON modifier, floored at
     # 1 (a character can't start with 0 or negative HP even from a bad
@@ -668,6 +685,20 @@ class GameEngine:
         if is_new_character:
             name = envelope.payload.get("player_name", player_id)
             character_class = envelope.payload.get("character_class", "")
+            # A player's own optional override of the class's default
+            # ability-priority order (see _generate_stats) - a list of the
+            # 6 real ability keys, e.g. ["str", "con", "dex", "wis", "cha",
+            # "int"]. Not validated here beyond the type/shape check -
+            # _generate_stats already falls back to the class default for
+            # anything that isn't exactly those 6 keys once each, the same
+            # graceful-miss convention this method's own character_class
+            # handling already relies on.
+            raw_stat_priority = envelope.payload.get("stat_priority")
+            stat_priority = (
+                tuple(raw_stat_priority)
+                if isinstance(raw_stat_priority, list) and all(isinstance(a, str) for a in raw_stat_priority)
+                else None
+            )
 
             character = None
             imported = envelope.payload.get("imported_character")
@@ -683,7 +714,7 @@ class GameEngine:
                     )
             if character is None:
                 character = build_starting_character(
-                    player_id, name, character_class, self._rules, self._origin_table
+                    player_id, name, character_class, self._rules, self._origin_table, stat_priority
                 )
 
             self._session.characters[player_id] = character

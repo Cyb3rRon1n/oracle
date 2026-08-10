@@ -334,6 +334,38 @@ async def test_join_with_blank_import_field_omits_imported_character():
             assert app.transport.sent[-1] == ("join_session", {"player_name": "Thrain", "character_class": ""})
 
 
+async def test_join_with_typed_stat_priority_sends_it_as_a_list():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#stat-priority-input")
+            await pilot.press(*"cha, con,dex,wis,int,str")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == (
+                "join_session",
+                {
+                    "player_name": "Thrain", "character_class": "",
+                    "stat_priority": ["cha", "con", "dex", "wis", "int", "str"],
+                },
+            )
+
+
+async def test_join_with_blank_stat_priority_omits_it():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("join_session", {"player_name": "Thrain", "character_class": ""})
+
+
 async def test_fresh_join_lands_on_lobby_not_session():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
