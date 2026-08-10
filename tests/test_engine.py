@@ -269,6 +269,42 @@ async def test_join_with_character_class_builds_real_starting_sheet_end_to_end()
     assert character.inventory == ["Longsword", "Leather Armor"]
 
 
+async def test_join_with_unrecognized_class_warns_the_player_privately():
+    # A real, live-found gap (ROADMAP.md's campaign dry-run, 2026-08-10): a
+    # typo'd/garbled class string used to silently produce a blank,
+    # classless, stat-less character with no indication anything went
+    # wrong - found live when a scripted class-field edit landed as
+    # "clericrogue" instead of "cleric".
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "clericrogue"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.character_class == ""  # the existing graceful blank-fallback, unchanged
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert any("clericrogue" in w[3]["text"] for w in warnings)
+
+
+async def test_join_with_blank_class_is_not_treated_as_a_mistake():
+    # Blank is the UI's own explicit "blank to skip" option (WelcomeScreen's
+    # own Static label), not a typo - shouldn't get the unrecognized-class
+    # warning above.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings == []
+
+
 async def test_join_with_stat_priority_overrides_the_class_default():
     # Fighter's own CLASS_ABILITY_PRIORITY defaults to str-first
     # (see server/engine.py) - an explicit override should win instead,

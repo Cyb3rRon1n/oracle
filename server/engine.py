@@ -716,6 +716,25 @@ class GameEngine:
                 character = build_starting_character(
                     player_id, name, character_class, self._rules, self._origin_table, stat_priority
                 )
+                # A real, live-found gap (ROADMAP.md's campaign dry-run,
+                # 2026-08-10): a typo'd/unrecognized class string used to
+                # silently fall back to a blank, classless, stat-less
+                # character with zero indication anything went wrong - a
+                # player could type a garbled class name and not notice
+                # until well into the session. Only warns when the player
+                # actually typed something that didn't match - a genuinely
+                # blank field is the UI's own explicit "blank to skip"
+                # option, not a mistake worth flagging.
+                if character_class.strip() and not character.character_class:
+                    await self._send_to(
+                        player_id,
+                        self._system_envelope(
+                            f"'{character_class.strip()}' isn't a recognized class - starting without one "
+                            "(no starting stats, HP bonus, or kit). Recognized classes: fighter, wizard, "
+                            "rogue, cleric.",
+                            level="warning",
+                        ),
+                    )
 
             self._session.characters[player_id] = character
             self._session.turn_order.append(player_id)
