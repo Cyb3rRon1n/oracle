@@ -835,10 +835,13 @@ class LobbyScreen(Screen):
             yield RadioButton("Intense tone", id="pref-intense")
         yield Static("", id="lobby-status")
         yield Button("Start Adventure", id="start", variant="success")
-        yield Input(
-            placeholder="Chat with the party... (/export [file] for your character, /transcript [file] for this chat)",
-            id="chat-input",
-        )
+        # /export and /transcript still work here exactly as before (see
+        # on_input_submitted below) - just no longer advertised in the
+        # hint text. A direct owner ask (ROADMAP.md's 2026-08-09 playtest
+        # findings): file-saving utility commands read as functional
+        # bookkeeping, not part of the game itself, so they shouldn't be
+        # surfaced alongside genuine table-talk the way /chat is.
+        yield Input(placeholder="Chat with the party...", id="chat-input")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -911,10 +914,17 @@ class SessionScreen(Screen):
         yield RichLog(id="log", wrap=True, markup=True)
         yield CharacterSheetPanel(id="sheet")
         yield Static("", id="status")
-        yield Input(
-            placeholder="What do you do? (/roll, /chat, /note, /item add|remove, /equip, /unequip, /export, /transcript [file])",
-            id="input",
-        )
+        # /note, /item add|remove, /equip, /unequip, /export, and
+        # /transcript all still work exactly as before (on_input_submitted
+        # below) - just no longer advertised here. A direct owner ask
+        # (ROADMAP.md's 2026-08-09 playtest findings): inventory/equipment
+        # bookkeeping commands read as cheat-like shortcuts that should be
+        # discovered organically or handled narratively through the DM,
+        # not typed directly; /note and the file-saving utilities are
+        # meta/functional rather than in-fiction action, the same
+        # reasoning already applied to LobbyScreen's own chat-input above.
+        # /roll and /chat are the two genuine table-talk actions left.
+        yield Input(placeholder="What do you do? (/roll, /chat)", id="input")
         yield Footer()
 
     def on_mount(self) -> None:
