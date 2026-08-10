@@ -204,6 +204,87 @@ STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA = {
     "required": ["narration", "mechanical_change"],
 }
 
+# A second, independent extension alongside the roll fields above - unlike
+# a roll, a world-state change (location, a new/completed objective, a
+# newly-discovered place) has no ordering problem: it's simply a
+# consequence of the turn's outcome, decided at the same time as
+# mechanical_change, in whichever call ends up producing the final
+# narration (the only call, if no roll fires; the follow-up, if one does).
+# So this doesn't need its own two-pass mechanism - just extra properties
+# merged onto whichever schema is already in play, via _with_world_fields
+# below. Deliberately a small slice of the real update_world tool
+# (server/narrator.py's UPDATE_WORLD_TOOL): location/add_objective/
+# complete_objective/add_location only - no summary (harder for a small
+# model to write well without duplicating narration), no expire_objective/
+# fail_objective/remove_objective/set_flag/clear_flag/connect_locations
+# (connect_locations especially - a 2-element array is more failure-prone
+# for constrained JSON than a plain string field). add_location doubles as
+# the fix for a real, separately-reported gap: the client's Map tab
+# (client/app.py's CharacterSheetPanel) only ever populates from
+# add_location/connect_locations, and this tool's Anthropic-only history
+# meant it never had - see ROADMAP.md for the live numbers this shipped
+# opt-in (not default) on the strength of.
+_WORLD_PROPERTIES = {
+    "world_change": {
+        "type": "boolean",
+        "description": (
+            "True if this turn's outcome changes the campaign's persistent world state - "
+            "the party's location, an objective's status, or a newly-discovered place worth "
+            "remembering. False for anything that's just passing scene detail."
+        ),
+    },
+    "location": {
+        "type": "string",
+        "description": "The party's new current location, only if it just changed. Leave blank otherwise.",
+    },
+    "add_objective": {
+        "type": "string",
+        "description": (
+            "A new active objective/plot thread/quest hook worth tracking for the rest of "
+            "the campaign, in plain language. Leave blank if none."
+        ),
+    },
+    "complete_objective": {
+        "type": "string",
+        "description": (
+            "The exact text of an existing active objective this turn's outcome completed. "
+            "Leave blank if none."
+        ),
+    },
+    "add_location": {
+        "type": "string",
+        "description": (
+            "Name of a new place worth remembering on the map, if one was just discovered "
+            "(even before the party has left it). Leave blank if none."
+        ),
+    },
+}
+
+WORLD_UPDATE_PROMPT_ADDENDUM = """
+
+Also decide `world_change`: true only if this turn's outcome changes the campaign's persistent
+world state - the party's location, an objective completing, or a genuinely new place being
+discovered - false for anything that's just passing scene detail with nothing lasting to
+remember. If true, fill in whichever of location/add_objective/complete_objective/add_location
+actually apply and leave the rest blank. Use complete_objective only for an objective you (the
+DM) actually introduced earlier via add_objective, matched by its exact text - don't invent one
+to complete that was never tracked."""
+
+
+def _with_world_fields(schema: dict, include_world: bool) -> dict:
+    if not include_world:
+        return schema
+    return {
+        "type": "object",
+        "properties": {**schema["properties"], **_WORLD_PROPERTIES},
+        "required": [*schema["required"], "world_change"],
+    }
+
+
+def _with_world_prompt(prompt: str, include_world: bool) -> str:
+    return prompt + WORLD_UPDATE_PROMPT_ADDENDUM if include_world else prompt
+
+
 STRUCTURED_OUTPUT_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 Respond with a single JSON object matching the given schema - never prose outside that JSON,
 never a tool call. `narration` is your in-character response (3-5 sentences, open-ended prose,
@@ -258,6 +339,7 @@ class OllamaNarrator:
         rules: RulesIndex | None = None,
         structured_output: bool = True,
         roll_requests: bool = False,
+        world_updates: bool = False,
     ):
         self._client = ollama.AsyncClient(host=host)
         self._model = model
@@ -282,6 +364,13 @@ class OllamaNarrator:
         # False - the legacy tool-calling path has never supported
         # request_roll and this doesn't change that.
         self._roll_requests = roll_requests
+        # Defaults OFF, same reasoning as roll_requests above - not yet
+        # validated at the rigor structured_output's own default earned.
+        # Independent of roll_requests (see _WORLD_PROPERTIES' own
+        # docstring for why a world-state change has no two-pass ordering
+        # problem the way a roll does) - either can be on without the
+        # other. Also ignored entirely when structured_output is False.
+        self._world_updates = world_updates
 
     def narrate(
         self,
@@ -293,7 +382,9 @@ class OllamaNarrator:
         update_world: UpdateWorld | None = None,
     ) -> AsyncIterator[str]:
         if self._structured_output:
-            return self._narrate_structured(history, character_summary, action_text, apply_update, request_roll)
+            return self._narrate_structured(
+                history, character_summary, action_text, apply_update, request_roll, update_world
+            )
         return self._narrate_tool_calling(history, character_summary, action_text, apply_update)
 
     async def _narrate_structured(
@@ -303,6 +394,7 @@ class OllamaNarrator:
         action_text: str,
         apply_update: ApplyUpdate,
         request_roll: RequestRoll | None = None,
+        update_world: UpdateWorld | None = None,
     ) -> AsyncIterator[str]:
         """The structured-output path (see STRUCTURED_OUTPUT_SCHEMA above) -
         constrains the entire response to JSON via Ollama's format parameter
@@ -329,6 +421,13 @@ class OllamaNarrator:
         one call, unchanged from before this existed."""
         schema = STRUCTURED_OUTPUT_ROLL_SCHEMA if self._roll_requests else STRUCTURED_OUTPUT_SCHEMA
         system_prompt = STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT if self._roll_requests else STRUCTURED_OUTPUT_SYSTEM_PROMPT
+        # world fields are additive on top of whichever schema/prompt was
+        # just selected above - this call might BE the final one (no roll
+        # requested) or might not (a follow-up call replaces it below), but
+        # either way it needs to be able to express a world change if this
+        # turns out to be the response that matters.
+        schema = _with_world_fields(schema, self._world_updates)
+        system_prompt = _with_world_prompt(system_prompt, self._world_updates)
         prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
         messages: list[dict] = [
             {"role": "system", "content": system_prompt},
@@ -364,13 +463,15 @@ class OllamaNarrator:
                 f"Character:\n{character_summary}\n\nPlayer action: {action_text}\n\n"
                 f"Roll result: {roll_result_text}"
             )
+            followup_schema = _with_world_fields(STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA, self._world_updates)
+            followup_system_prompt = _with_world_prompt(STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT, self._world_updates)
             followup_messages: list[dict] = [
-                {"role": "system", "content": STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT},
+                {"role": "system", "content": followup_system_prompt},
                 *history,
                 {"role": "user", "content": followup_prompt},
             ]
             response = await self._client.chat(
-                model=self._model, messages=followup_messages, format=STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA, stream=False
+                model=self._model, messages=followup_messages, format=followup_schema, stream=False
             )
             try:
                 data = json.loads(response.message.content or "")
@@ -387,6 +488,19 @@ class OllamaNarrator:
             if data.get("add_condition"):
                 update["add_condition"] = data["add_condition"]
             apply_update(update)
+
+        if self._world_updates and data.get("world_change") and update_world is not None:
+            world_update: dict = {}
+            if data.get("location"):
+                world_update["location"] = data["location"]
+            if data.get("add_objective"):
+                world_update["add_objective"] = data["add_objective"]
+            if data.get("complete_objective"):
+                world_update["complete_objective"] = data["complete_objective"]
+            if data.get("add_location"):
+                world_update["add_location"] = data["add_location"]
+            if world_update:
+                update_world(world_update)
 
     async def _narrate_tool_calling(
         self, history: list[dict], character_summary: str, action_text: str, apply_update: ApplyUpdate
@@ -463,9 +577,13 @@ def create_ollama_narrator() -> OllamaNarrator:
     # real signal, not yet validated at the same rigor. Opt in with "1"/
     # "true"/"yes".
     roll_requests = os.environ.get("OLLAMA_ROLL_REQUESTS", "false").strip().lower() in ("1", "true", "yes")
+    # OLLAMA_WORLD_UPDATES defaults OFF, same reasoning/opt-in convention as
+    # OLLAMA_ROLL_REQUESTS above - see _WORLD_PROPERTIES' own docstring.
+    world_updates = os.environ.get("OLLAMA_WORLD_UPDATES", "false").strip().lower() in ("1", "true", "yes")
     return OllamaNarrator(
         model=os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
         host=os.environ.get("OLLAMA_HOST"),
         structured_output=structured,
         roll_requests=roll_requests,
+        world_updates=world_updates,
     )
