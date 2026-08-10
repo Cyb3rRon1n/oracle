@@ -159,11 +159,12 @@ python -m client.main
 
 A full-screen terminal interface opens straight into a welcome screen — your pre-game menu:
 
-- **Character name** and **Session ID** (blank for default) — plain text fields.
+- **Character name** — a plain text field.
+- **Solo game / Multiplayer** — a choice, Solo by default. Solo mints a session just for you, derived from your own local player identity, so you're always seated first in turn order and never waiting on anyone else's turn — no Session ID to type or think about. Multiplayer reveals a **Session ID** field instead (blank for `default`); everyone who wants to be in the same game types the same ID.
 - **Class** (`fighter`/`wizard`/`rogue`/`cleric`, blank to skip) — only shown for a brand-new character, not on reconnect. Picks a real starting HP (from the class's SRD hit die) and a starting item or two, so your sheet isn't just a name and 10 HP with nothing else. Leave it blank for that old blank-sheet behavior instead.
 - **Import character .json** (optional, also brand-new-character only) — path to a file previously written by `/export` (see Play, below). When filled in, it wins over the name/class fields above entirely — your saved name, class, HP, XP, level, inventory, and notes all carry over, picking up your progression instead of starting fresh.
 
-Press **Join** (or Enter) and you land in the **lobby**: your character sheet on the left (review it before things kick off), a chat log on the right, and a **Start Adventure** button. This is where you can chat with anyone else who's joined, and see them show up in the **Party** list on your sheet, before anything happens in the story. Any joined player can hit Start Adventure — there's no separate host — and everyone's client moves into the real session view together, where the DM narrates the opening scene live.
+Press **Join** (or Enter) and you land in the **lobby**: your character sheet (review it before things kick off), a chat log, and a **Start Adventure** button. This is where you can chat with anyone else who's joined, and see them show up in the **Party** list on your sheet, before anything happens in the story. Any joined player can hit Start Adventure — there's no separate host — and everyone's client moves into the real session view together, where the DM narrates the opening scene live.
 
 Reconnecting mid-game (the client remembers you via `.player_id`, see below) skips the lobby entirely and drops you straight back into the session.
 

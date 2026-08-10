@@ -8,7 +8,18 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, RichLog, Static, TabbedContent, TabPane
+from textual.widgets import (
+    Button,
+    Footer,
+    Header,
+    Input,
+    RadioButton,
+    RadioSet,
+    RichLog,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 
 from shared.protocol import Envelope
 
@@ -525,6 +536,7 @@ class WelcomeScreen(Screen):
     #welcome-box { width: 50; height: auto; max-height: 100%; border: solid $accent; padding: 0 2; }
     #welcome-box Input { margin-bottom: 1; }
     #welcome-box #import-input { margin-bottom: 0; }
+    #welcome-box RadioSet { margin-bottom: 1; }
     #welcome-error { color: $error; height: 1; }
     """
 
@@ -540,7 +552,24 @@ class WelcomeScreen(Screen):
         with VerticalScroll(id="welcome-box"):
             yield Static("[b]Oracle[/b] - an AI Dungeon Master")
             yield Input(placeholder="Character name", id="name-input")
-            yield Input(placeholder="Session ID (blank for default)", id="session-input")
+            # Solo (default) mints a guaranteed-fresh session on Join (see
+            # _join() below) - a real, repeatedly-hit point of confusion
+            # this closes: a blank/reused Session ID could silently land a
+            # solo player behind other characters already in an existing
+            # session's turn order, submitting an action into "It's not
+            # your turn" with no visible explanation why, particularly
+            # against a session with an orphaned character nobody's
+            # actively playing (its turn never comes back around at all).
+            # Multiplayer reveals the Session ID field - same ID as
+            # whoever else is joining is what actually puts you in the
+            # same game together.
+            with RadioSet(id="mode-select"):
+                yield RadioButton("Solo game (always your own turn)", value=True, id="mode-solo")
+                yield RadioButton("Multiplayer (join or host with a Session ID)", id="mode-multiplayer")
+            yield Input(
+                placeholder="Session ID - use the same one as whoever you're playing with",
+                id="session-input",
+            )
             if self.app.is_new_character:
                 yield Static(f"Class ({'/'.join(CHARACTER_CLASSES)}, blank to skip)")
                 yield Input(placeholder="Class", id="class-input")
@@ -561,6 +590,10 @@ class WelcomeScreen(Screen):
 
     def on_mount(self) -> None:
         self.query_one("#name-input", Input).focus()
+        self.query_one("#session-input", Input).display = False  # Solo is the default selection
+
+    def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
+        self.query_one("#session-input", Input).display = event.pressed.id == "mode-multiplayer"
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "join":
@@ -576,7 +609,19 @@ class WelcomeScreen(Screen):
         join_button.disabled = True
 
         name = self.query_one("#name-input", Input).value.strip() or "Adventurer"
-        session_id = self.query_one("#session-input", Input).value.strip() or "default"
+        if self.query_one("#mode-multiplayer", RadioButton).value:
+            session_id = self.query_one("#session-input", Input).value.strip() or "default"
+        else:
+            # Derived from this client's own stable player_id (.player_id
+            # on disk, see client/main.py), not a fresh random id each
+            # join - a genuinely new session every time would prevent ever
+            # resuming a solo game, the same continuity .player_id already
+            # gives a returning character. Still guaranteed to never
+            # collide with "default" or anyone else's session (player_id
+            # is already a random per-client uuid), so Solo can never
+            # silently land behind an orphaned character in someone else's
+            # stale turn order - the actual bug this mode exists to avoid.
+            session_id = f"solo-{self.app.player_id}"
         character_class = ""
         imported_character = None
         if self.app.is_new_character:
@@ -816,6 +861,15 @@ class DungeonMasterApp(App):
         self.npcs: dict = {}
         self.log_tail: list[dict] = []
         self._listening = False
+
+    @property
+    def player_id(self) -> str:
+        # Public, unlike _player_id above - WelcomeScreen's Solo mode needs
+        # this to derive a stable per-client solo session_id (see _join()),
+        # the same "screens read self.app.* directly" pattern this class's
+        # own docstring already establishes for is_new_character/
+        # my_character/etc.
+        return self._player_id
 
     async def on_mount(self) -> None:
         self.push_screen(WelcomeScreen())

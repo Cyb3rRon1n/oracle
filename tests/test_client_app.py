@@ -25,6 +25,11 @@ class FakeTransport:
 
     def __init__(self, *args, **kwargs) -> None:
         self.sent: list[tuple[str, dict]] = []
+        # ClientTransport(uri, session_id, player_id) - captured positionally
+        # since that's the real signature (client/transport.py), needed by
+        # WelcomeScreen's Solo-mode tests to confirm what session_id it
+        # actually chose without reaching into a real websocket.
+        self.session_id = args[1] if len(args) > 1 else kwargs.get("session_id")
 
     async def connect(self) -> None:
         pass
@@ -98,6 +103,84 @@ async def test_returning_player_does_not_see_import_field():
         async with app.run_test():
             with pytest.raises(NoMatches):
                 app.screen.query_one("#import-input")
+
+
+async def test_welcome_screen_defaults_to_solo_with_session_field_hidden():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test():
+            assert app.screen.query_one("#mode-solo").value is True
+            assert app.screen.query_one("#session-input").display is False
+
+
+async def test_selecting_multiplayer_reveals_the_session_field():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#mode-multiplayer")
+            await pilot.pause()
+            assert app.screen.query_one("#session-input").display is True
+
+
+async def test_solo_join_uses_a_session_id_derived_from_player_id():
+    # Not "default", not blank, and never a fresh random id each time
+    # (that would prevent ever resuming a solo game) - stable and
+    # collision-free simply by being derived from this client's own
+    # already-unique player_id. See client/app.py's WelcomeScreen._join.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="my-stable-id", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.session_id == "solo-my-stable-id"
+            assert app.transport.sent[-1][0] == "join_session"
+
+
+async def test_solo_join_session_id_is_stable_across_separate_clients_with_the_same_player_id():
+    for _ in range(2):
+        with patch("client.app.ClientTransport", FakeTransport):
+            app = DungeonMasterApp(uri="ws://x", player_id="same-id", is_new_character=True)
+            async with app.run_test() as pilot:
+                await pilot.click("#join")
+                await pilot.pause()
+                assert app.transport.session_id == "solo-same-id"
+
+
+async def test_multiplayer_join_with_typed_session_id_uses_it_exactly():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        # Taller than the 80x24 default - a new character's welcome box
+        # (name/mode-select/session/class/import/join/error) genuinely
+        # doesn't fit the default viewport once session-input is revealed,
+        # and pilot.click() needs a target actually on-screen, not just
+        # present in the scrollable container.
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.click("#mode-multiplayer")
+            await pilot.pause()  # let the newly-revealed session-input finish mounting before clicking it
+            await pilot.click("#session-input")
+            await pilot.press(*"friends-game")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.session_id == "friends-game"
+
+
+async def test_multiplayer_join_with_blank_session_id_falls_back_to_default():
+    # Preserves the exact pre-existing behavior for anyone who picks
+    # Multiplayer but leaves the field blank - unchanged from before Solo
+    # mode existed.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.click("#mode-multiplayer")
+            await pilot.pause()  # let the newly-revealed session-input finish mounting first
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.session_id == "default"
 
 
 async def test_join_with_valid_import_file_sends_imported_character(tmp_path):

@@ -37,18 +37,16 @@ def _log_text(rich_log) -> str:
 
 async def main() -> None:
     uri = os.environ.get("SERVER_URI", "ws://localhost:8765")
-    # A fresh, never-used session_id each run - a live server's real
-    # persisted sessions (e.g. "default") may already have other real
-    # characters/history in them, which would make for a confusing,
-    # unrepresentative screenshot rather than a clean fresh-game one.
-    session_id = f"screenshot-live-{uuid.uuid4().hex[:8]}"
 
     app = DungeonMasterApp(uri=uri, player_id=str(uuid.uuid4()), is_new_character=True)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.click("#name-input")
         await pilot.press(*"Thrain")
-        await pilot.click("#session-input")
-        await pilot.press(*session_id)
+        # Solo mode (default-selected on the welcome screen) derives a
+        # session_id from this run's own fresh random player_id above -
+        # already exactly the "never collides with a live server's real
+        # persisted sessions" property this needs, with no session-input
+        # interaction required.
         await pilot.click("#class-input")
         await pilot.press(*"fighter")
         await pilot.click("#join")

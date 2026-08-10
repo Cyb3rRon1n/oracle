@@ -842,16 +842,19 @@ async def test_lobby_transcript_command_saves_real_chat_over_a_real_websocket(tm
 
     try:
         app1 = DungeonMasterApp(uri="ws://localhost:8812", player_id=str(uuid.uuid4()), is_new_character=True)
-        async with app1.run_test() as pilot1:
+        # Taller than the default 80x24 - a new character's welcome box
+        # (name/mode-select/session/class/import/join/error) doesn't fit
+        # the default viewport once Multiplayer reveals session-input.
+        async with app1.run_test(size=(80, 40)) as pilot1:
             await pilot1.click("#name-input")
             await pilot1.press(*"Thrain")
-            # Left blank, this would default to the "default" session
-            # (client/app.py) - a genuinely different game from the
-            # "e2e-session-14" ws2 explicitly joins below, and Transport now
-            # correctly keeps separate sessions' broadcasts from crossing
-            # (see server/transport.py) - previously masked entirely by a
-            # single-session-per-process bug that made every connection
-            # share the same game regardless of what session_id it sent.
+            # Solo (client/app.py's WelcomeScreen, default-selected) would
+            # mint app1 its own isolated session, a genuinely different
+            # game from "e2e-session-14" ws2 explicitly joins below -
+            # Multiplayer + a matching Session ID is what actually puts
+            # both clients in the same game.
+            await pilot1.click("#mode-multiplayer")
+            await pilot1.pause()  # let the newly-revealed session-input finish mounting
             await pilot1.click("#session-input")
             await pilot1.press(*"e2e-session-14")
             await pilot1.click("#join")
@@ -1109,14 +1112,28 @@ async def test_two_real_clients_trade_turns_over_a_real_session():
         player1 = DungeonMasterApp(uri="ws://localhost:8802", player_id=str(uuid.uuid4()), is_new_character=True)
         player2 = DungeonMasterApp(uri="ws://localhost:8802", player_id=str(uuid.uuid4()), is_new_character=True)
 
-        async with player1.run_test() as pilot1, player2.run_test() as pilot2:
+        # Taller than the default 80x24 - a new character's welcome box
+        # doesn't fit the default viewport once Multiplayer reveals
+        # session-input.
+        async with player1.run_test(size=(80, 40)) as pilot1, player2.run_test(size=(80, 40)) as pilot2:
+            # Solo (default-selected) would mint each player their own
+            # isolated session - Multiplayer + a matching Session ID is
+            # what actually puts them in the same game together.
             await pilot1.click("#name-input")
             await pilot1.press(*"Thrain")
+            await pilot1.click("#mode-multiplayer")
+            await pilot1.pause()
+            await pilot1.click("#session-input")
+            await pilot1.press(*"e2e-session-4")
             await pilot1.click("#join")
             await _wait_until(lambda: isinstance(player1.screen, LobbyScreen))
 
             await pilot2.click("#name-input")
             await pilot2.press(*"Rowan")
+            await pilot2.click("#mode-multiplayer")
+            await pilot2.pause()
+            await pilot2.click("#session-input")
+            await pilot2.press(*"e2e-session-4")
             await pilot2.click("#join")
             await _wait_until(lambda: isinstance(player2.screen, LobbyScreen))
 
@@ -1206,12 +1223,22 @@ async def test_formal_initiative_reorders_turns_over_a_real_session():
         player1 = DungeonMasterApp(uri="ws://localhost:8816", player_id=player1_id, is_new_character=True)
         player2 = DungeonMasterApp(uri="ws://localhost:8816", player_id=player2_id, is_new_character=True)
 
-        async with player1.run_test() as pilot1, player2.run_test() as pilot2:
+        # Taller than the default 80x24 - a new character's welcome box
+        # doesn't fit the default viewport once Multiplayer reveals
+        # session-input.
+        async with player1.run_test(size=(80, 40)) as pilot1, player2.run_test(size=(80, 40)) as pilot2:
             # Thrain (fighter, DEX +1) joins first, so plain join order
             # would put him first - the point of this test is confirming
             # combat genuinely overrides that with a real DEX-based roll.
+            # Solo (default-selected) would mint each player their own
+            # isolated session - Multiplayer + a matching Session ID is
+            # what actually puts them in the same game together.
             await pilot1.click("#name-input")
             await pilot1.press(*"Thrain")
+            await pilot1.click("#mode-multiplayer")
+            await pilot1.pause()
+            await pilot1.click("#session-input")
+            await pilot1.press(*"e2e-session-14")
             await pilot1.click("#class-input")
             await pilot1.press(*"fighter")
             await pilot1.click("#join")
@@ -1219,6 +1246,10 @@ async def test_formal_initiative_reorders_turns_over_a_real_session():
 
             await pilot2.click("#name-input")
             await pilot2.press(*"Rowan")
+            await pilot2.click("#mode-multiplayer")
+            await pilot2.pause()
+            await pilot2.click("#session-input")
+            await pilot2.press(*"e2e-session-14")
             await pilot2.click("#class-input")
             await pilot2.press(*"rogue")
             await pilot2.click("#join")
