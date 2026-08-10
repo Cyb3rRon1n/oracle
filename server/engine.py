@@ -332,38 +332,61 @@ def _generate_stats(character_class: str, stat_priority: tuple[str, ...] | None 
     return dict(zip(priority, STANDARD_ARRAY))
 
 
-def _armor_base_ac(equipment_entry: dict) -> int | None:
-    """Parses the base AC number out of a real SRD equipment entry's own
-    `ac` field (e.g. "11 + Dex modifier") - `None` for equipment with no
-    `ac` field at all (most equipment isn't armor) or a shape this can't
-    parse, so a caller can fall back rather than guess a value."""
-    ac_text = equipment_entry.get("ac")
-    if not ac_text:
-        return None
-    match = re.match(r"(\d+)", ac_text)
-    return int(match.group(1)) if match else None
+def _parse_armor_ac(ac_text: str) -> tuple[int, int | None, bool]:
+    """Parses a real SRD armor entry's own `ac` field into
+    (base, dex_cap, heavy). Real 5e has three distinct shapes, all present
+    in srd.json's expanded equipment table (the "Structured Equipment"
+    entry, ROADMAP.md, first only had light armor - this handles all
+    three now):
+      - Light armor: "11 + Dex modifier" - the full, uncapped Dex modifier
+        applies, positive or negative. dex_cap is None, heavy is False.
+      - Medium armor: "14 + Dex modifier (max 2)" - dex_cap is the real
+        integer cap (2). Real 5e RAW only caps the *positive* side - a
+        negative Dex modifier still applies in full, it isn't further
+        capped at 0 - so the caller must clamp with min(), not treat this
+        as a hard floor.
+      - Heavy armor: a bare number with no "Dex modifier" text at all
+        (e.g. "18") - heavy is True, meaning Dex contributes exactly 0
+        regardless of sign. This needs its own boolean, not a dex_cap of
+        0 - min(dex_modifier, 0) would still apply a *negative* modifier
+        as a penalty, which isn't how heavy armor actually works.
+    `None` base for anything this can't parse - the same graceful-fallback
+    signal `_compute_ac` already treats as "not real armor data"."""
+    base_match = re.match(r"(\d+)", ac_text)
+    if not base_match:
+        return 10, None, False
+    base = int(base_match.group(1))
+    if "Dex modifier" not in ac_text:
+        return base, None, True
+    cap_match = re.search(r"max\s*(\d+)", ac_text)
+    return base, (int(cap_match.group(1)) if cap_match else None), False
 
 
 def _compute_ac(equipped_armor: str | None, dex_modifier: int, rules: RulesIndex) -> int:
     """Real 5e's own formula: 10 (unarmored) + DEX modifier, or the
-    specific equipped armor's own base AC + DEX modifier. Takes a single
-    equipped_armor name, not the whole inventory - a real behavior change
-    from this function's original "any armor anywhere in inventory counts"
-    shape (before the equip/carry distinction existed), so only what a
-    character actually has equipped affects AC, not everything they're
-    carrying. Unrecognized/blank equipped_armor falls back to unarmored,
-    the same graceful-miss convention every other name-based SRD lookup
-    here already follows - only leather_armor exists in srd.json today,
-    and it happens to have no DEX cap, so a capped-armor-type case (medium/
-    heavy armor in real 5e) is real, untested future work."""
+    specific equipped armor's own base AC + a real DEX contribution that
+    depends on the armor's own weight class (see _parse_armor_ac: none
+    capped for light, capped at a real max for medium, none at all for
+    heavy). Takes a single equipped_armor name, not the whole inventory -
+    only what a character actually has equipped affects AC, not everything
+    they're carrying. Unrecognized/blank equipped_armor falls back to
+    unarmored, the same graceful-miss convention every other name-based
+    SRD lookup here already follows."""
     base = 10
+    dex_cap: int | None = None
+    heavy = False
     if equipped_armor:
         entry = rules.get_entry("equipment", equipped_armor)
-        if entry is not None:
-            armor_base = _armor_base_ac(entry)
-            if armor_base is not None:
-                base = armor_base
-    return base + dex_modifier
+        ac_text = entry.get("ac") if entry is not None else None
+        if ac_text:
+            base, dex_cap, heavy = _parse_armor_ac(ac_text)
+    if heavy:
+        effective_dex = 0
+    elif dex_cap is None:
+        effective_dex = dex_modifier
+    else:
+        effective_dex = min(dex_modifier, dex_cap)
+    return base + effective_dex
 
 
 def _auto_equip_starting_gear(inventory: list[str], rules: RulesIndex) -> tuple[str | None, str | None]:
@@ -373,7 +396,7 @@ def _auto_equip_starting_gear(inventory: list[str], rules: RulesIndex) -> tuple[
     wielding/wearing your starting gear, not carrying it unequipped until
     a player remembers to run /equip. A weapon is any SRD equipment entry
     with a `damage` field, armor any entry with an `ac` field - the same
-    distinction _armor_base_ac already draws for AC, generalized to also
+    distinction _parse_armor_ac already draws for AC, generalized to also
     recognize weapons rather than hardcoding "the second item is armor"."""
     weapon: str | None = None
     armor: str | None = None

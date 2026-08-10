@@ -474,6 +474,925 @@
       "cost": "45 gp",
       "ac": "12 + Dex modifier",
       "weight": "13 lb."
+    },
+    "club": {
+      "name": "Club",
+      "category": "Simple Melee Weapon",
+      "cost": "1 sp",
+      "damage": "1d4 bludgeoning",
+      "weight": "2 lb.",
+      "properties": "Light"
+    },
+    "greatclub": {
+      "name": "Greatclub",
+      "category": "Simple Melee Weapon",
+      "cost": "2 sp",
+      "damage": "1d8 bludgeoning",
+      "weight": "10 lb.",
+      "properties": "Two-handed"
+    },
+    "handaxe": {
+      "name": "Handaxe",
+      "category": "Simple Melee Weapon",
+      "cost": "5 gp",
+      "damage": "1d6 slashing",
+      "weight": "2 lb.",
+      "properties": "Light, thrown (range 20/60)"
+    },
+    "javelin": {
+      "name": "Javelin",
+      "category": "Simple Melee Weapon",
+      "cost": "5 sp",
+      "damage": "1d6 piercing",
+      "weight": "2 lb.",
+      "properties": "Thrown (range 30/120)"
+    },
+    "light_hammer": {
+      "name": "Light Hammer",
+      "category": "Simple Melee Weapon",
+      "cost": "2 gp",
+      "damage": "1d4 bludgeoning",
+      "weight": "2 lb.",
+      "properties": "Light, thrown (range 20/60)"
+    },
+    "quarterstaff": {
+      "name": "Quarterstaff",
+      "category": "Simple Melee Weapon",
+      "cost": "2 sp",
+      "damage": "1d6 bludgeoning",
+      "weight": "4 lb.",
+      "properties": "Versatile (1d8)"
+    },
+    "sickle": {
+      "name": "Sickle",
+      "category": "Simple Melee Weapon",
+      "cost": "1 gp",
+      "damage": "1d4 slashing",
+      "weight": "2 lb.",
+      "properties": "Light"
+    },
+    "spear": {
+      "name": "Spear",
+      "category": "Simple Melee Weapon",
+      "cost": "1 gp",
+      "damage": "1d6 piercing",
+      "weight": "3 lb.",
+      "properties": "Thrown (range 20/60), versatile (1d8)"
+    },
+    "dart": {
+      "name": "Dart",
+      "category": "Simple Ranged Weapon",
+      "cost": "5 cp",
+      "damage": "1d4 piercing",
+      "weight": "1/4 lb.",
+      "properties": "Finesse, thrown (range 20/60)"
+    },
+    "sling": {
+      "name": "Sling",
+      "category": "Simple Ranged Weapon",
+      "cost": "1 sp",
+      "damage": "1d4 bludgeoning",
+      "weight": "0 lb.",
+      "properties": "Ammunition (range 30/120)"
+    },
+    "battleaxe": {
+      "name": "Battleaxe",
+      "category": "Martial Melee Weapon",
+      "cost": "10 gp",
+      "damage": "1d8 slashing",
+      "weight": "4 lb.",
+      "properties": "Versatile (1d10)"
+    },
+    "flail": {
+      "name": "Flail",
+      "category": "Martial Melee Weapon",
+      "cost": "10 gp",
+      "damage": "1d8 bludgeoning",
+      "weight": "2 lb."
+    },
+    "glaive": {
+      "name": "Glaive",
+      "category": "Martial Melee Weapon",
+      "cost": "20 gp",
+      "damage": "1d10 slashing",
+      "weight": "6 lb.",
+      "properties": "Heavy, reach, two-handed"
+    },
+    "greataxe": {
+      "name": "Greataxe",
+      "category": "Martial Melee Weapon",
+      "cost": "30 gp",
+      "damage": "1d12 slashing",
+      "weight": "7 lb.",
+      "properties": "Heavy, two-handed"
+    },
+    "greatsword": {
+      "name": "Greatsword",
+      "category": "Martial Melee Weapon",
+      "cost": "50 gp",
+      "damage": "2d6 slashing",
+      "weight": "6 lb.",
+      "properties": "Heavy, two-handed"
+    },
+    "halberd": {
+      "name": "Halberd",
+      "category": "Martial Melee Weapon",
+      "cost": "20 gp",
+      "damage": "1d10 slashing",
+      "weight": "6 lb.",
+      "properties": "Heavy, reach, two-handed"
+    },
+    "lance": {
+      "name": "Lance",
+      "category": "Martial Melee Weapon",
+      "cost": "10 gp",
+      "damage": "1d12 piercing",
+      "weight": "6 lb.",
+      "properties": "Reach, special"
+    },
+    "maul": {
+      "name": "Maul",
+      "category": "Martial Melee Weapon",
+      "cost": "10 gp",
+      "damage": "2d6 bludgeoning",
+      "weight": "10 lb.",
+      "properties": "Heavy, two-handed"
+    },
+    "morningstar": {
+      "name": "Morningstar",
+      "category": "Martial Melee Weapon",
+      "cost": "15 gp",
+      "damage": "1d8 piercing",
+      "weight": "4 lb."
+    },
+    "pike": {
+      "name": "Pike",
+      "category": "Martial Melee Weapon",
+      "cost": "5 gp",
+      "damage": "1d10 piercing",
+      "weight": "18 lb.",
+      "properties": "Heavy, reach, two-handed"
+    },
+    "rapier": {
+      "name": "Rapier",
+      "category": "Martial Melee Weapon",
+      "cost": "25 gp",
+      "damage": "1d8 piercing",
+      "weight": "2 lb.",
+      "properties": "Finesse"
+    },
+    "scimitar": {
+      "name": "Scimitar",
+      "category": "Martial Melee Weapon",
+      "cost": "25 gp",
+      "damage": "1d6 slashing",
+      "weight": "3 lb.",
+      "properties": "Finesse, light"
+    },
+    "shortsword": {
+      "name": "Shortsword",
+      "category": "Martial Melee Weapon",
+      "cost": "10 gp",
+      "damage": "1d6 piercing",
+      "weight": "2 lb.",
+      "properties": "Finesse, light"
+    },
+    "trident": {
+      "name": "Trident",
+      "category": "Martial Melee Weapon",
+      "cost": "5 gp",
+      "damage": "1d6 piercing",
+      "weight": "4 lb.",
+      "properties": "Thrown (range 20/60), versatile (1d8)"
+    },
+    "war_pick": {
+      "name": "War Pick",
+      "category": "Martial Melee Weapon",
+      "cost": "5 gp",
+      "damage": "1d8 piercing",
+      "weight": "2 lb."
+    },
+    "warhammer": {
+      "name": "Warhammer",
+      "category": "Martial Melee Weapon",
+      "cost": "15 gp",
+      "damage": "1d8 bludgeoning",
+      "weight": "2 lb.",
+      "properties": "Versatile (1d10)"
+    },
+    "whip": {
+      "name": "Whip",
+      "category": "Martial Melee Weapon",
+      "cost": "2 gp",
+      "damage": "1d4 slashing",
+      "weight": "3 lb.",
+      "properties": "Finesse, reach"
+    },
+    "blowgun": {
+      "name": "Blowgun",
+      "category": "Martial Ranged Weapon",
+      "cost": "10 gp",
+      "damage": "1 piercing",
+      "weight": "1 lb.",
+      "properties": "Ammunition (range 25/100), loading"
+    },
+    "hand_crossbow": {
+      "name": "Hand Crossbow",
+      "category": "Martial Ranged Weapon",
+      "cost": "75 gp",
+      "damage": "1d6 piercing",
+      "weight": "3 lb.",
+      "properties": "Ammunition (range 30/120), light, loading"
+    },
+    "heavy_crossbow": {
+      "name": "Heavy Crossbow",
+      "category": "Martial Ranged Weapon",
+      "cost": "50 gp",
+      "damage": "1d10 piercing",
+      "weight": "18 lb.",
+      "properties": "Ammunition (range 100/400), heavy, loading, two-handed"
+    },
+    "longbow": {
+      "name": "Longbow",
+      "category": "Martial Ranged Weapon",
+      "cost": "50 gp",
+      "damage": "1d8 piercing",
+      "weight": "2 lb.",
+      "properties": "Ammunition (range 150/600), heavy, two-handed"
+    },
+    "net": {
+      "name": "Net",
+      "category": "Martial Ranged Weapon",
+      "cost": "1 gp",
+      "damage": "0",
+      "weight": "3 lb.",
+      "properties": "Special, thrown (range 5/15)"
+    },
+    "padded_armor": {
+      "name": "Padded Armor",
+      "category": "Light Armor",
+      "cost": "5 gp",
+      "ac": "11 + Dex modifier",
+      "weight": "8 lb.",
+      "stealth": "Disadvantage"
+    },
+    "hide_armor": {
+      "name": "Hide Armor",
+      "category": "Medium Armor",
+      "cost": "10 gp",
+      "ac": "12 + Dex modifier (max 2)",
+      "weight": "12 lb."
+    },
+    "chain_shirt": {
+      "name": "Chain Shirt",
+      "category": "Medium Armor",
+      "cost": "50 gp",
+      "ac": "13 + Dex modifier (max 2)",
+      "weight": "20 lb."
+    },
+    "scale_mail": {
+      "name": "Scale Mail",
+      "category": "Medium Armor",
+      "cost": "50 gp",
+      "ac": "14 + Dex modifier (max 2)",
+      "weight": "45 lb.",
+      "stealth": "Disadvantage"
+    },
+    "breastplate": {
+      "name": "Breastplate",
+      "category": "Medium Armor",
+      "cost": "400 gp",
+      "ac": "14 + Dex modifier (max 2)",
+      "weight": "20 lb."
+    },
+    "half_plate": {
+      "name": "Half Plate",
+      "category": "Medium Armor",
+      "cost": "750 gp",
+      "ac": "15 + Dex modifier (max 2)",
+      "weight": "40 lb.",
+      "stealth": "Disadvantage"
+    },
+    "ring_mail": {
+      "name": "Ring Mail",
+      "category": "Heavy Armor",
+      "cost": "30 gp",
+      "ac": "14",
+      "weight": "40 lb.",
+      "stealth": "Disadvantage"
+    },
+    "chain_mail": {
+      "name": "Chain Mail",
+      "category": "Heavy Armor",
+      "cost": "75 gp",
+      "ac": "16",
+      "weight": "55 lb.",
+      "strength_requirement": "Str 13",
+      "stealth": "Disadvantage"
+    },
+    "splint_armor": {
+      "name": "Splint Armor",
+      "category": "Heavy Armor",
+      "cost": "200 gp",
+      "ac": "17",
+      "weight": "60 lb.",
+      "strength_requirement": "Str 15",
+      "stealth": "Disadvantage"
+    },
+    "plate_armor": {
+      "name": "Plate Armor",
+      "category": "Heavy Armor",
+      "cost": "1,500 gp",
+      "ac": "18",
+      "weight": "65 lb.",
+      "strength_requirement": "Str 15",
+      "stealth": "Disadvantage"
+    },
+    "shield": {
+      "name": "Shield",
+      "category": "Shield",
+      "cost": "10 gp",
+      "weight": "6 lb.",
+      "description": "+2 AC while wielded - not currently wearable via /equip's single armor slot; see server/engine.py's _compute_ac."
+    },
+    "backpack": {
+      "name": "Backpack",
+      "category": "Adventuring Gear",
+      "cost": "2 gp",
+      "weight": "5 lb."
+    },
+    "bedroll": {
+      "name": "Bedroll",
+      "category": "Adventuring Gear",
+      "cost": "1 gp",
+      "weight": "7 lb."
+    },
+    "blanket": {
+      "name": "Blanket",
+      "category": "Adventuring Gear",
+      "cost": "5 sp",
+      "weight": "3 lb."
+    },
+    "candle": {
+      "name": "Candle",
+      "category": "Adventuring Gear",
+      "cost": "1 cp",
+      "weight": "0 lb.",
+      "description": "Sheds bright light in a 5-foot radius for 1 hour."
+    },
+    "chalk": {
+      "name": "Chalk",
+      "category": "Adventuring Gear",
+      "cost": "1 cp",
+      "weight": "0 lb."
+    },
+    "climbers_kit": {
+      "name": "Climber's Kit",
+      "category": "Adventuring Gear",
+      "cost": "25 gp",
+      "weight": "12 lb.",
+      "description": "Grants advantage on climbing checks when used."
+    },
+    "component_pouch": {
+      "name": "Component Pouch",
+      "category": "Adventuring Gear",
+      "cost": "25 gp",
+      "weight": "2 lb.",
+      "description": "A pouch of small pockets for spell components with somatic/material requirements."
+    },
+    "crowbar": {
+      "name": "Crowbar",
+      "category": "Adventuring Gear",
+      "cost": "2 gp",
+      "weight": "5 lb.",
+      "description": "Advantage on Strength checks where leverage helps."
+    },
+    "fishing_tackle": {
+      "name": "Fishing Tackle",
+      "category": "Adventuring Gear",
+      "cost": "1 gp",
+      "weight": "4 lb."
+    },
+    "flask": {
+      "name": "Flask",
+      "category": "Adventuring Gear",
+      "cost": "2 cp",
+      "weight": "1 lb."
+    },
+    "grappling_hook": {
+      "name": "Grappling Hook",
+      "category": "Adventuring Gear",
+      "cost": "2 gp",
+      "weight": "4 lb."
+    },
+    "healers_kit": {
+      "name": "Healer's Kit",
+      "category": "Adventuring Gear",
+      "cost": "5 gp",
+      "weight": "3 lb.",
+      "description": "10 uses; stabilizes a dying creature without a roll."
+    },
+    "holy_symbol": {
+      "name": "Holy Symbol",
+      "category": "Adventuring Gear",
+      "cost": "5 gp",
+      "weight": "1 lb.",
+      "description": "A spellcasting focus for a cleric."
+    },
+    "holy_water": {
+      "name": "Holy Water",
+      "category": "Adventuring Gear",
+      "cost": "25 gp",
+      "weight": "1 lb.",
+      "description": "Deals 2d6 radiant damage to a fiend or undead if thrown and shattered on it."
+    },
+    "hooded_lantern": {
+      "name": "Hooded Lantern",
+      "category": "Adventuring Gear",
+      "cost": "5 gp",
+      "weight": "2 lb.",
+      "description": "Bright light in a 30-foot radius, burns 1 pint of oil per 6 hours."
+    },
+    "hunting_trap": {
+      "name": "Hunting Trap",
+      "category": "Adventuring Gear",
+      "cost": "5 gp",
+      "weight": "25 lb.",
+      "description": "A creature stepping on it takes 1d4 piercing damage and its speed becomes 0."
+    },
+    "ink": {
+      "name": "Ink",
+      "category": "Adventuring Gear",
+      "cost": "10 gp",
+      "weight": "0 lb.",
+      "description": "A one-ounce bottle."
+    },
+    "ink_pen": {
+      "name": "Ink Pen",
+      "category": "Adventuring Gear",
+      "cost": "2 cp",
+      "weight": "0 lb."
+    },
+    "ladder": {
+      "name": "Ladder",
+      "category": "Adventuring Gear",
+      "cost": "1 sp",
+      "weight": "25 lb.",
+      "description": "10 feet long."
+    },
+    "manacles": {
+      "name": "Manacles",
+      "category": "Adventuring Gear",
+      "cost": "2 gp",
+      "weight": "6 lb.",
+      "description": "DC 20 Dexterity check or DC 20 Strength check to escape without the key."
+    },
+    "mess_kit": {
+      "name": "Mess Kit",
+      "category": "Adventuring Gear",
+      "cost": "2 sp",
+      "weight": "1 lb."
+    },
+    "steel_mirror": {
+      "name": "Steel Mirror",
+      "category": "Adventuring Gear",
+      "cost": "5 gp",
+      "weight": "1/2 lb."
+    },
+    "oil": {
+      "name": "Oil",
+      "category": "Adventuring Gear",
+      "cost": "1 sp",
+      "weight": "1 lb.",
+      "description": "A one-pint flask; can be thrown as a splash weapon or burned as fuel."
+    },
+    "paper": {
+      "name": "Paper",
+      "category": "Adventuring Gear",
+      "cost": "2 sp",
+      "weight": "0 lb.",
+      "description": "One sheet."
+    },
+    "parchment": {
+      "name": "Parchment",
+      "category": "Adventuring Gear",
+      "cost": "1 sp",
+      "weight": "0 lb.",
+      "description": "One sheet."
+    },
+    "piton": {
+      "name": "Piton",
+      "category": "Adventuring Gear",
+      "cost": "5 cp",
+      "weight": "1/4 lb."
+    },
+    "pole": {
+      "name": "Pole",
+      "category": "Adventuring Gear",
+      "cost": "5 cp",
+      "weight": "7 lb.",
+      "description": "10 feet long."
+    },
+    "pouch": {
+      "name": "Pouch",
+      "category": "Adventuring Gear",
+      "cost": "5 sp",
+      "weight": "1 lb.",
+      "description": "Holds up to 1/5 cubic foot or 6 lb. of material."
+    },
+    "quiver": {
+      "name": "Quiver",
+      "category": "Adventuring Gear",
+      "cost": "1 gp",
+      "weight": "1 lb.",
+      "description": "Holds up to 20 arrows."
+    },
+    "rations": {
+      "name": "Rations",
+      "category": "Adventuring Gear",
+      "cost": "5 sp",
+      "weight": "2 lb.",
+      "description": "Enough food for one day."
+    },
+    "hempen_rope": {
+      "name": "Hempen Rope",
+      "category": "Adventuring Gear",
+      "cost": "1 gp",
+      "weight": "10 lb.",
+      "description": "50 feet."
+    },
+    "silk_rope": {
+      "name": "Silk Rope",
+      "category": "Adventuring Gear",
+      "cost": "10 gp",
+      "weight": "5 lb.",
+      "description": "50 feet."
+    },
+    "sealing_wax": {
+      "name": "Sealing Wax",
+      "category": "Adventuring Gear",
+      "cost": "5 sp",
+      "weight": "0 lb."
+    },
+    "shovel": {
+      "name": "Shovel",
+      "category": "Adventuring Gear",
+      "cost": "2 gp",
+      "weight": "5 lb."
+    },
+    "signal_whistle": {
+      "name": "Signal Whistle",
+      "category": "Adventuring Gear",
+      "cost": "5 cp",
+      "weight": "0 lb."
+    },
+    "spellbook": {
+      "name": "Spellbook",
+      "category": "Adventuring Gear",
+      "cost": "50 gp",
+      "weight": "3 lb.",
+      "description": "100 blank pages for recording spells; a wizard's spellcasting focus and spell repository."
+    },
+    "iron_spike": {
+      "name": "Iron Spike",
+      "category": "Adventuring Gear",
+      "cost": "1 sp",
+      "weight": "5 lb."
+    },
+    "spyglass": {
+      "name": "Spyglass",
+      "category": "Adventuring Gear",
+      "cost": "1,000 gp",
+      "weight": "1 lb.",
+      "description": "Objects viewed through it are magnified to twice their size."
+    },
+    "two_person_tent": {
+      "name": "Two Person Tent",
+      "category": "Adventuring Gear",
+      "cost": "2 gp",
+      "weight": "20 lb."
+    },
+    "tinderbox": {
+      "name": "Tinderbox",
+      "category": "Adventuring Gear",
+      "cost": "5 sp",
+      "weight": "1 lb.",
+      "description": "Used to light torches, candles, campfires, etc."
+    },
+    "torch": {
+      "name": "Torch",
+      "category": "Adventuring Gear",
+      "cost": "1 cp",
+      "weight": "1 lb.",
+      "description": "Sheds bright light in a 20-foot radius for 1 hour."
+    },
+    "vial": {
+      "name": "Vial",
+      "category": "Adventuring Gear",
+      "cost": "1 gp",
+      "weight": "0 lb."
+    },
+    "waterskin": {
+      "name": "Waterskin",
+      "category": "Adventuring Gear",
+      "cost": "2 sp",
+      "weight": "5 lb. full"
+    },
+    "whetstone": {
+      "name": "Whetstone",
+      "category": "Adventuring Gear",
+      "cost": "1 cp",
+      "weight": "1 lb."
+    },
+    "acid": {
+      "name": "Acid",
+      "category": "Adventuring Gear",
+      "cost": "25 gp",
+      "weight": "1 lb.",
+      "description": "A vial; as an action, can be thrown up to 20 feet for 2d6 acid damage."
+    },
+    "alchemists_fire": {
+      "name": "Alchemist's Fire",
+      "category": "Adventuring Gear",
+      "cost": "50 gp",
+      "weight": "1 lb.",
+      "description": "A flask; thrown for 1d4 fire damage at the start of each of the target's turns until put out."
+    },
+    "antitoxin": {
+      "name": "Antitoxin",
+      "category": "Adventuring Gear",
+      "cost": "50 gp",
+      "weight": "0 lb.",
+      "description": "A vial; grants advantage on saving throws against poison for 1 hour."
+    },
+    "ball_bearings": {
+      "name": "Ball Bearings",
+      "category": "Adventuring Gear",
+      "cost": "1 gp",
+      "weight": "2 lb.",
+      "description": "A bag of 1,000; covers a 10-foot square in difficult, slippery terrain."
+    },
+    "caltrops": {
+      "name": "Caltrops",
+      "category": "Adventuring Gear",
+      "cost": "1 gp",
+      "weight": "2 lb.",
+      "description": "A bag of 20; a creature entering the area takes 1 piercing damage and its speed is halved."
+    },
+    "burglars_pack": {
+      "name": "Burglar's Pack",
+      "category": "Equipment Pack",
+      "cost": "16 gp",
+      "weight": "44.5 lb.",
+      "description": "Backpack, bag of 1,000 ball bearings, 10 feet of string, bell, 5 candles, crowbar, hammer, 10 pitons, hooded lantern, 2 flasks of oil, 5 days rations, tinderbox, waterskin, 50 feet of hempen rope."
+    },
+    "diplomats_pack": {
+      "name": "Diplomat's Pack",
+      "category": "Equipment Pack",
+      "cost": "39 gp",
+      "weight": "39 lb.",
+      "description": "Chest, 2 cases for maps/scrolls, fine clothes, ink, ink pen, lamp, 2 flasks of oil, 5 sheets of paper, vial of perfume, sealing wax, soap."
+    },
+    "dungeoneers_pack": {
+      "name": "Dungeoneer's Pack",
+      "category": "Equipment Pack",
+      "cost": "12 gp",
+      "weight": "61.5 lb.",
+      "description": "Backpack, crowbar, hammer, 10 pitons, 10 torches, tinderbox, 10 days rations, waterskin, 50 feet of hempen rope."
+    },
+    "entertainers_pack": {
+      "name": "Entertainer's Pack",
+      "category": "Equipment Pack",
+      "cost": "40 gp",
+      "weight": "38 lb.",
+      "description": "Backpack, bedroll, 2 costumes, 5 candles, 5 days rations, waterskin, disguise kit."
+    },
+    "explorers_pack": {
+      "name": "Explorer's Pack",
+      "category": "Equipment Pack",
+      "cost": "10 gp",
+      "weight": "59 lb.",
+      "description": "Backpack, bedroll, mess kit, tinderbox, 10 torches, 10 days rations, waterskin, 50 feet of hempen rope."
+    },
+    "priests_pack": {
+      "name": "Priest's Pack",
+      "category": "Equipment Pack",
+      "cost": "19 gp",
+      "weight": "24 lb.",
+      "description": "Backpack, blanket, 10 candles, tinderbox, alms box, 2 blocks of incense, censer, vestments, 2 days rations, waterskin."
+    },
+    "scholars_pack": {
+      "name": "Scholar's Pack",
+      "category": "Equipment Pack",
+      "cost": "40 gp",
+      "weight": "11 lb.",
+      "description": "Backpack, book of lore, ink, ink pen, 10 sheets of parchment, small bag of sand, small knife."
+    },
+    "thieves_tools": {
+      "name": "Thieves' Tools",
+      "category": "Tool",
+      "cost": "25 gp",
+      "weight": "1 lb.",
+      "description": "Proficiency grants bonuses to picking locks and disarming traps."
+    },
+    "herbalism_kit": {
+      "name": "Herbalism Kit",
+      "category": "Tool",
+      "cost": "5 gp",
+      "weight": "3 lb.",
+      "description": "Used to identify/apply herbs; needed to craft potions of healing and antitoxin."
+    },
+    "disguise_kit": {
+      "name": "Disguise Kit",
+      "category": "Tool",
+      "cost": "25 gp",
+      "weight": "3 lb.",
+      "description": "Grants bonuses to convincingly alter your appearance."
+    },
+    "forgery_kit": {
+      "name": "Forgery Kit",
+      "category": "Tool",
+      "cost": "15 gp",
+      "weight": "5 lb.",
+      "description": "Used to forge a document or seal."
+    },
+    "navigators_tools": {
+      "name": "Navigator's Tools",
+      "category": "Tool",
+      "cost": "25 gp",
+      "weight": "2 lb.",
+      "description": "Used to chart a course and navigate by the stars."
+    },
+    "poisoners_kit": {
+      "name": "Poisoner's Kit",
+      "category": "Tool",
+      "cost": "50 gp",
+      "weight": "2 lb.",
+      "description": "Used to create and apply poisons."
+    },
+    "smiths_tools": {
+      "name": "Smith's Tools",
+      "category": "Artisan's Tools",
+      "cost": "20 gp",
+      "weight": "8 lb."
+    },
+    "alchemists_supplies": {
+      "name": "Alchemist's Supplies",
+      "category": "Artisan's Tools",
+      "cost": "50 gp",
+      "weight": "8 lb."
+    },
+    "carpenters_tools": {
+      "name": "Carpenter's Tools",
+      "category": "Artisan's Tools",
+      "cost": "8 gp",
+      "weight": "6 lb."
+    },
+    "cooks_utensils": {
+      "name": "Cook's Utensils",
+      "category": "Artisan's Tools",
+      "cost": "1 gp",
+      "weight": "8 lb."
+    },
+    "leatherworkers_tools": {
+      "name": "Leatherworker's Tools",
+      "category": "Artisan's Tools",
+      "cost": "5 gp",
+      "weight": "5 lb."
+    },
+    "dice_set": {
+      "name": "Dice Set",
+      "category": "Gaming Set",
+      "cost": "1 sp",
+      "weight": "0 lb."
+    },
+    "playing_card_set": {
+      "name": "Playing Card Set",
+      "category": "Gaming Set",
+      "cost": "5 sp",
+      "weight": "0 lb."
+    },
+    "lute": {
+      "name": "Lute",
+      "category": "Musical Instrument",
+      "cost": "35 gp",
+      "weight": "2 lb."
+    },
+    "flute": {
+      "name": "Flute",
+      "category": "Musical Instrument",
+      "cost": "2 gp",
+      "weight": "1 lb."
+    },
+    "cow": {
+      "name": "Cow",
+      "category": "Trade Good",
+      "cost": "10 gp",
+      "weight": "-"
+    },
+    "pig": {
+      "name": "Pig",
+      "category": "Trade Good",
+      "cost": "3 gp",
+      "weight": "-"
+    },
+    "chicken": {
+      "name": "Chicken",
+      "category": "Trade Good",
+      "cost": "2 cp",
+      "weight": "-"
+    },
+    "flour": {
+      "name": "Flour",
+      "category": "Trade Good",
+      "cost": "2 cp",
+      "weight": "1 lb."
+    },
+    "salt": {
+      "name": "Salt",
+      "category": "Trade Good",
+      "cost": "5 sp",
+      "weight": "1 lb."
+    },
+    "iron": {
+      "name": "Iron",
+      "category": "Trade Good",
+      "cost": "2 sp",
+      "weight": "1 lb."
+    },
+    "silk": {
+      "name": "Silk",
+      "category": "Trade Good",
+      "cost": "10 gp",
+      "weight": "-",
+      "description": "One square yard."
+    },
+    "common_wine": {
+      "name": "Common Wine",
+      "category": "Trade Good",
+      "cost": "2 sp",
+      "weight": "-",
+      "description": "A pitcher."
+    },
+    "potion_of_climbing": {
+      "name": "Potion of Climbing",
+      "category": "Wondrous Item",
+      "rarity": "Common",
+      "description": "You gain a climbing speed equal to your walking speed for 1 hour, and advantage on Strength (Athletics) checks to climb."
+    },
+    "bag_of_holding": {
+      "name": "Bag of Holding",
+      "category": "Wondrous Item",
+      "rarity": "Uncommon",
+      "description": "Holds up to 500 lb., not exceeding 64 cubic feet, in an extradimensional space; weighs 15 lb. regardless of contents."
+    },
+    "cloak_of_protection": {
+      "name": "Cloak of Protection",
+      "category": "Wondrous Item",
+      "rarity": "Uncommon",
+      "description": "+1 bonus to AC and saving throws while worn (requires attunement)."
+    },
+    "driftglobe": {
+      "name": "Driftglobe",
+      "category": "Wondrous Item",
+      "rarity": "Uncommon",
+      "description": "A glass orb that can float and shed light on command (requires attunement)."
+    },
+    "immovable_rod": {
+      "name": "Immovable Rod",
+      "category": "Wondrous Item",
+      "rarity": "Uncommon",
+      "description": "A button locks the rod in place in midair or against a surface; it can hold up to 8,000 lb."
+    },
+    "ring_of_protection": {
+      "name": "Ring of Protection",
+      "category": "Wondrous Item",
+      "rarity": "Rare",
+      "description": "+1 bonus to AC and saving throws while worn (requires attunement)."
+    },
+    "rope_of_climbing": {
+      "name": "Rope of Climbing",
+      "category": "Wondrous Item",
+      "rarity": "Uncommon",
+      "description": "A 60-foot silk rope that animates on command to knot, unknot, or climb on its own."
+    },
+    "wand_of_magic_missiles": {
+      "name": "Wand of Magic Missiles",
+      "category": "Wondrous Item",
+      "rarity": "Uncommon",
+      "description": "While holding this wand, you can use an action to cast the magic missile spell from it (requires attunement)."
+    },
+    "+1_weapon": {
+      "name": "+1 Weapon",
+      "category": "Wondrous Item",
+      "rarity": "Uncommon",
+      "description": "A weapon with a +1 bonus to attack and damage rolls made with it."
+    },
+    "+1_armor": {
+      "name": "+1 Armor",
+      "category": "Wondrous Item",
+      "rarity": "Rare",
+      "description": "Armor granting a +1 bonus to AC while worn."
     }
   },
   "leveling": {
