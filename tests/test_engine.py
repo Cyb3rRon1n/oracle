@@ -2487,10 +2487,76 @@ async def test_update_world_no_op_does_not_broadcast():
     assert not any(r[0] == "broadcast" and r[1] == "world_update" for r in received)
 
 
-async def start_session(engine, player_id):
+async def start_session(engine, player_id, content_preference=None):
+    payload = {"content_preference": content_preference} if content_preference else {}
     await engine.handle(Envelope(
-        type="start_session", session_id="test-session", sender_id=player_id, payload={},
+        type="start_session", session_id="test-session", sender_id=player_id, payload=payload,
     ))
+
+
+async def test_start_session_sets_a_recognized_content_preference():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await start_session(engine, player_id, content_preference="intense")
+
+    assert session.content_preference == "intense"
+
+
+async def test_start_session_ignores_an_unrecognized_content_preference():
+    # The same "graceful-miss convention every other name-based field in
+    # this file already follows" - a malformed/adversarial payload value
+    # falls back to the field's own default rather than raising.
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await start_session(engine, player_id, content_preference="chaotic-evil")
+
+    assert session.content_preference == "standard"
+
+
+async def test_content_preference_hint_is_prepended_to_turns_when_non_standard():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id, content_preference="lighter")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert len(dm.action_texts) == 1
+    assert "lighter" in dm.action_texts[0]
+    assert dm.action_texts[0].endswith("I look around")
+    # The hint is invisible to players - the raw text broadcast to the
+    # visible action log comes from the envelope directly, not from the
+    # (possibly hint-prefixed) action_text narrate() actually receives.
+    action_lines = [
+        r[2]["text"] for r in received
+        if r[0] == "broadcast" and r[2].get("kind") == "action"
+    ]
+    assert action_lines == [f"Thrain: I look around"]
+
+
+async def test_content_preference_hint_is_absent_for_standard_tone():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert dm.action_texts == ["I look around"]
 
 
 async def test_join_never_narrates_regardless_of_opening_scene_flag():

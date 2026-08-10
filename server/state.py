@@ -534,6 +534,19 @@ class Session(BaseModel):
     pre_combat_turn_order: list[str] | None = None
     log: list[dict] = Field(default_factory=list)
     history: list[dict] = Field(default_factory=list)
+    # A lightweight session-zero choice (server/engine.py's
+    # _on_start_session), set once by whoever starts the adventure - a
+    # real tabletop practice (agreeing on tone/intensity before play
+    # begins), not previously offered at all. "standard" needs no special
+    # handling (WorldBible's own tone_guidance already covers it); a
+    # non-default choice adds a real per-turn instruction to the DM (see
+    # CONTENT_PREFERENCE_HINTS) rather than only being stated once and
+    # risking it scrolling out of the rolling history window, the same
+    # "durable fact, not a one-time mention" reasoning WorldBible's own
+    # system-prompt placement already established - session-scoped rather
+    # than baked into the narrator's shared system prompt, since one
+    # server process can host multiple sessions with different choices.
+    content_preference: Literal["lighter", "standard", "intense"] = "standard"
     # Per-instance so it can be tuned for a real production session, or
     # varied experimentally (see scripts/live_reliability_check.py's
     # --max-history-messages) without changing the shipped default here.
