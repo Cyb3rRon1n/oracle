@@ -32,6 +32,14 @@ from .transport import ClientTransport
 # validated here.
 CHARACTER_CLASSES = ["fighter", "wizard", "rogue", "cleric"]
 
+# Mirrors server/state.py's ABILITY_KEYS - the six real SRD ability scores,
+# in their conventional order. Used only to validate a player's own typed
+# stat-priority override (WelcomeScreen's #stat-priority-input, below)
+# client-side before sending it; server/engine.py's _generate_stats
+# re-validates independently and falls back to the class default for
+# anything malformed anyway, so this is a UX nicety, not the real guard.
+ABILITY_KEYS = ("str", "dex", "con", "int", "wis", "cha")
+
 # A short, optional class-recommendation quiz on the welcome screen (a
 # direct owner ask - not asked of everyone, just offered as a "not sure?"
 # path). Purely client-side and purely a suggestion: WelcomeScreen._join
@@ -610,6 +618,18 @@ class WelcomeScreen(Screen):
     visible region entirely). */
     #survey-toggle { border: none; height: 1; min-height: 1; padding: 0; margin-bottom: 0; }
     #class-survey RadioSet { margin-bottom: 0; }
+    /* Same compact fix as #survey-toggle above, same reason - Input also
+    defaults to border: tall (2 extra rows), and this screen's row budget
+    at a standard 80x24 terminal has no room left to spare for a new
+    field - margin-bottom: 0 too, since #mode-select below now claims the
+    single spare row this screen's layout can actually afford. */
+    #stat-priority-input { border: none; height: 1; min-height: 1; padding: 0 1; margin-bottom: 0; }
+    /* One less row than every other RadioSet on this screen - the new
+    #stat-priority-input field above needs the row back, and #join is
+    otherwise pushed one row past the visible screen behind the Footer
+    (measured directly via widget .region, the same way the #survey-toggle
+    regression above was originally diagnosed - not assumed). */
+    #welcome-box #mode-select { margin-bottom: 0; }
     """
 
     def compose(self) -> ComposeResult:
@@ -662,6 +682,24 @@ class WelcomeScreen(Screen):
                             for label, class_name in options:
                                 yield RadioButton(label, id=f"survey-q{qi}-{class_name}")
                     yield Static("", id="survey-result")
+                # Optional, independent of the class recommendation above -
+                # the "broader stats survey" from the original brainstorm:
+                # previously stats were 100% derived from class with no way
+                # to say otherwise, closing that gap now. Blank (the
+                # default) already means "use the stats recommended for
+                # your class" - CLASS_ABILITY_PRIORITY, server/engine.py -
+                # so there's nothing to pre-fill here even after answering
+                # the class survey above; only a player who wants a
+                # different spread than their class's own default needs to
+                # type anything into this field at all. No separate label
+                # Static (same "row budget is already tight" reasoning
+                # import-input's own placeholder-only precedent already
+                # established, just below) - the placeholder alone says
+                # enough.
+                yield Input(
+                    placeholder=f"Stat priority, blank = recommended (e.g. {','.join(ABILITY_KEYS)})",
+                    id="stat-priority-input",
+                )
                 # Import-time only, same as class - a returning character
                 # already has everything an export would carry, so there's
                 # nothing to import into it. A filled-in path here makes
@@ -738,8 +776,12 @@ class WelcomeScreen(Screen):
             session_id = f"solo-{self.app.player_id}"
         character_class = ""
         imported_character = None
+        stat_priority = None
         if self.app.is_new_character:
             character_class = self.query_one("#class-input", Input).value.strip()
+            raw_priority = self.query_one("#stat-priority-input", Input).value.strip()
+            if raw_priority:
+                stat_priority = [ability.strip().lower() for ability in raw_priority.split(",") if ability.strip()]
             import_path = self.query_one("#import-input", Input).value.strip()
             if import_path:
                 imported_character, error = _load_character_file(import_path)
@@ -749,7 +791,7 @@ class WelcomeScreen(Screen):
                     return
 
         try:
-            await self.app.connect_and_join(name, session_id, character_class, imported_character)
+            await self.app.connect_and_join(name, session_id, character_class, imported_character, stat_priority)
         except OSError as exc:
             join_button.disabled = False
             self.query_one("#welcome-error", Static).update(f"[red]Couldn't connect: {exc}[/red]")
@@ -1004,7 +1046,12 @@ class DungeonMasterApp(App):
         self.push_screen(WelcomeScreen())
 
     async def connect_and_join(
-        self, player_name: str, session_id: str, character_class: str, imported_character: dict | None = None
+        self,
+        player_name: str,
+        session_id: str,
+        character_class: str,
+        imported_character: dict | None = None,
+        stat_priority: list[str] | None = None,
     ) -> None:
         self.transport = ClientTransport(self._uri, session_id, self._player_id)
         await self.transport.connect()
@@ -1014,6 +1061,8 @@ class DungeonMasterApp(App):
         payload = {"player_name": player_name, "character_class": character_class}
         if imported_character is not None:
             payload["imported_character"] = imported_character
+        if stat_priority is not None:
+            payload["stat_priority"] = stat_priority
         await self.transport.send("join_session", payload)
 
     async def export_character(self, filename: str) -> str:
