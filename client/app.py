@@ -32,6 +32,45 @@ from .transport import ClientTransport
 # validated here.
 CHARACTER_CLASSES = ["fighter", "wizard", "rogue", "cleric"]
 
+# A short, optional class-recommendation quiz on the welcome screen (a
+# direct owner ask - not asked of everyone, just offered as a "not sure?"
+# path). Purely client-side and purely a suggestion: WelcomeScreen._join
+# still sends whatever #class-input actually contains when Join is
+# pressed, exactly like a manually-typed class - the survey only ever
+# pre-fills that same field, never bypasses it. Each option maps 1:1 to
+# one of CHARACTER_CLASSES above; the class with the most picks across
+# all three questions wins, ties broken by CHARACTER_CLASSES' own order
+# (deterministic, not dict-iteration-order luck).
+CLASS_SURVEY_QUESTIONS: list[tuple[str, list[tuple[str, str]]]] = [
+    (
+        "When trouble finds you, you're most likely to...",
+        [
+            ("Meet it head-on", "fighter"),
+            ("Talk or sneak your way around it", "rogue"),
+            ("Already have a plan worked out", "wizard"),
+            ("Trust something bigger than yourself to see you through", "cleric"),
+        ],
+    ),
+    (
+        "Your idea of a good day is...",
+        [
+            ("Testing your strength against something worthy", "fighter"),
+            ("Finding an angle nobody else saw", "rogue"),
+            ("Learning something new and dangerous", "wizard"),
+            ("Helping someone who needed it", "cleric"),
+        ],
+    ),
+    (
+        "If a friend was in real danger, you'd...",
+        [
+            ("Put yourself between them and the danger", "fighter"),
+            ("Get them out before anyone noticed", "rogue"),
+            ("Already be working the problem", "wizard"),
+            ("Pray it's not too late, and act anyway", "cleric"),
+        ],
+    ),
+]
+
 # A direct owner ask: an "outcome" log_entry's mechanical category
 # (server/engine.py's _outcome_category) should read differently at a
 # glance - red for damage, green for healing, etc. - rather than every
@@ -45,6 +84,19 @@ _OUTCOME_COLORS = {
     "condition": "magenta",
     "item": "yellow",
 }
+
+
+def _recommend_class(tally: dict[str, int]) -> str | None:
+    """Picks the class-survey's winner from a {class_name: pick_count}
+    tally - a plain function, not a WelcomeScreen method, so it's testable
+    without a real Textual pilot. None if every question was left
+    unanswered (an empty or all-zero tally), matching "an unstarted quiz
+    recommends nothing" rather than an arbitrary default. Ties broken by
+    CHARACTER_CLASSES' own fixed order (max() takes the first max it
+    sees), not dict-iteration-order luck."""
+    if not any(tally.values()):
+        return None
+    return max(CHARACTER_CLASSES, key=lambda c: tally.get(c, 0))
 
 
 def _load_character_file(path: str) -> tuple[dict | None, str | None]:
@@ -548,8 +600,16 @@ class WelcomeScreen(Screen):
     #welcome-box { width: 50; height: auto; max-height: 100%; border: solid $accent; padding: 0 2; }
     #welcome-box Input { margin-bottom: 1; }
     #welcome-box #import-input { margin-bottom: 0; }
-    #welcome-box RadioSet { margin-bottom: 1; }
+    #welcome-box RadioSet { margin-bottom: 1; border: none; padding: 0; }
     #welcome-error { color: $error; height: 1; }
+    /* Compact, borderless - a full bordered Button's/RadioSet's default
+    height (both border: tall by default, +2 rows each) would push #join
+    past this screen's own scrollable viewport at a standard 80x24
+    terminal (a real thing found by running this, not assumed - see the
+    many pilot.click("#join") tests this would otherwise send out of the
+    visible region entirely). */
+    #survey-toggle { border: none; height: 1; min-height: 1; padding: 0; margin-bottom: 0; }
+    #class-survey RadioSet { margin-bottom: 0; }
     """
 
     def compose(self) -> ComposeResult:
@@ -585,6 +645,23 @@ class WelcomeScreen(Screen):
             if self.app.is_new_character:
                 yield Static(f"Class ({'/'.join(CHARACTER_CLASSES)}, blank to skip)")
                 yield Input(placeholder="Class", id="class-input")
+                yield Button("Not sure? Get a class recommendation", id="survey-toggle")
+                # Hidden until #survey-toggle is pressed - a direct owner
+                # ask, but not asked of everyone by default, matching the
+                # existing "recommend, don't require" tone every other
+                # engine-suggested-but-overridable choice in this project
+                # already has (structured output's own request_roll/
+                # world_updates flags, the class field itself). Purely a
+                # suggestion: answering never bypasses #class-input, only
+                # pre-fills it, so it stays exactly as editable/clearable
+                # as if it had been typed by hand.
+                with Vertical(id="class-survey"):
+                    for qi, (question, options) in enumerate(CLASS_SURVEY_QUESTIONS):
+                        yield Static(question)
+                        with RadioSet(id=f"survey-q{qi}"):
+                            for label, class_name in options:
+                                yield RadioButton(label, id=f"survey-q{qi}-{class_name}")
+                    yield Static("", id="survey-result")
                 # Import-time only, same as class - a returning character
                 # already has everything an export would carry, so there's
                 # nothing to import into it. A filled-in path here makes
@@ -603,13 +680,38 @@ class WelcomeScreen(Screen):
     def on_mount(self) -> None:
         self.query_one("#name-input", Input).focus()
         self.query_one("#session-input", Input).display = False  # Solo is the default selection
+        if self.app.is_new_character:
+            self.query_one("#class-survey", Vertical).display = False
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
-        self.query_one("#session-input", Input).display = event.pressed.id == "mode-multiplayer"
+        if event.radio_set.id == "mode-select":
+            self.query_one("#session-input", Input).display = event.pressed.id == "mode-multiplayer"
+        elif event.radio_set.id and event.radio_set.id.startswith("survey-q"):
+            self._update_class_recommendation()
+
+    def _update_class_recommendation(self) -> None:
+        tally: dict[str, int] = {}
+        for qi in range(len(CLASS_SURVEY_QUESTIONS)):
+            pressed = self.query_one(f"#survey-q{qi}", RadioSet).pressed_button
+            if pressed is None or pressed.id is None:
+                continue  # this question hasn't been answered yet - fine, tally what's answered so far
+            class_name = pressed.id.rsplit("-", 1)[-1]
+            tally[class_name] = tally.get(class_name, 0) + 1
+
+        recommended = _recommend_class(tally)
+        if recommended is None:
+            return
+        self.query_one("#class-input", Input).value = recommended
+        self.query_one("#survey-result", Static).update(
+            f"[dim]Recommended: {recommended.capitalize()} - edit the Class field above to change it.[/dim]"
+        )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "join":
             await self._join()
+        elif event.button.id == "survey-toggle":
+            survey = self.query_one("#class-survey", Vertical)
+            survey.display = not survey.display
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         await self._join()
