@@ -6,6 +6,7 @@ from typing import Protocol
 
 import anthropic
 
+from .lore import WorldBible, load_default_world_bible
 from .rules import RulesIndex
 from .state import ABILITY_KEYS, SKILL_ABILITIES
 
@@ -453,10 +454,17 @@ class AnthropicNarrator:
         api_key: str | None = None,
         model: str = "claude-sonnet-5",
         rules: RulesIndex | None = None,
+        world_bible: WorldBible | None = None,
     ):
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._model = model
         self._rules = rules or RulesIndex.load_default()
+        # Computed once, not per-call - present on every narrate() call
+        # regardless of the rolling history window's size, so the world's
+        # own facts (server/lore/__init__.py's WorldBible) can't scroll out
+        # of context and drift or get reinvented inconsistently over a
+        # long session.
+        self._system_prompt = DM_SYSTEM_PROMPT + (world_bible or load_default_world_bible()).system_prompt_block()
 
     async def narrate(
         self,
@@ -474,7 +482,7 @@ class AnthropicNarrator:
             async with self._client.messages.stream(
                 model=self._model,
                 max_tokens=1024,
-                system=DM_SYSTEM_PROMPT,
+                system=self._system_prompt,
                 tools=[
                     REQUEST_ROLL_TOOL,
                     LOOKUP_RULE_TOOL,

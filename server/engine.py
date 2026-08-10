@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from shared.protocol import Envelope
 
 from . import dice
+from .lore import WorldBible, load_default_world_bible
 from .narrator import NarratorBackend
 from .persistence import SessionStore
 from .rules import RulesIndex, slug
@@ -569,6 +570,7 @@ class GameEngine:
         store: SessionStore | None = None,
         enable_opening_scene: bool = True,
         rules: RulesIndex | None = None,
+        world_bible: WorldBible | None = None,
     ):
         self._session = session
         self._dm = dm
@@ -577,6 +579,12 @@ class GameEngine:
         self._store = store
         self._enable_opening_scene = enable_opening_scene
         self._rules = rules or RulesIndex.load_default()
+        # Composes the opening scene's action_text below (see
+        # _on_start_session) - the near-death/transport/Guardian-greeting
+        # premise, with real setting facts rather than left for the DM to
+        # invent freely. Same "load once, default to the bundled one"
+        # precedent self._rules above already establishes.
+        self._world_bible = world_bible or load_default_world_bible()
 
     async def _save(self, notify_player_id: str | None = None) -> None:
         """Persists session state - best-effort, not fatal. Previously a
@@ -724,12 +732,9 @@ class GameEngine:
             names = ", ".join(
                 f"{c.name} the {c.character_class}" if c.character_class else c.name for c in roster
             )
-            action_text = (
-                f"(The adventure begins. Players present: {names}. Set an opening scene that draws "
-                "everyone in together - consider inviting them to introduce themselves.)"
-            )
+            action_text = self._world_bible.opening_scene_prompt(names, plural=True)
         else:
-            action_text = "(The adventure begins - set an opening scene to draw the player in.)"
+            action_text = self._world_bible.opening_scene_prompt(character.name, plural=False)
 
         # session_started fires BEFORE narration, not after - a real
         # ordering bug caught before it ever shipped: _narrate_and_apply

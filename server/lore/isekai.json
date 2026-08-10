@@ -1,0 +1,38 @@
+{
+  "setting_name": "Aetherfall",
+  "tagline": "A world caught at the edge of the Veil between realities, where the boundary between worlds runs thin.",
+  "cosmology": "Aetherfall sits at the edge of the Veil, the boundary between countless worlds. The Veil thins now and then, and when it does, it sometimes pulls someone through - almost always someone whose own life was, at that exact moment, hanging by a thread. Those who arrive this way are called the Veil-Touched. Most never leave. Some do.",
+  "guardian": {
+    "name": "Ashwren",
+    "title": "the Warden of the Veil",
+    "persona": "Ancient, watchful, and unfailingly honest even when the truth is unwelcome - never hides behind riddles or false comfort, but is not unkind about it either. Has greeted more Veil-Touched arrivals than can be counted, and carries a certain quiet weariness because of it, though a new arrival never fails to draw out something like genuine curiosity. Speaks plainly and directly, more a patient guide than a mystic.",
+    "disposition": "friendly"
+  },
+  "regions": [
+    {
+      "name": "The Hollow March",
+      "description": "Where every Veil-Touched arrival first lands - a quiet, liminal borderland of standing stones and old, half-forgotten roads. Safe, strange, and the last place in Aetherfall that still feels like nowhere in particular."
+    },
+    {
+      "name": "Emberreach",
+      "description": "A sprawling free city built around a fault where the Veil bleeds warmth into the world. The closest thing Aetherfall has to a capital - a haven for the desperate, the curious, and the opportunistic in roughly equal measure."
+    },
+    {
+      "name": "The Sunken Vale",
+      "description": "Once fertile lowlands, half-drowned decades ago by a Veil-storm that never fully receded. Dangerous, resource-rich, and largely unclaimed by anyone willing to say so out loud."
+    },
+    {
+      "name": "The Greywood",
+      "description": "An old, watchful forest that remembers more of the world's true age than anyone currently living does. Home to things that were never quite human to begin with, and were here long before Aetherfall had a name."
+    }
+  ],
+  "central_tension": "The way home is not a secret - the Veil genuinely does open again, on its own uncertain rhythm, at sites Ashwren can name outright. But stepping through costs something real: a memory, a name, a piece of who you were before you arrived, chosen unknowing by the Veil itself, never by the one crossing it. Every Veil-Touched eventually has to decide, honestly, whether going home is worth what it takes - or whether Aetherfall has already become home enough to stay.",
+  "who_what_where_when_why": {
+    "who": "You were, until moments ago, living an entirely ordinary life - whatever it was that nearly ended it, an accident, an illness, a violence you didn't choose, doesn't matter anymore. Only that it nearly did.",
+    "what": "The Veil between your world and this one happened to thin at exactly the moment your own life did, and it pulled you through rather than let you go.",
+    "where": "This is Aetherfall - specifically, the Hollow March, where every Veil-Touched arrival is drawn first, without exception.",
+    "when": "Aetherfall keeps its own time, entirely indifferent to your world's calendar. You may find only a day has passed back home when you return, or a lifetime - there is no way to know which until you actually do, if you ever do.",
+    "why": "No one truly knows why the Veil chooses who it chooses. Ashwren has a theory - that it takes those whose story genuinely wasn't finished yet - but says plainly that it's only a theory, not a certainty, and has never claimed otherwise."
+  },
+  "tone_guidance": "Grounded and character-driven, not zany or played for comedy. Wonder and real danger in roughly equal measure. Aetherfall is strange, but never senseless - it has real rules, real history, real consequences - the tone of a world that takes itself seriously, even in a scene that's lighthearted in the moment."
+}

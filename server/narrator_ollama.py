@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 
 import ollama
 
+from .lore import WorldBible, load_default_world_bible
 from .narrator import LOOKUP_RULE_TOOL, UPDATE_CHARACTER_TOOL, ApplyUpdate, RequestRoll, UpdateWorld
 from .rules import RulesIndex
 from .state import ABILITY_KEYS, SKILL_ABILITIES
@@ -340,10 +341,22 @@ class OllamaNarrator:
         structured_output: bool = True,
         roll_requests: bool = False,
         world_updates: bool = False,
+        world_bible: WorldBible | None = None,
     ):
         self._client = ollama.AsyncClient(host=host)
         self._model = model
         self._rules = rules or RulesIndex.load_default()
+        # Computed once, appended to every system prompt variant below -
+        # present on every narrate() call regardless of the rolling
+        # history window's size, so the world's own facts (server/lore's
+        # WorldBible) can't scroll out of context and drift over a long
+        # session. Same content Anthropic's narrator.py appends to its own
+        # system prompt.
+        lore_block = (world_bible or load_default_world_bible()).system_prompt_block()
+        self._tool_calling_system_prompt = OLLAMA_SYSTEM_PROMPT + lore_block
+        self._structured_system_prompt = STRUCTURED_OUTPUT_SYSTEM_PROMPT + lore_block
+        self._structured_roll_system_prompt = STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT + lore_block
+        self._structured_followup_system_prompt = STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT + lore_block
         # Defaults on (see STRUCTURED_OUTPUT_SCHEMA above for why) - a
         # real constructor flag rather than a separate class, since every
         # other piece of state (client/model/rules) is identical either
@@ -420,7 +433,7 @@ class OllamaNarrator:
         itself judges genuinely uncertain - most turns still cost exactly
         one call, unchanged from before this existed."""
         schema = STRUCTURED_OUTPUT_ROLL_SCHEMA if self._roll_requests else STRUCTURED_OUTPUT_SCHEMA
-        system_prompt = STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT if self._roll_requests else STRUCTURED_OUTPUT_SYSTEM_PROMPT
+        system_prompt = self._structured_roll_system_prompt if self._roll_requests else self._structured_system_prompt
         # world fields are additive on top of whichever schema/prompt was
         # just selected above - this call might BE the final one (no roll
         # requested) or might not (a follow-up call replaces it below), but
@@ -464,7 +477,7 @@ class OllamaNarrator:
                 f"Roll result: {roll_result_text}"
             )
             followup_schema = _with_world_fields(STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA, self._world_updates)
-            followup_system_prompt = _with_world_prompt(STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT, self._world_updates)
+            followup_system_prompt = _with_world_prompt(self._structured_followup_system_prompt, self._world_updates)
             followup_messages: list[dict] = [
                 {"role": "system", "content": followup_system_prompt},
                 *history,
@@ -516,7 +529,7 @@ class OllamaNarrator:
         # follow-up, not an oversight.
         prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
         messages: list[dict] = [
-            {"role": "system", "content": OLLAMA_SYSTEM_PROMPT},
+            {"role": "system", "content": self._tool_calling_system_prompt},
             *history,
             {"role": "user", "content": prompt},
         ]
