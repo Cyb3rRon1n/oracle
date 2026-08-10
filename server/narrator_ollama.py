@@ -108,6 +108,12 @@ _OUTCOME_PROPERTIES = {
     },
 }
 
+STRUCTURED_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": dict(_OUTCOME_PROPERTIES),
+    "required": ["narration", "mechanical_change"],
+}
+
 # Extends _OUTCOME_PROPERTIES with a second, independent decision: does this
 # turn need a real dice roll before the outcome can even be narrated? (See
 # _narrate_structured's two-pass docstring for the full reasoning.) A model
@@ -121,7 +127,25 @@ _OUTCOME_PROPERTIES = {
 # update_character - dice notation isn't part of this at all, since the
 # engine's own request_roll closure already defaults to "1d20" and adds
 # the real ability/proficiency modifiers itself once skill/ability is named.
-STRUCTURED_OUTPUT_SCHEMA = {
+#
+# Opt-in only (OLLAMA_ROLL_REQUESTS, off by default) - unlike structured
+# output itself, this has NOT been validated at the same rigor (a real
+# 5-repeat harness study). Three live spot-check runs against qwen2.5:7b
+# (5 turns each, this session, 2026-08-09) found real signal but real
+# inconsistency: 6/6 obviously-certain actions correctly triggered no roll
+# (no false positives across any run), but only 7/9 genuinely-uncertain
+# ones triggered one - and with real run-to-run variance (3/3, then 1/3,
+# then 3/3), the same "doesn't reproduce" pattern ROADMAP.md's own
+# investigation already documented for other tool-call decisions. Field
+# completeness when a roll did fire was weaker still: only 1 of those 7
+# had a fully correct skill+ability+DC - most left skill/ability blank
+# (resolving as an unmodified d20 server-side, not a real stat-backed
+# roll) or picked a semantically wrong skill (lock-picking tagged
+# "deception" instead of "sleight_of_hand"). See ROADMAP.md for the full
+# numbers - kept off by default until a proper --repeat study either
+# confirms this holds up or finds it doesn't, the same bar every other
+# reliability claim in this file was held to.
+STRUCTURED_OUTPUT_ROLL_SCHEMA = {
     "type": "object",
     "properties": {
         **_OUTCOME_PROPERTIES,
@@ -190,14 +214,27 @@ accordingly. `target` is whoever actually got hurt or changed, not simply whoeve
 the acting character attacks someone else and that other creature takes the damage, target is
 that NPC's name, never the acting character's own name or 'self'. Set mechanical_change to
 false (and leave the other fields at their defaults) for a turn with no real mechanical
-outcome. Never break character in `narration`.
+outcome. Never break character in `narration`."""
+
+# Only used when OLLAMA_ROLL_REQUESTS is on (see STRUCTURED_OUTPUT_ROLL_SCHEMA
+# above) - the base prompt above plus the roll-deciding paragraph.
+STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT = (
+    STRUCTURED_OUTPUT_SYSTEM_PROMPT
+    + """
 
 Before narrating, decide `roll_requested`: true only if the outcome is genuinely uncertain and
 deserves a real dice roll first (an attack, a skill check, a saving throw) - false for anything
 with an obvious, certain outcome. Don't request a roll just because an action is dramatic; only
-when success is genuinely in doubt. If true, also fill in whichever of roll_skill/roll_ability/
-roll_dc/roll_kind actually apply, and leave narration/mechanical_change as placeholders - you'll
+when success is genuinely in doubt. If true, always set roll_kind too ('attack' for any weapon
+or spell attack, 'save' for a saving throw, 'check' for a skill or ability check) - never leave
+it blank when requesting a roll. For an attack, also set roll_ability to the attacking weapon's
+real governing ability (STR for most melee weapons, DEX for finesse or ranged ones). For a skill
+check, set roll_skill to whichever real skill actually matches the attempt - e.g. picking a lock
+or disarming a trap is sleight_of_hand, moving unseen or unheard is stealth, noticing something
+is perception; deception is only for lying, bluffing, or disguising intent, not for a physical
+task like this. Leave narration/mechanical_change as placeholders when requesting a roll - you'll
 get the real roll result and a chance to narrate it properly in a follow-up."""
+)
 
 STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 You decided the player's last action needed a dice roll before narrating it, and that roll has
@@ -220,6 +257,7 @@ class OllamaNarrator:
         host: str | None = None,
         rules: RulesIndex | None = None,
         structured_output: bool = True,
+        roll_requests: bool = False,
     ):
         self._client = ollama.AsyncClient(host=host)
         self._model = model
@@ -236,6 +274,14 @@ class OllamaNarrator:
         # cast_spell might prefer full update_character parity over the
         # higher correctness rate on the fields structured mode does cover.
         self._structured_output = structured_output
+        # Defaults OFF, unlike structured_output above - see
+        # STRUCTURED_OUTPUT_ROLL_SCHEMA's own docstring for why: real
+        # signal from live spot-checks, but not yet validated at the same
+        # rigor (a proper --repeat study) that earned structured_output its
+        # default-on status. Ignored entirely when structured_output is
+        # False - the legacy tool-calling path has never supported
+        # request_roll and this doesn't change that.
+        self._roll_requests = roll_requests
 
     def narrate(
         self,
@@ -281,15 +327,15 @@ class OllamaNarrator:
         instead. Costs real extra latency, but only on turns the model
         itself judges genuinely uncertain - most turns still cost exactly
         one call, unchanged from before this existed."""
+        schema = STRUCTURED_OUTPUT_ROLL_SCHEMA if self._roll_requests else STRUCTURED_OUTPUT_SCHEMA
+        system_prompt = STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT if self._roll_requests else STRUCTURED_OUTPUT_SYSTEM_PROMPT
         prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
         messages: list[dict] = [
-            {"role": "system", "content": STRUCTURED_OUTPUT_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             *history,
             {"role": "user", "content": prompt},
         ]
-        response = await self._client.chat(
-            model=self._model, messages=messages, format=STRUCTURED_OUTPUT_SCHEMA, stream=False
-        )
+        response = await self._client.chat(model=self._model, messages=messages, format=schema, stream=False)
 
         try:
             data = json.loads(response.message.content or "")
@@ -302,7 +348,7 @@ class OllamaNarrator:
             yield response.message.content or ""
             return
 
-        if data.get("roll_requested") and request_roll is not None:
+        if self._roll_requests and data.get("roll_requested") and request_roll is not None:
             roll_update: dict = {}
             if data.get("roll_skill"):
                 roll_update["skill"] = data["roll_skill"]
@@ -412,8 +458,14 @@ def create_ollama_narrator() -> OllamaNarrator:
     # native tool-calling, the first real improvement across six
     # experiments in this project's own tool-call reliability investigation.
     structured = os.environ.get("OLLAMA_STRUCTURED_OUTPUT", "true").strip().lower() not in ("0", "false", "no")
+    # OLLAMA_ROLL_REQUESTS defaults OFF, unlike OLLAMA_STRUCTURED_OUTPUT
+    # above - see STRUCTURED_OUTPUT_ROLL_SCHEMA's own docstring for why:
+    # real signal, not yet validated at the same rigor. Opt in with "1"/
+    # "true"/"yes".
+    roll_requests = os.environ.get("OLLAMA_ROLL_REQUESTS", "false").strip().lower() in ("1", "true", "yes")
     return OllamaNarrator(
         model=os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
         host=os.environ.get("OLLAMA_HOST"),
         structured_output=structured,
+        roll_requests=roll_requests,
     )
