@@ -1245,6 +1245,34 @@ async def test_update_character_target_matching_own_name_treated_as_self():
     assert session.npcs == {}
 
 
+async def test_update_character_target_matching_own_condition_treated_as_self():
+    # A real, live-found gap (ROADMAP.md's wander campaign dry-run,
+    # 2026-08-10): the acting character's own applied condition
+    # ("Veil-Touched", every new character's origin condition) got echoed
+    # back as target instead of "self" - a third shape of the same
+    # self-identification confusion player_id/name misrouting already
+    # guards against. Left unguarded, this spawned a bogus phantom NPC
+    # literally named "Veil-Touched" that then polluted /combat start's
+    # initiative order.
+    dm = UpdateSequenceDM([
+        {"target": "self", "add_condition": "Veil-Touched"},
+        {"target": "Veil-Touched", "hp_delta": -2},
+    ])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "Something lunges out of the shadows"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.hp == 8
+    assert character.conditions == ["Veil-Touched"]
+    assert session.npcs == {}
+
+
 async def test_state_sync_includes_npcs_for_a_later_joining_player():
     dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
     engine, session, received = make_engine(dm)
@@ -2906,6 +2934,36 @@ async def test_start_combat_announces_npcs_but_excludes_them_from_turn_order():
         r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Initiative" in r[2]["text"]
     ]
     assert "goblin" in announcements[0][2]["text"]
+
+
+async def test_start_combat_initiative_excludes_a_mistargeted_condition_name():
+    # Closes the exact live-found bug this fix targets end to end, not just
+    # at the apply_update layer above: before the fix, a mistargeted hit on
+    # the acting character's own "Veil-Touched" condition spawned a phantom
+    # NPC, which /combat start's own "roll initiative for every tracked NPC"
+    # logic then swept into the announcement alongside the real player -
+    # a bogus participant with no real presence in the scene.
+    dm = UpdateSequenceDM([
+        {"target": "self", "add_condition": "Veil-Touched"},
+        {"target": "Veil-Touched", "hp_delta": -2},
+    ])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter", name="Thrain")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "Something lunges out of the shadows"},
+    ))
+    assert session.npcs == {}
+
+    with patch("server.dice.random.randint", return_value=10):
+        await _start_combat(engine, player_id)
+
+    announcements = [
+        r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Initiative" in r[2]["text"]
+    ]
+    assert "Veil-Touched" not in announcements[0][2]["text"]
 
 
 async def test_start_combat_dex_modifier_fallback_for_npc_without_stats():
