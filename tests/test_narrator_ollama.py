@@ -6,9 +6,7 @@ from server.narrator_ollama import (
     OLLAMA_TOOLS,
     STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA,
     STRUCTURED_OUTPUT_ROLL_SCHEMA,
-    STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT,
     STRUCTURED_OUTPUT_SCHEMA,
-    STRUCTURED_OUTPUT_SYSTEM_PROMPT,
     OllamaNarrator,
     create_ollama_narrator,
 )
@@ -305,7 +303,10 @@ async def test_structured_narrate_calls_ollama_with_the_real_schema_and_no_strea
     call = narrator._client.calls[0]
     assert call["format"] == STRUCTURED_OUTPUT_SCHEMA
     assert call["stream"] is False
-    assert call["messages"][0] == {"role": "system", "content": STRUCTURED_OUTPUT_SYSTEM_PROMPT}
+    # Compared against the narrator's own computed prompt, not the bare
+    # module constant - the real one also has world-bible lore appended
+    # (server/lore), present on every call regardless of history window size.
+    assert call["messages"][0] == {"role": "system", "content": narrator._structured_system_prompt}
 
 
 async def test_structured_narrate_no_mechanical_change_never_calls_apply_update():
@@ -385,7 +386,7 @@ async def test_structured_narrate_roll_requests_on_uses_the_roll_schema_and_prom
 
     call = narrator._client.calls[0]
     assert call["format"] == STRUCTURED_OUTPUT_ROLL_SCHEMA
-    assert call["messages"][0] == {"role": "system", "content": STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT}
+    assert call["messages"][0] == {"role": "system", "content": narrator._structured_roll_system_prompt}
 
 
 async def test_structured_narrate_no_roll_requested_stays_a_single_call():

@@ -15,9 +15,28 @@ from server.engine import (
     _owner_character_view,
     _public_character_view,
 )
+from server.lore import Guardian, Region, WhoWhatWhereWhenWhy, WorldBible
 from server.rules import RulesIndex
 from server.state import Session
 from shared.protocol import Envelope
+
+
+def make_world_bible(**overrides) -> WorldBible:
+    defaults = dict(
+        setting_name="Testonia",
+        tagline="A place for testing.",
+        cosmology="It exists solely to be asserted against.",
+        guardian=Guardian(name="Testwarden", title="the Fixture", persona="Reliable."),
+        regions=[Region(name="The Only Region", description="There is only one.")],
+        central_tension="Will the assertions pass?",
+        who_what_where_when_why=WhoWhatWhereWhenWhy(
+            who="A test subject.", what="A test event.", where="A test place.",
+            when="Test time.", why="For coverage.",
+        ),
+        tone_guidance="Dry and deterministic.",
+    )
+    defaults.update(overrides)
+    return WorldBible(**defaults)
 
 
 class StubDM:
@@ -2487,6 +2506,51 @@ async def test_opening_scene_fires_on_explicit_start_not_on_join():
     assert started, "start_session should broadcast session_started once the adventure begins"
     turn_prompts = [r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"]
     assert turn_prompts, "turn_prompt should now be visible once the adventure has started"
+
+
+async def test_opening_scene_prompt_is_grounded_in_the_world_bible():
+    # The near-death/transport/Guardian-greeting premise is composed from
+    # real setting data (server/lore), not left for the DM to invent (and
+    # potentially contradict on a later turn) - confirms the engine's
+    # default WorldBible actually reaches the opening scene's action_text.
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm, enable_opening_scene=True)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+
+    await start_session(engine, player_id)
+
+    prompt = dm.action_texts[0]
+    assert "Ashwren" in prompt  # the default world bible's Guardian
+    assert "Aetherfall" in prompt  # the default world bible's setting name
+    assert "nearly died" in prompt
+
+
+async def test_start_session_uses_a_custom_world_bible_when_given():
+    dm = OpeningSceneDM()
+    session = Session(session_id="test-session")
+    received: list[tuple] = []
+
+    async def broadcast(env: Envelope):
+        received.append(("broadcast", env.type, env.payload))
+
+    async def send_to(pid, env: Envelope):
+        received.append(("send_to", pid, env.type, env.payload))
+
+    engine = GameEngine(
+        session, dm, broadcast, send_to, enable_opening_scene=True, world_bible=make_world_bible()
+    )
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id, payload={"player_name": "Thrain"},
+    ))
+
+    await engine.handle(Envelope(type="start_session", session_id="test-session", sender_id=player_id, payload={}))
+
+    prompt = dm.action_texts[0]
+    assert "Testwarden" in prompt
+    assert "Testonia" in prompt
+    assert "Ashwren" not in prompt  # the default world bible's Guardian, not this custom one
 
 
 async def test_start_session_with_multiple_players_mentions_everyone_in_the_prompt():
