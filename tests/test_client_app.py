@@ -400,8 +400,25 @@ async def test_start_button_sends_start_session_and_disables_itself():
             await pilot.click("#start")
             await pilot.pause()
 
-            assert ("start_session", {}) in app.transport.sent
+            assert ("start_session", {"content_preference": "standard"}) in app.transport.sent
             assert app.screen.query_one("#start").disabled
+
+
+async def test_start_button_sends_chosen_content_preference():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await pilot.click("#pref-intense")
+            await pilot.pause()
+            await pilot.click("#start")
+            await pilot.pause()
+
+            assert ("start_session", {"content_preference": "intense"}) in app.transport.sent
 
 
 async def test_session_started_transitions_lobby_to_session_screen():

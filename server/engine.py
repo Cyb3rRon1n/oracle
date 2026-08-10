@@ -149,6 +149,28 @@ CLASS_KNOWN_SPELLS: dict[str, list[str]] = {
     "cleric": ["sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon"],
 }
 
+# A lightweight session-zero choice (Session.content_preference,
+# server/state.py) - "standard" is deliberately absent here, needing no
+# extra instruction since WorldBible's own tone_guidance (server/lore)
+# already covers it; only a real, explicit choice to go lighter or more
+# intense adds anything. Prepended to every turn's action_text while
+# active (see _narrate_and_apply below), not stated once at session start
+# and left to fade - the same "durable, not a one-time mention" reasoning
+# WorldBible's own system-prompt placement already established, applied
+# here at the per-turn level since this is session-scoped rather than
+# something the narrator's shared system prompt can hold (one server
+# process can host multiple sessions with different choices).
+CONTENT_PREFERENCE_HINTS = {
+    "lighter": (
+        "Session tone: keep this lighter - ease off graphic violence, gore, and dark or "
+        "traumatic themes. Prefer non-graphic outcomes and a more hopeful, adventurous feel."
+    ),
+    "intense": (
+        "Session tone: don't hold back - real danger, real stakes, and darker themes are "
+        "welcome here, described with real weight rather than softened."
+    ),
+}
+
 # The SRD's own real Standard Array (Basic Rules character-creation
 # option), not an invented spread - same "use the official SRD numbers,
 # don't make one up" convention this file's XP-per-CR/XP-per-level tables
@@ -806,6 +828,17 @@ class GameEngine:
         if self._has_started() or not self._session.characters:
             return
 
+        # A lightweight session-zero choice (LobbyScreen's own selector,
+        # client/app.py) from whoever actually starts the adventure - an
+        # unrecognized or missing value falls back to the same "standard"
+        # default Session.content_preference already has, the same
+        # graceful-miss convention every other name-based field in this
+        # file already follows, rather than a pydantic ValidationError on
+        # a malformed/adversarial payload.
+        content_preference = envelope.payload.get("content_preference")
+        if content_preference in ("lighter", "standard", "intense"):
+            self._session.content_preference = content_preference
+
         self._session.started = True
         await self._save(envelope.sender_id)
 
@@ -1421,11 +1454,23 @@ class GameEngine:
                 world_changed = True
             return result
 
+        # Prepended here rather than baked into the DM's system prompt -
+        # content_preference is per-session (Session.content_preference,
+        # server/state.py) while the system prompt is shared/global across
+        # every session one server process hosts. "standard" has no entry
+        # in CONTENT_PREFERENCE_HINTS above, so this is a no-op for the
+        # common/default case. Prepending to the real action_text used in
+        # this narrate() call (not the raw text broadcast to the action
+        # log by _on_player_action, which happens before this method is
+        # even called) keeps the hint invisible to players.
+        hint = CONTENT_PREFERENCE_HINTS.get(self._session.content_preference)
+        narrate_action_text = f"[{hint}]\n{action_text}" if hint else action_text
+
         buffer = ""
         async for chunk in self._dm.narrate(
             history=self._session.history,
             character_summary=character.model_dump_json(),
-            action_text=action_text,
+            action_text=narrate_action_text,
             apply_update=apply_update,
             request_roll=request_roll,
             update_world=update_world,

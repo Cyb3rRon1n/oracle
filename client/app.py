@@ -767,6 +767,10 @@ class LobbyScreen(Screen):
     LobbyScreen CharacterSheetPanel { height: 12; border: solid $accent; padding: 0 1; }
     LobbyScreen CharacterSheetPanel TabbedContent { height: 1fr; }
     #lobby-status { height: 1; padding: 0 1; }
+    /* Compact, borderless - same "RadioSet's own border:tall default eats
+    two rows it doesn't need" fix WelcomeScreen's #welcome-box RadioSet
+    already applies. */
+    #content-preference { height: 3; border: none; padding: 0; margin-bottom: 0; }
     """
 
     def compose(self) -> ComposeResult:
@@ -778,6 +782,15 @@ class LobbyScreen(Screen):
         # tucked into a side column) as a compact band underneath.
         yield RichLog(id="chat-log", wrap=True, markup=True)
         yield CharacterSheetPanel(id="sheet")
+        # A real tabletop practice (agreeing on tone/intensity before play
+        # begins), not previously offered at all - whoever presses Start
+        # sets it for the whole session (Session.content_preference,
+        # server/state.py). "Standard" is the default and needs no
+        # explanation; WorldBible's own tone_guidance already covers it.
+        with RadioSet(id="content-preference"):
+            yield RadioButton("Lighter tone", id="pref-lighter")
+            yield RadioButton("Standard tone", value=True, id="pref-standard")
+            yield RadioButton("Intense tone", id="pref-intense")
         yield Static("", id="lobby-status")
         yield Button("Start Adventure", id="start", variant="success")
         yield Input(
@@ -794,7 +807,9 @@ class LobbyScreen(Screen):
         if event.button.id == "start":
             self.query_one("#start", Button).disabled = True
             self.query_one("#lobby-status", Static).update("[dim]Starting the adventure...[/dim]")
-            await self.app.transport.send("start_session", {})
+            pressed = self.query_one("#content-preference", RadioSet).pressed_button
+            content_preference = (pressed.id or "").removeprefix("pref-") if pressed else "standard"
+            await self.app.transport.send("start_session", {"content_preference": content_preference})
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
