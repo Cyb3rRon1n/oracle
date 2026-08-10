@@ -8,6 +8,7 @@ import ollama
 
 from .narrator import LOOKUP_RULE_TOOL, UPDATE_CHARACTER_TOOL, ApplyUpdate, RequestRoll, UpdateWorld
 from .rules import RulesIndex
+from .state import ABILITY_KEYS, SKILL_ABILITIES
 
 OLLAMA_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 Narrate outcomes vividly but concisely (3-5 sentences per turn). Track consequences
@@ -80,34 +81,102 @@ MAX_TOOL_ROUNDS = 4
 # production sessions still lose access to those other update_character
 # fields while this is active - a real, known gap, not silently accepted;
 # see ROADMAP.md for what expanding schema parity would need.
+_OUTCOME_PROPERTIES = {
+    "narration": {
+        "type": "string",
+        "description": "The narrated outcome, in character, 3-5 sentences, open-ended prose.",
+    },
+    "mechanical_change": {
+        "type": "boolean",
+        "description": "True if this turn's outcome changes anyone's HP, inventory, or conditions.",
+    },
+    "target": {
+        "type": "string",
+        "description": (
+            "Who the mechanical change applies to - 'self' for the acting character, or "
+            "an NPC's name (whoever actually got hurt or changed, not necessarily who "
+            "acted). Only meaningful when mechanical_change is true."
+        ),
+    },
+    "hp_delta": {
+        "type": "integer",
+        "description": "HP change - negative for damage, positive for healing. 0 if not applicable.",
+    },
+    "add_condition": {
+        "type": "string",
+        "description": "A condition to apply (e.g. 'poisoned'), or an empty string if none.",
+    },
+}
+
+# Extends _OUTCOME_PROPERTIES with a second, independent decision: does this
+# turn need a real dice roll before the outcome can even be narrated? (See
+# _narrate_structured's two-pass docstring for the full reasoning.) A model
+# response with roll_requested=true still fills in narration/
+# mechanical_change (the schema requires them either way, and Ollama's
+# format constraint doesn't cleanly express "field X only when field Y is
+# true" for a small local model) - but those fields are provisional and
+# discarded in that case, since they'd have been written without knowing
+# the real roll outcome yet. Kept minimal, the same "just enough to test
+# the hypothesis" scope _OUTCOME_PROPERTIES itself already established for
+# update_character - dice notation isn't part of this at all, since the
+# engine's own request_roll closure already defaults to "1d20" and adds
+# the real ability/proficiency modifiers itself once skill/ability is named.
 STRUCTURED_OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "narration": {
-            "type": "string",
-            "description": "The narrated outcome, in character, 3-5 sentences, open-ended prose.",
-        },
-        "mechanical_change": {
+        **_OUTCOME_PROPERTIES,
+        "roll_requested": {
             "type": "boolean",
-            "description": "True if this turn's outcome changes anyone's HP, inventory, or conditions.",
-        },
-        "target": {
-            "type": "string",
             "description": (
-                "Who the mechanical change applies to - 'self' for the acting character, or "
-                "an NPC's name (whoever actually got hurt or changed, not necessarily who "
-                "acted). Only meaningful when mechanical_change is true."
+                "True only if this action's outcome is genuinely uncertain and needs a real "
+                "dice roll before it can be narrated - an attack, a skill check, a saving "
+                "throw. False for anything with an obvious, certain outcome. When true, "
+                "narration/mechanical_change above are ignored - the real narration comes "
+                "from a follow-up once the roll is known, so just leave them at reasonable "
+                "placeholders."
             ),
         },
-        "hp_delta": {
-            "type": "integer",
-            "description": "HP change - negative for damage, positive for healing. 0 if not applicable.",
-        },
-        "add_condition": {
+        "roll_skill": {
             "type": "string",
-            "description": "A condition to apply (e.g. 'poisoned'), or an empty string if none.",
+            "enum": sorted(SKILL_ABILITIES),
+            "description": (
+                "Only when roll_requested is true and this is a skill check: the real 5e "
+                "skill name (e.g. 'stealth', 'perception'). Omit for a roll that isn't a "
+                "skill check."
+            ),
+        },
+        "roll_ability": {
+            "type": "string",
+            "enum": list(ABILITY_KEYS),
+            "description": (
+                "Only when roll_requested is true: the ability score behind this roll (a "
+                "raw ability check, a saving throw, most attacks). Omit if roll_skill "
+                "already names a skill - its governing ability applies automatically."
+            ),
+        },
+        "roll_dc": {
+            "type": "integer",
+            "description": (
+                "Only when roll_requested is true: the difficulty class the roll must meet "
+                "or beat. Omit for a roll with no pass/fail threshold."
+            ),
+        },
+        "roll_kind": {
+            "type": "string",
+            "enum": ["attack", "save", "check"],
+            "description": "Only when roll_requested is true: what kind of roll this is.",
         },
     },
+    "required": ["narration", "mechanical_change", "roll_requested"],
+}
+
+# The follow-up call's schema, once a requested roll's real result is known
+# - same outcome shape as pass one, just without the roll-deciding fields
+# (a roll already happened; this call only narrates and applies its
+# consequences).
+STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA = {
+    "type": "object",
+    "properties": dict(_OUTCOME_PROPERTIES),
     "required": ["narration", "mechanical_change"],
 }
 
@@ -121,7 +190,23 @@ accordingly. `target` is whoever actually got hurt or changed, not simply whoeve
 the acting character attacks someone else and that other creature takes the damage, target is
 that NPC's name, never the acting character's own name or 'self'. Set mechanical_change to
 false (and leave the other fields at their defaults) for a turn with no real mechanical
-outcome. Never break character in `narration`."""
+outcome. Never break character in `narration`.
+
+Before narrating, decide `roll_requested`: true only if the outcome is genuinely uncertain and
+deserves a real dice roll first (an attack, a skill check, a saving throw) - false for anything
+with an obvious, certain outcome. Don't request a roll just because an action is dramatic; only
+when success is genuinely in doubt. If true, also fill in whichever of roll_skill/roll_ability/
+roll_dc/roll_kind actually apply, and leave narration/mechanical_change as placeholders - you'll
+get the real roll result and a chance to narrate it properly in a follow-up."""
+
+STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
+You decided the player's last action needed a dice roll before narrating it, and that roll has
+now genuinely happened - its real result is given below. Respond with a single JSON object
+matching the given schema - never prose outside that JSON. Write `narration` (3-5 sentences,
+open-ended prose, never a numbered/bulleted list) that matches the real roll result given to
+you - if it says failure, the character does not simply succeed anyway. Set `mechanical_change`
+and fill in `target`/`hp_delta`/`add_condition` the same way a normal turn would, now informed
+by whether the roll actually succeeded. Never break character."""
 
 
 class OllamaNarrator:
@@ -162,21 +247,40 @@ class OllamaNarrator:
         update_world: UpdateWorld | None = None,
     ) -> AsyncIterator[str]:
         if self._structured_output:
-            return self._narrate_structured(history, character_summary, action_text, apply_update)
+            return self._narrate_structured(history, character_summary, action_text, apply_update, request_roll)
         return self._narrate_tool_calling(history, character_summary, action_text, apply_update)
 
     async def _narrate_structured(
-        self, history: list[dict], character_summary: str, action_text: str, apply_update: ApplyUpdate
+        self,
+        history: list[dict],
+        character_summary: str,
+        action_text: str,
+        apply_update: ApplyUpdate,
+        request_roll: RequestRoll | None = None,
     ) -> AsyncIterator[str]:
-        """The experimental structured-output path (see
-        STRUCTURED_OUTPUT_SCHEMA above) - constrains the entire response to
-        JSON via Ollama's format parameter instead of native tool-calling.
-        Not streamed: constrained generation doesn't produce meaningfully
-        parseable partial JSON chunk-by-chunk the way free-form tool-calling
-        text does, so this yields the full narration as one chunk once the
-        complete response is in hand - `_narrate_and_apply`'s own buffering
-        (`buffer += chunk`) handles a single big chunk exactly the same as
-        many small ones."""
+        """The structured-output path (see STRUCTURED_OUTPUT_SCHEMA above) -
+        constrains the entire response to JSON via Ollama's format parameter
+        instead of native tool-calling. Not streamed: constrained generation
+        doesn't produce meaningfully parseable partial JSON chunk-by-chunk
+        the way free-form tool-calling text does, so this yields narration
+        as one chunk once a complete response is in hand -
+        `_narrate_and_apply`'s own buffering (`buffer += chunk`) handles a
+        single big chunk exactly the same as many small ones.
+
+        Two model calls, not one, whenever roll_requested comes back true -
+        deliberately, not an oversight. request_roll's real dice result
+        can't be known until after the roll happens, so a single JSON
+        response can't both decide a roll is needed *and* write narration
+        that's guaranteed to match its outcome (a fabricated "you succeed"
+        sitting next to a roll that, moments later, actually came back a
+        failure). The first call only decides whether/how to roll; the
+        engine rolls for real; a second call writes the actual narration
+        already knowing that real result - the same two-step shape Claude's
+        native request_roll tool-call already gets for free from a real
+        multi-turn tool round trip, just done as two constrained JSON calls
+        instead. Costs real extra latency, but only on turns the model
+        itself judges genuinely uncertain - most turns still cost exactly
+        one call, unchanged from before this existed."""
         prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
         messages: list[dict] = [
             {"role": "system", "content": STRUCTURED_OUTPUT_SYSTEM_PROMPT},
@@ -197,6 +301,36 @@ class OllamaNarrator:
             # _on_player_action's own exception handling already has.
             yield response.message.content or ""
             return
+
+        if data.get("roll_requested") and request_roll is not None:
+            roll_update: dict = {}
+            if data.get("roll_skill"):
+                roll_update["skill"] = data["roll_skill"]
+            if data.get("roll_ability"):
+                roll_update["ability"] = data["roll_ability"]
+            if data.get("roll_dc") is not None:
+                roll_update["dc"] = data["roll_dc"]
+            if data.get("roll_kind"):
+                roll_update["roll_kind"] = data["roll_kind"]
+            roll_result_text = request_roll(roll_update)
+
+            followup_prompt = (
+                f"Character:\n{character_summary}\n\nPlayer action: {action_text}\n\n"
+                f"Roll result: {roll_result_text}"
+            )
+            followup_messages: list[dict] = [
+                {"role": "system", "content": STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT},
+                *history,
+                {"role": "user", "content": followup_prompt},
+            ]
+            response = await self._client.chat(
+                model=self._model, messages=followup_messages, format=STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA, stream=False
+            )
+            try:
+                data = json.loads(response.message.content or "")
+            except json.JSONDecodeError:
+                yield response.message.content or ""
+                return
 
         yield data.get("narration", "")
 
