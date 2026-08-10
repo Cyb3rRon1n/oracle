@@ -259,6 +259,20 @@ def make_structured_roll_narrator() -> OllamaNarrator:
     return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=True, roll_requests=True)
 
 
+def make_structured_world_narrator() -> OllamaNarrator:
+    return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=True, world_updates=True)
+
+
+def make_structured_roll_and_world_narrator() -> OllamaNarrator:
+    return OllamaNarrator(
+        rules=RulesIndex.load_default(), structured_output=True, roll_requests=True, world_updates=True
+    )
+
+
+def noop_update_world(update: dict) -> str:
+    return "unexpected call"
+
+
 async def test_structured_narrate_yields_narration_and_applies_a_real_change():
     narrator = make_structured_narrator()
     payload = {
@@ -521,6 +535,150 @@ async def test_structured_narrate_roll_requested_without_a_request_roll_callback
     assert len(narrator._client.calls) == 1
 
 
+async def test_structured_narrate_world_updates_off_ignores_world_fields_entirely():
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "You step into the great hall.",
+        "mechanical_change": False,
+        "world_change": True,
+        "location": "Great Hall",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I enter the hall", noop_apply_update, update_world=noop_update_world
+        )
+    ]
+
+    assert "".join(chunks) == "You step into the great hall."
+
+
+async def test_structured_narrate_world_updates_uses_the_world_schema_and_prompt():
+    narrator = make_structured_world_narrator()
+    payload = {"narration": "Nothing changes.", "mechanical_change": False, "world_change": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    _ = [c async for c in narrator.narrate([], "{}", "I wait", noop_apply_update)]
+
+    call = narrator._client.calls[0]
+    assert "world_change" in call["format"]["properties"]
+    assert "location" in call["format"]["properties"]
+    assert "world_change" in call["format"]["required"]
+    assert "Also decide `world_change`" in call["messages"][0]["content"]
+
+
+async def test_structured_narrate_world_change_applies_a_real_update():
+    narrator = make_structured_world_narrator()
+    payload = {
+        "narration": "You step into the great hall.",
+        "mechanical_change": False,
+        "world_change": True,
+        "location": "Great Hall",
+        "add_objective": "Find the missing heirloom",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_update_world(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I enter the hall", noop_apply_update, update_world=record_update_world
+        )
+    ]
+
+    assert "".join(chunks) == "You step into the great hall."
+    assert calls == [{"location": "Great Hall", "add_objective": "Find the missing heirloom"}]
+
+
+async def test_structured_narrate_no_world_change_never_calls_update_world():
+    narrator = make_structured_world_narrator()
+    payload = {"narration": "Nothing notable happens.", "mechanical_change": False, "world_change": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    chunks = [
+        c
+        async for c in narrator.narrate([], "{}", "I look around", noop_apply_update, update_world=noop_update_world)
+    ]
+
+    assert "".join(chunks) == "Nothing notable happens."
+
+
+async def test_structured_narrate_roll_and_world_together_applies_both_from_second_call():
+    # Combined flags: the first (roll-deciding) response's own world_change
+    # must be discarded too, same as its narration/mechanical_change - all
+    # written blind, before the real roll outcome existed.
+    narrator = make_structured_roll_and_world_narrator()
+    first_payload = {
+        "narration": "placeholder", "mechanical_change": False, "roll_requested": True, "roll_kind": "check",
+        "world_change": True, "location": "should not be used",
+    }
+    second_payload = {
+        "narration": "You persuade the guard to let you through.",
+        "mechanical_change": False,
+        "world_change": True,
+        "add_objective": "Find the missing heirloom",
+    }
+    narrator._client = FakeOllamaClient(
+        [FakeChatResponse(json.dumps(first_payload)), FakeChatResponse(json.dumps(second_payload))]
+    )
+
+    world_calls: list[dict] = []
+
+    def record_update_world(update: dict) -> str:
+        world_calls.append(update)
+        return "ok"
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I try to talk my way past the guard", noop_apply_update,
+            request_roll=lambda u: "Rolled: 18 vs DC 12 — success.", update_world=record_update_world,
+        )
+    ]
+
+    assert "".join(chunks) == "You persuade the guard to let you through."
+    assert world_calls == [{"add_objective": "Find the missing heirloom"}]
+
+
+async def test_structured_narrate_roll_and_world_together_no_roll_fired_uses_first_call():
+    # Combined flags, but the model decides no roll is needed this turn -
+    # only one call happens, and that call's own world_change is the real
+    # (not discarded) one, since there's no second call to supersede it.
+    narrator = make_structured_roll_and_world_narrator()
+    payload = {
+        "narration": "You step into the great hall.",
+        "mechanical_change": False,
+        "roll_requested": False,
+        "world_change": True,
+        "location": "Great Hall",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    world_calls: list[dict] = []
+
+    def record_update_world(update: dict) -> str:
+        world_calls.append(update)
+        return "ok"
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I enter the hall", noop_apply_update, update_world=record_update_world
+        )
+    ]
+
+    assert "".join(chunks) == "You step into the great hall."
+    assert world_calls == [{"location": "Great Hall"}]
+    assert len(narrator._client.calls) == 1
+
+
 def test_default_structured_output_is_true():
     # A live 5-repeat qwen2.5:7b comparison found this roughly doubles
     # real tool-call correctness over native tool-calling - see
@@ -564,3 +722,22 @@ def test_create_ollama_narrator_respects_explicit_roll_requests_opt_in(monkeypat
 def test_create_ollama_narrator_roll_requests_opt_in_is_case_insensitive(monkeypatch):
     monkeypatch.setenv("OLLAMA_ROLL_REQUESTS", "True")
     assert create_ollama_narrator()._roll_requests is True
+
+
+def test_default_world_updates_is_false():
+    assert OllamaNarrator(rules=RulesIndex.load_default())._world_updates is False
+
+
+def test_create_ollama_narrator_defaults_world_updates_off(monkeypatch):
+    monkeypatch.delenv("OLLAMA_WORLD_UPDATES", raising=False)
+    assert create_ollama_narrator()._world_updates is False
+
+
+def test_create_ollama_narrator_respects_explicit_world_updates_opt_in(monkeypatch):
+    monkeypatch.setenv("OLLAMA_WORLD_UPDATES", "1")
+    assert create_ollama_narrator()._world_updates is True
+
+
+def test_create_ollama_narrator_world_updates_opt_in_is_case_insensitive(monkeypatch):
+    monkeypatch.setenv("OLLAMA_WORLD_UPDATES", "True")
+    assert create_ollama_narrator()._world_updates is True
