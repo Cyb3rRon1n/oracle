@@ -363,6 +363,31 @@ async def test_reconnect_into_started_session_skips_the_lobby():
             assert isinstance(app.screen, SessionScreen)
 
 
+async def test_resume_recap_renders_after_state_sync_transitions_to_session_screen():
+    # A real ordering bug this locks in: server/engine.py sends the recap
+    # (a system_message) *after* state_sync specifically because the
+    # client only leaves WelcomeScreen once state_sync is processed - a
+    # system_message arriving first would have nowhere to render into
+    # (session_screen is None, and WelcomeScreen isn't LobbyScreen either)
+    # and would be silently dropped. This drives _handle() with envelopes
+    # in that exact real order to confirm the recap actually lands.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=False)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+
+            await app._handle(_state_sync("p1", started=True))
+            await app._handle(Envelope(
+                type="system_message", session_id="s", sender_id="server",
+                payload={"text": "Welcome back. You're currently at Emberreach.", "level": "info"},
+            ))
+            await pilot.pause()
+
+            assert isinstance(app.screen, SessionScreen)
+            assert "Welcome back. You're currently at Emberreach." in _log_text(app.screen.query_one("#log"))
+
+
 async def test_start_button_sends_start_session_and_disables_itself():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)

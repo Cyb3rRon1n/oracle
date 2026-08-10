@@ -691,6 +691,30 @@ class GameEngine:
 
         character = self._session.characters[player_id]
         await self._send_to(player_id, self._state_sync_envelope(player_id))
+
+        # A private "here's where things left off" recap for anyone
+        # joining a story already underway - a returning player reconnecting
+        # AND a brand-new player joining an in-progress multiplayer game
+        # (arguably the one who needs it most) both got nothing beyond
+        # whatever their own client silently reconstructs from state_sync
+        # before this - no scrolled-back log, no restated objective.
+        # Skipped only when nothing has happened yet (_has_started() false
+        # - a session still sitting in its pre-game lobby has no story to
+        # recap). Entirely deterministic (WorldState/Session.log, already-
+        # tracked data), not an LLM call - always available instantly,
+        # regardless of narrator reliability or latency, the same "engine
+        # composes it" discipline the opening-scene premise (server/lore)
+        # already established. Sent *after* state_sync above, not before -
+        # a real ordering bug caught before it ever shipped: the client
+        # only transitions off WelcomeScreen once it processes state_sync
+        # (client/app.py's own _handle), so a system_message arriving
+        # earlier has no SessionScreen/LobbyScreen to render into yet and
+        # is silently dropped - the exact race _on_start_session's own
+        # session_started-before-narration ordering already guards against
+        # elsewhere in this file.
+        if self._has_started():
+            await self._send_to(player_id, self._system_envelope(self._resume_recap(), level="info"))
+
         await self._broadcast(self._system_envelope(f"{character.name} joined the session.", level="info"))
         # Structured counterpart to the text log line above - lets a client
         # add/refresh this player's presence line (left-column "other
@@ -716,6 +740,50 @@ class GameEngine:
         # sessions/*.json among others) correctly recognized as already
         # started rather than getting dropped back into a pre-game lobby.
         return self._session.started or bool(self._session.log)
+
+    def _resume_recap(self) -> str:
+        """Composes _on_join_session's private "story so far" recap, sent
+        to anyone (returning or brand-new) joining an already-started
+        session - see the call site's own comment for why this is
+        deterministic rather than an LLM call. Falls back gracefully
+        through three tiers of "what do
+        we actually know": WorldState.summary (only ever set by
+        update_world, Anthropic-only/opt-in today - see ROADMAP.md item 6
+        - so frequently empty), then the most recent real narration line
+        in the log (always available once the story has genuinely begun),
+        then a bare acknowledgement if even that's somehow missing (should
+        be unreachable given _has_started() already guards this being
+        called at all, but a graceful floor rather than an IndexError)."""
+        world = self._session.world
+        parts = ["Welcome back."]
+
+        if world.summary:
+            parts.append(world.summary)
+        else:
+            last_narration = next(
+                (
+                    entry.get("text", "")
+                    for entry in reversed(self._session.log)
+                    if entry.get("kind") == "narration" and entry.get("text")
+                ),
+                "",
+            )
+            if last_narration:
+                snippet = (
+                    last_narration
+                    if len(last_narration) <= 240
+                    else last_narration[:240].rsplit(" ", 1)[0] + "..."
+                )
+                parts.append(f"Last thing that happened: {snippet}")
+
+        if world.location and world.location != "unknown":
+            parts.append(f"You're currently at {world.location}.")
+
+        active_objectives = [o.text for o in world.objectives if o.status == "active"]
+        if active_objectives:
+            parts.append("Active objectives: " + "; ".join(active_objectives) + ".")
+
+        return " ".join(parts)
 
     async def _on_start_session(self, envelope: Envelope) -> None:
         """The lobby's "Start Adventure" trigger - any joined player may

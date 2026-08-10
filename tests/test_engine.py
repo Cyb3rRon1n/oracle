@@ -17,7 +17,7 @@ from server.engine import (
 )
 from server.lore import Guardian, Region, WhoWhatWhereWhenWhy, WorldBible
 from server.rules import RulesIndex
-from server.state import Session
+from server.state import Objective, Session
 from shared.protocol import Envelope
 
 
@@ -2909,6 +2909,114 @@ async def test_rejoin_after_session_started_shows_turn_prompt():
 
     assert any(r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"), \
         "reconnecting into an already-started game should still show whose turn it is"
+
+
+def _recap_texts(received: list[tuple], player_id: str) -> list[str]:
+    return [
+        r[3]["text"] for r in received
+        if r[0] == "send_to" and r[1] == player_id and r[2] == "system_message" and r[3]["text"].startswith("Welcome back.")
+    ]
+
+
+async def test_no_recap_before_the_session_has_started():
+    # A reconnect during the pre-game lobby (nothing has happened yet) has
+    # no story to recap - only the existing name-mismatch notice, if any,
+    # should be private send_to traffic here.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await join(engine, player_id)  # reconnect, still pre-game
+
+    assert _recap_texts(received, player_id) == []
+
+
+async def test_reconnect_into_a_started_session_gets_a_private_recap():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
+    received.clear()
+
+    await join(engine, player_id)  # e.g. the client restarted mid-game
+
+    recaps = _recap_texts(received, player_id)
+    assert len(recaps) == 1
+    # No other player should ever see this - it's about what *this*
+    # player should know about their own reconnect, not table news.
+    assert not any(r for r in received if r[0] == "broadcast" and r[2].get("text", "").startswith("Welcome back."))
+
+
+async def test_a_brand_new_player_joining_an_in_progress_session_also_gets_a_recap():
+    # Arguably needs it even more than a returning player - joining a
+    # multiplayer game already underway with zero context otherwise.
+    engine, session, received = make_engine(StubDM())
+    first_id, second_id = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, first_id, name="Thrain")
+    await start_session(engine, first_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=second_id,
+        payload={"player_name": "Rowan"},
+    ))
+
+    assert len(_recap_texts(received, second_id)) == 1
+
+
+async def test_recap_uses_the_world_summary_when_present():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
+    session.world.summary = "The party has allied with the Warden against a growing threat in the Sunken Vale."
+    received.clear()
+
+    await join(engine, player_id)
+
+    recap = _recap_texts(received, player_id)[0]
+    assert "The party has allied with the Warden against a growing threat in the Sunken Vale." in recap
+
+
+async def test_recap_falls_back_to_last_narration_when_no_summary_is_set():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin"},
+    ))
+    assert session.world.summary == ""  # nothing ever called update_world here
+    received.clear()
+
+    await join(engine, player_id)
+
+    recap = _recap_texts(received, player_id)[0]
+    assert "Last thing that happened:" in recap
+    # StubDM's own narration text, see its narrate() above.
+    assert "swing your sword" in recap
+
+
+async def test_recap_includes_location_and_only_active_objectives():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
+    session.world.location = "Emberreach"
+    session.world.objectives = [
+        Objective(text="Find the missing heirloom", status="active"),
+        Objective(text="Escape the Hollow March", status="completed"),
+    ]
+    received.clear()
+
+    await join(engine, player_id)
+
+    recap = _recap_texts(received, player_id)[0]
+    assert "You're currently at Emberreach." in recap
+    assert "Find the missing heirloom" in recap
+    assert "Escape the Hollow March" not in recap
 
 
 class NarratesFixedTextDM:
