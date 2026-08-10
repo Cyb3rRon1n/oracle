@@ -4,6 +4,9 @@ import json
 
 from server.narrator_ollama import (
     OLLAMA_TOOLS,
+    STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA,
+    STRUCTURED_OUTPUT_ROLL_SCHEMA,
+    STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT,
     STRUCTURED_OUTPUT_SCHEMA,
     STRUCTURED_OUTPUT_SYSTEM_PROMPT,
     OllamaNarrator,
@@ -245,7 +248,15 @@ async def test_narrate_accepts_but_ignores_update_world_callback():
 
 
 def make_structured_narrator() -> OllamaNarrator:
+    # roll_requests defaults off (see OllamaNarrator's own default) - these
+    # tests exercise the base structured-output path, byte-identical to
+    # before OLLAMA_ROLL_REQUESTS existed. Roll-specific behavior below uses
+    # make_structured_roll_narrator() instead.
     return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=True)
+
+
+def make_structured_roll_narrator() -> OllamaNarrator:
+    return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=True, roll_requests=True)
 
 
 async def test_structured_narrate_yields_narration_and_applies_a_real_change():
@@ -329,6 +340,187 @@ async def test_structured_narrate_omits_zero_hp_delta_and_empty_condition():
     assert calls == [{"target": "self"}]
 
 
+async def test_structured_narrate_roll_requests_off_ignores_roll_fields_entirely():
+    # OLLAMA_ROLL_REQUESTS defaults off - even a payload that (implausibly,
+    # since the off-path schema doesn't offer the field at all) sets
+    # roll_requested must never trigger a second call or touch
+    # request_roll while the flag is off. Confirms "off" really means off,
+    # not just "the model chose not to use it this time".
+    narrator = make_structured_narrator()
+    payload = {"narration": "You open the door.", "mechanical_change": False, "roll_requested": True}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    def unexpected_request_roll(update: dict) -> str:
+        raise AssertionError("request_roll should never be invoked when OLLAMA_ROLL_REQUESTS is off")
+
+    chunks = [
+        c
+        async for c in narrator.narrate([], "{}", "I open the door", noop_apply_update, request_roll=unexpected_request_roll)
+    ]
+
+    assert "".join(chunks) == "You open the door."
+    assert len(narrator._client.calls) == 1
+
+
+async def test_structured_narrate_roll_requests_on_uses_the_roll_schema_and_prompt():
+    narrator = make_structured_roll_narrator()
+    payload = {"narration": "Nothing happens.", "mechanical_change": False, "roll_requested": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    _ = [c async for c in narrator.narrate([], "{}", "I look around", noop_apply_update)]
+
+    call = narrator._client.calls[0]
+    assert call["format"] == STRUCTURED_OUTPUT_ROLL_SCHEMA
+    assert call["messages"][0] == {"role": "system", "content": STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT}
+
+
+async def test_structured_narrate_no_roll_requested_stays_a_single_call():
+    # The common case (README/ROADMAP framing: most turns have an obvious,
+    # certain outcome) shouldn't pay the two-pass roll mechanism's extra
+    # latency at all, even with roll_requests on - roll_requested=false
+    # must never trigger a second call or touch request_roll.
+    narrator = make_structured_roll_narrator()
+    payload = {"narration": "You open the door.", "mechanical_change": False, "roll_requested": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    def unexpected_request_roll(update: dict) -> str:
+        raise AssertionError("request_roll should never be invoked when roll_requested is false")
+
+    chunks = [
+        c
+        async for c in narrator.narrate([], "{}", "I open the door", noop_apply_update, request_roll=unexpected_request_roll)
+    ]
+
+    assert "".join(chunks) == "You open the door."
+    assert len(narrator._client.calls) == 1
+
+
+async def test_structured_narrate_roll_requested_makes_a_real_roll_and_a_second_call():
+    # The two-pass mechanism this test locks in: a first response deciding
+    # a roll is needed must not have its own (unknown-outcome) narration
+    # used - the real narration comes from a second call, made only after
+    # request_roll has actually resolved a real result.
+    narrator = make_structured_roll_narrator()
+    first_payload = {
+        "narration": "placeholder - not used",
+        "mechanical_change": False,
+        "roll_requested": True,
+        "roll_skill": "stealth",
+        "roll_dc": 13,
+    }
+    second_payload = {
+        "narration": "You slip past the guards without a sound.",
+        "mechanical_change": False,
+    }
+    narrator._client = FakeOllamaClient(
+        [FakeChatResponse(json.dumps(first_payload)), FakeChatResponse(json.dumps(second_payload))]
+    )
+
+    roll_calls: list[dict] = []
+
+    def record_request_roll(update: dict) -> str:
+        roll_calls.append(update)
+        return "Rolled 1d20+4 (Stealth, +2 proficiency): 17 [17] vs DC 13 — success."
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I sneak past the guards", noop_apply_update, request_roll=record_request_roll
+        )
+    ]
+
+    assert "".join(chunks) == "You slip past the guards without a sound."
+    assert roll_calls == [{"skill": "stealth", "dc": 13}]
+    assert len(narrator._client.calls) == 2
+
+
+async def test_structured_narrate_second_call_uses_followup_schema_and_the_real_roll_result():
+    narrator = make_structured_roll_narrator()
+    first_payload = {
+        "narration": "placeholder",
+        "mechanical_change": False,
+        "roll_requested": True,
+        "roll_ability": "dex",
+    }
+    second_payload = {"narration": "You fumble the attempt.", "mechanical_change": False}
+    narrator._client = FakeOllamaClient(
+        [FakeChatResponse(json.dumps(first_payload)), FakeChatResponse(json.dumps(second_payload))]
+    )
+
+    def record_request_roll(update: dict) -> str:
+        return "Rolled 1d20+2 +2 DEX: 6 [4] vs DC 15 — failure."
+
+    _ = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I try to climb the wall", noop_apply_update, request_roll=record_request_roll
+        )
+    ]
+
+    second_call = narrator._client.calls[1]
+    assert second_call["format"] == STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA
+    assert "Rolled 1d20+2 +2 DEX: 6 [4] vs DC 15 — failure." in second_call["messages"][-1]["content"]
+
+
+async def test_structured_narrate_roll_requested_applies_mechanical_change_from_second_call_only():
+    # The first (roll-deciding) response's own mechanical_change must be
+    # discarded even if the model set one - it was written blind, before
+    # the real roll outcome existed, same as its narration.
+    narrator = make_structured_roll_narrator()
+    first_payload = {
+        "narration": "placeholder",
+        "mechanical_change": True,
+        "target": "self",
+        "hp_delta": -99,
+        "roll_requested": True,
+        "roll_kind": "attack",
+    }
+    second_payload = {
+        "narration": "Your blade lands true.",
+        "mechanical_change": True,
+        "target": "goblin",
+        "hp_delta": -5,
+    }
+    narrator._client = FakeOllamaClient(
+        [FakeChatResponse(json.dumps(first_payload)), FakeChatResponse(json.dumps(second_payload))]
+    )
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    _ = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I attack the goblin", record_apply_update, request_roll=lambda u: "Rolled: 18 vs DC 12 — success."
+        )
+    ]
+
+    assert calls == [{"target": "goblin", "hp_delta": -5}]
+
+
+async def test_structured_narrate_roll_requested_without_a_request_roll_callback_falls_back_to_first_response():
+    # A defensive path, not a normal case: if narrate() is ever called
+    # without a request_roll callback at all, roll_requested=true can't
+    # trigger a second call - falls back to the first response's own
+    # (provisional) narration rather than crashing or hanging.
+    narrator = make_structured_roll_narrator()
+    payload = {
+        "narration": "You act on instinct.",
+        "mechanical_change": False,
+        "roll_requested": True,
+        "roll_skill": "perception",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    chunks = [c async for c in narrator.narrate([], "{}", "I look for traps", noop_apply_update)]
+
+    assert "".join(chunks) == "You act on instinct."
+    assert len(narrator._client.calls) == 1
+
+
 def test_default_structured_output_is_true():
     # A live 5-repeat qwen2.5:7b comparison found this roughly doubles
     # real tool-call correctness over native tool-calling - see
@@ -350,3 +542,25 @@ def test_create_ollama_narrator_respects_explicit_opt_out(monkeypatch):
 def test_create_ollama_narrator_opt_out_is_case_insensitive(monkeypatch):
     monkeypatch.setenv("OLLAMA_STRUCTURED_OUTPUT", "False")
     assert create_ollama_narrator()._structured_output is False
+
+
+def test_default_roll_requests_is_false():
+    # Unlike structured_output above - real signal from live spot-checks,
+    # but not yet validated at the same rigor. See
+    # STRUCTURED_OUTPUT_ROLL_SCHEMA's own docstring and ROADMAP.md.
+    assert OllamaNarrator(rules=RulesIndex.load_default())._roll_requests is False
+
+
+def test_create_ollama_narrator_defaults_roll_requests_off(monkeypatch):
+    monkeypatch.delenv("OLLAMA_ROLL_REQUESTS", raising=False)
+    assert create_ollama_narrator()._roll_requests is False
+
+
+def test_create_ollama_narrator_respects_explicit_roll_requests_opt_in(monkeypatch):
+    monkeypatch.setenv("OLLAMA_ROLL_REQUESTS", "1")
+    assert create_ollama_narrator()._roll_requests is True
+
+
+def test_create_ollama_narrator_roll_requests_opt_in_is_case_insensitive(monkeypatch):
+    monkeypatch.setenv("OLLAMA_ROLL_REQUESTS", "True")
+    assert create_ollama_narrator()._roll_requests is True
