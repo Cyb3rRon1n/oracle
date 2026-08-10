@@ -395,6 +395,44 @@ async def test_reconnect_into_started_session_skips_the_lobby():
             assert isinstance(app.screen, SessionScreen)
 
 
+async def test_session_input_hint_only_advertises_roll_and_chat():
+    # A direct owner ask (ROADMAP.md's 2026-08-09 playtest findings): the
+    # owner felt some of the previously-listed commands shouldn't be
+    # visible/known to the player - inventory/equipment bookkeeping
+    # (/item add|remove, /equip, /unequip) reads as cheat-like, /note and
+    # the file-saving utilities (/export, /transcript) as meta/functional
+    # rather than genuine table-talk. All of them still work exactly as
+    # before (on_input_submitted) - only the hint text changed, so this
+    # locks in the *visible* set, not what's actually reachable.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            hint = str(app.screen.query_one("#input").placeholder)
+            assert "/roll" in hint
+            assert "/chat" in hint
+            for hidden in ("/note", "/item", "/equip", "/unequip", "/export", "/transcript"):
+                assert hidden not in hint
+
+
+async def test_lobby_chat_input_hint_advertises_nothing_but_chat():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            hint = str(app.screen.query_one("#chat-input").placeholder)
+            assert "/export" not in hint
+            assert "/transcript" not in hint
+
+
 async def test_resume_recap_renders_after_state_sync_transitions_to_session_screen():
     # A real ordering bug this locks in: server/engine.py sends the recap
     # (a system_message) *after* state_sync specifically because the
