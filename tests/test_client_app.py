@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import patch
 
@@ -12,6 +13,7 @@ from client.app import (
     SessionScreen,
     WelcomeScreen,
     _npc_status_line,
+    _recommend_class,
 )
 from shared.protocol import Envelope
 from textual.css.query import NoMatches
@@ -181,6 +183,93 @@ async def test_multiplayer_join_with_blank_session_id_falls_back_to_default():
             await pilot.pause()
 
             assert app.transport.session_id == "default"
+
+
+def test_recommend_class_picks_the_highest_tally():
+    assert _recommend_class({"fighter": 1, "rogue": 3, "wizard": 0}) == "rogue"
+
+
+def test_recommend_class_returns_none_for_an_unanswered_survey():
+    assert _recommend_class({}) is None
+    assert _recommend_class({"fighter": 0, "rogue": 0}) is None
+
+
+def test_recommend_class_breaks_ties_by_character_classes_own_order():
+    # CHARACTER_CLASSES = ["fighter", "wizard", "rogue", "cleric"] - a
+    # fighter/rogue tie should resolve to fighter, since it comes first
+    # in that fixed order, not whichever happened to be inserted into the
+    # tally dict first.
+    assert _recommend_class({"rogue": 2, "fighter": 2}) == "fighter"
+
+
+async def test_class_survey_is_hidden_until_the_toggle_is_pressed():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        # Taller than the 80x24 default - the survey's three questions add
+        # real height once revealed, the same reason the other survey
+        # tests below also need a taller viewport.
+        async with app.run_test(size=(80, 40)) as pilot:
+            assert app.screen.query_one("#class-survey").display is False
+
+            await pilot.click("#survey-toggle")
+            await pilot.pause()
+            assert app.screen.query_one("#class-survey").display is True
+
+            # A real sleep, not just pilot.pause() - revealing the survey
+            # shifts the scrollable welcome box's layout (auto-scroll to
+            # keep the clicked button in view), and that transition needs
+            # real wall-clock time to settle before a second click at the
+            # button's now-different position lands correctly. A real
+            # user's own click cadence would never hit this; only a
+            # scripted back-to-back double-click can.
+            await asyncio.sleep(0.3)
+            await pilot.click("#survey-toggle")
+            await pilot.pause()
+            assert app.screen.query_one("#class-survey").display is False
+
+
+async def test_answering_the_survey_pre_fills_the_class_field():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.click("#survey-toggle")
+            await pilot.pause()
+
+            # All three questions' first option is "fighter" - see
+            # CLASS_SURVEY_QUESTIONS in client/app.py.
+            await pilot.click("#survey-q0-fighter")
+            await pilot.click("#survey-q1-fighter")
+            await pilot.click("#survey-q2-fighter")
+            await pilot.pause()
+
+            assert app.screen.query_one("#class-input").value == "fighter"
+            assert "Recommended: Fighter" in app.screen.query_one("#survey-result")._Static__content
+
+
+async def test_survey_recommendation_is_still_just_a_suggestion_and_stays_editable():
+    # The whole point, per the owner's own framing: a recommendation, not
+    # a decision made for the player - #class-input must stay a normal,
+    # freely-editable field after the survey fills it in, and _join()
+    # must send whatever it actually contains.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.click("#survey-toggle")
+            await pilot.pause()
+            await pilot.click("#survey-q0-cleric")
+            await pilot.click("#survey-q1-cleric")
+            await pilot.click("#survey-q2-cleric")
+            await pilot.pause()
+            assert app.screen.query_one("#class-input").value == "cleric"
+
+            class_input = app.screen.query_one("#class-input")
+            class_input.value = "wizard"  # the player overriding the recommendation
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("join_session", {"player_name": "Thrain", "character_class": "wizard"})
 
 
 async def test_join_with_valid_import_file_sends_imported_character(tmp_path):
