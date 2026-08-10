@@ -1035,6 +1035,39 @@ async def test_sheet_panel_renders_notes_on_the_features_tab():
             assert "Owes the smith a favor." in sheet._features_text()
 
 
+async def test_sheet_panel_renders_background_on_the_features_tab():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12,
+                    "background": "A dockworker. Known for being stubborn. Nearly died: a fall.",
+                },
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            assert "A dockworker. Known for being stubborn. Nearly died: a fall." in sheet._features_text()
+
+
+async def test_sheet_panel_omits_background_section_when_blank():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            assert "Background" not in sheet._features_text()
+
+
 async def test_inventory_tab_separates_equipped_from_carried():
     # A direct owner ask - not a flat item list, an Equipped section
     # (weapon/armor slots) distinct from Carried (everything else).

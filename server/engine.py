@@ -9,7 +9,13 @@ from pydantic import ValidationError
 from shared.protocol import Envelope
 
 from . import dice
-from .lore import WorldBible, load_default_world_bible
+from .lore import (
+    OriginTable,
+    WorldBible,
+    load_default_origin_table,
+    load_default_world_bible,
+    random_origin,
+)
 from .narrator import NarratorBackend
 from .persistence import SessionStore
 from .rules import RulesIndex, slug
@@ -469,15 +475,26 @@ def _xp_for_npc(npc: CharacterSheet, update: dict, rules: RulesIndex) -> int:
 
 
 def build_starting_character(
-    player_id: str, name: str, character_class: str, rules: RulesIndex
+    player_id: str,
+    name: str,
+    character_class: str,
+    rules: RulesIndex,
+    origin_table: OriginTable | None = None,
 ) -> CharacterSheet:
     """Builds a real starting sheet from a chosen class via the SRD data,
     or falls back to the original blank hp=10/max_hp=10 sheet for a blank
     or unrecognized class - keeps old clients/tests that don't send
-    character_class at all working unchanged."""
+    character_class at all working unchanged.
+
+    Every new character gets a random pre-Aetherfall origin (server/lore's
+    random_origin) regardless of class choice - the near-death/transport
+    premise applies to everyone, not just characters who picked a real
+    class."""
+    background = random_origin(origin_table or load_default_origin_table()).sheet_summary()
+
     class_entry = rules.get_entry("class", character_class) if character_class else None
     if class_entry is None:
-        return CharacterSheet(player_id=player_id, name=name, hp=10, max_hp=10)
+        return CharacterSheet(player_id=player_id, name=name, hp=10, max_hp=10, background=background)
 
     stats = _generate_stats(character_class)
     con_mod = ability_modifier(stats["con"]) if stats else 0
@@ -505,6 +522,7 @@ def build_starting_character(
         known_spells=known_spells,
         spell_slots=dict(spell_slots),
         max_spell_slots=dict(spell_slots),
+        background=background,
     )
 
 
@@ -571,6 +589,7 @@ class GameEngine:
         enable_opening_scene: bool = True,
         rules: RulesIndex | None = None,
         world_bible: WorldBible | None = None,
+        origin_table: OriginTable | None = None,
     ):
         self._session = session
         self._dm = dm
@@ -585,6 +604,9 @@ class GameEngine:
         # invent freely. Same "load once, default to the bundled one"
         # precedent self._rules above already establishes.
         self._world_bible = world_bible or load_default_world_bible()
+        # Feeds build_starting_character's random per-character origin
+        # (background/trait/near-death) - same load-once precedent.
+        self._origin_table = origin_table or load_default_origin_table()
 
     async def _save(self, notify_player_id: str | None = None) -> None:
         """Persists session state - best-effort, not fatal. Previously a
@@ -638,7 +660,9 @@ class GameEngine:
                         ),
                     )
             if character is None:
-                character = build_starting_character(player_id, name, character_class, self._rules)
+                character = build_starting_character(
+                    player_id, name, character_class, self._rules, self._origin_table
+                )
 
             self._session.characters[player_id] = character
             self._session.turn_order.append(player_id)
@@ -734,7 +758,9 @@ class GameEngine:
             )
             action_text = self._world_bible.opening_scene_prompt(names, plural=True)
         else:
-            action_text = self._world_bible.opening_scene_prompt(character.name, plural=False)
+            action_text = self._world_bible.opening_scene_prompt(
+                character.name, plural=False, origin_detail=character.background
+            )
 
         # session_started fires BEFORE narration, not after - a real
         # ordering bug caught before it ever shipped: _narrate_and_apply

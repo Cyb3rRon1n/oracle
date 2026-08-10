@@ -1,6 +1,18 @@
 from __future__ import annotations
 
-from server.lore import Guardian, Region, WhoWhatWhereWhenWhy, WorldBible, load_default_world_bible
+from unittest.mock import patch
+
+from server.lore import (
+    Guardian,
+    Origin,
+    OriginTable,
+    Region,
+    WhoWhatWhereWhenWhy,
+    WorldBible,
+    load_default_origin_table,
+    load_default_world_bible,
+    random_origin,
+)
 
 
 def make_world_bible(**overrides) -> WorldBible:
@@ -73,3 +85,45 @@ def test_opening_scene_prompt_always_mentions_adventure_beginning():
     # on the composed action_text - locking it in here at the source.
     bible = make_world_bible()
     assert "adventure begins" in bible.opening_scene_prompt("Thrain", plural=False)
+
+
+def test_opening_scene_prompt_includes_origin_detail_when_given():
+    bible = make_world_bible()
+    prompt = bible.opening_scene_prompt(
+        "Thrain", plural=False, origin_detail="A lighthouse keeper. Nearly died: a storm."
+    )
+    assert "A lighthouse keeper. Nearly died: a storm." in prompt
+
+
+def test_opening_scene_prompt_omits_origin_section_when_blank():
+    bible = make_world_bible()
+    prompt = bible.opening_scene_prompt("Thrain", plural=False, origin_detail="")
+    assert "specific background" not in prompt
+
+
+def test_load_default_origin_table_parses_the_bundled_file():
+    table = load_default_origin_table()
+    assert len(table.backgrounds) >= 1
+    assert len(table.traits) >= 1
+    assert len(table.near_death_events) >= 1
+
+
+def test_random_origin_picks_from_the_given_table():
+    table = OriginTable(backgrounds=["a baker"], traits=["stubborn"], near_death_events=["a fall"])
+    origin = random_origin(table)
+    assert origin == Origin(background="a baker", trait="stubborn", near_death="a fall")
+
+
+def test_random_origin_is_mockable_the_same_way_dice_rolls_are():
+    table = OriginTable(
+        backgrounds=["a baker", "a nurse"], traits=["stubborn", "curious"], near_death_events=["a fall", "a fire"]
+    )
+    with patch("server.lore.random.choice", side_effect=["a nurse", "curious", "a fire"]):
+        origin = random_origin(table)
+    assert origin == Origin(background="a nurse", trait="curious", near_death="a fire")
+
+
+def test_origin_sheet_summary_reads_as_a_standalone_paragraph():
+    origin = Origin(background="a dockworker", trait="stubborn to a fault", near_death="a fall from scaffolding")
+    summary = origin.sheet_summary()
+    assert summary == "A dockworker. Known for being stubborn to a fault. Nearly died: a fall from scaffolding."
