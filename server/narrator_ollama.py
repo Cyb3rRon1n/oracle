@@ -312,8 +312,9 @@ fill in the matching field:
   exact request. Vague rumors, gossip, or background lore with no direct request attached are
   NOT an objective - leave add_objective blank for those.
 - Your own narration this turn describes successfully finishing a task an NPC earlier and
-  directly asked of you -> set `complete_objective` to that task's exact text, copied verbatim
-  from when you originally wrote it in add_objective.
+  directly asked of you -> set `complete_objective` to that task's exact text. If a "World
+  state" section above lists current active objectives, copy the matching one's text from
+  there character-for-character - don't retype it from memory.
 - A new place worth remembering is discovered -> set `add_location` to its name.
 Set world_change to false for anything else - idle conversation, background rumors with no
 direct request, examining something without traveling, or combat with no location/goal change."""
@@ -440,10 +441,11 @@ class OllamaNarrator:
         apply_update: ApplyUpdate,
         request_roll: RequestRoll | None = None,
         update_world: UpdateWorld | None = None,
+        world_summary: str | None = None,
     ) -> AsyncIterator[str]:
         if self._structured_output:
             return self._narrate_structured(
-                history, character_summary, action_text, apply_update, request_roll, update_world
+                history, character_summary, action_text, apply_update, request_roll, update_world, world_summary
             )
         return self._narrate_tool_calling(history, character_summary, action_text, apply_update)
 
@@ -455,6 +457,7 @@ class OllamaNarrator:
         apply_update: ApplyUpdate,
         request_roll: RequestRoll | None = None,
         update_world: UpdateWorld | None = None,
+        world_summary: str | None = None,
     ) -> AsyncIterator[str]:
         """The structured-output path (see STRUCTURED_OUTPUT_SCHEMA above) -
         constrains the entire response to JSON via Ollama's format parameter
@@ -488,7 +491,17 @@ class OllamaNarrator:
         # turns out to be the response that matters.
         schema = _with_world_fields(schema, self._world_updates)
         system_prompt = _with_world_prompt(system_prompt, self._world_updates)
-        prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
+        prompt = f"Character:\n{character_summary}\n\n"
+        # Only when world_updates is actually on - otherwise world_summary
+        # would describe fields the schema doesn't even expose this call,
+        # pure noise. Given directly rather than left for the model to
+        # infer/recall from history alone - see NarratorBackend.narrate's
+        # own docstring (server/narrator.py) for why this exists at all:
+        # complete_objective needs an exact prior text match, and recalling
+        # that correctly from several turns back measured at 0% (ROADMAP.md).
+        if self._world_updates and world_summary:
+            prompt += f"World state:\n{world_summary}\n\n"
+        prompt += f"Player action: {action_text}"
         messages: list[dict] = [
             {"role": "system", "content": system_prompt},
             *history,
@@ -519,10 +532,10 @@ class OllamaNarrator:
                 roll_update["roll_kind"] = data["roll_kind"]
             roll_result_text = request_roll(roll_update)
 
-            followup_prompt = (
-                f"Character:\n{character_summary}\n\nPlayer action: {action_text}\n\n"
-                f"Roll result: {roll_result_text}"
-            )
+            followup_prompt = f"Character:\n{character_summary}\n\n"
+            if self._world_updates and world_summary:
+                followup_prompt += f"World state:\n{world_summary}\n\n"
+            followup_prompt += f"Player action: {action_text}\n\nRoll result: {roll_result_text}"
             followup_schema = _with_world_fields(STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA, self._world_updates)
             followup_system_prompt = _with_world_prompt(self._structured_followup_system_prompt, self._world_updates)
             followup_messages: list[dict] = [

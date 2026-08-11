@@ -23,7 +23,7 @@ class ScriptedWorldNarrator:
         self._behaviors = behaviors
         self.calls = 0
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         behavior = self._behaviors[self.calls]
         self.calls += 1
         world_update = behavior.get("world_update")

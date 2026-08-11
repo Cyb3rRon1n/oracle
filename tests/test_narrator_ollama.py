@@ -570,6 +570,46 @@ async def test_structured_narrate_world_updates_uses_the_world_schema_and_prompt
     assert "You must also track world_change" in call["messages"][0]["content"]
 
 
+async def test_structured_narrate_includes_world_summary_when_given():
+    # Given directly in the same call's own prompt, not left for the model
+    # to recall from history - the real fix for complete_objective's own
+    # 0% measured reliability (ROADMAP.md's update_world investigation):
+    # an exact-text match is far more reliable to produce when the exact
+    # text is sitting right there to copy.
+    narrator = make_structured_world_narrator()
+    payload = {"narration": "Nothing changes.", "mechanical_change": False, "world_change": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    _ = [
+        c async for c in narrator.narrate(
+            [], "{}", "I wait", noop_apply_update,
+            world_summary="Current location: Millbrook\nActive objectives:\n- Find the missing goat",
+        )
+    ]
+
+    call = narrator._client.calls[0]
+    assert "World state:" in call["messages"][-1]["content"]
+    assert "Find the missing goat" in call["messages"][-1]["content"]
+
+
+async def test_structured_narrate_omits_world_summary_when_world_updates_is_off():
+    # Only meaningful when world_updates is actually on - passing it
+    # otherwise would describe schema fields this call doesn't even
+    # expose, pure noise for a narrator that isn't tracking world state.
+    narrator = OllamaNarrator(model="m", rules=RulesIndex.load_default(), structured_output=True)
+    payload = {"narration": "Nothing changes.", "mechanical_change": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    _ = [
+        c async for c in narrator.narrate(
+            [], "{}", "I wait", noop_apply_update, world_summary="Current location: Millbrook"
+        )
+    ]
+
+    call = narrator._client.calls[0]
+    assert "World state:" not in call["messages"][-1]["content"]
+
+
 async def test_structured_narrate_world_change_applies_a_real_update():
     narrator = make_structured_world_narrator()
     payload = {

@@ -106,6 +106,39 @@ async def test_narrate_prepends_rolling_history_to_the_request():
     assert "I check my inventory" in sent_messages[2]["content"]
 
 
+async def test_narrate_includes_world_summary_when_given():
+    # Given directly rather than left for the model to infer from history
+    # alone - see NarratorBackend.narrate's own docstring (server/
+    # narrator.py) and ROADMAP.md's update_world reliability investigation
+    # for why: complete_objective needs an exact text match, and this is
+    # what lets the model copy it instead of recalling it from memory.
+    narrator = make_narrator()
+    final = FakeMessage(stop_reason="end_turn", content=[])
+    narrator._client = FakeClient([(["Okay."], final)])
+
+    [
+        c async for c in narrator.narrate(
+            [], "{}", "I look around", noop_apply_update,
+            world_summary="Current location: Millbrook\nActive objectives:\n- Find the missing goat",
+        )
+    ]
+
+    sent_content = narrator._client.messages.calls[0]["messages"][0]["content"]
+    assert "World state:" in sent_content
+    assert "Find the missing goat" in sent_content
+
+
+async def test_narrate_omits_world_summary_section_when_not_given():
+    narrator = make_narrator()
+    final = FakeMessage(stop_reason="end_turn", content=[])
+    narrator._client = FakeClient([(["Okay."], final)])
+
+    [c async for c in narrator.narrate([], "{}", "I look around", noop_apply_update)]
+
+    sent_content = narrator._client.messages.calls[0]["messages"][0]["content"]
+    assert "World state:" not in sent_content
+
+
 async def test_narrate_executes_lookup_rule_tool_and_continues():
     narrator = make_narrator()
     tool_call = FakeToolUseBlock(

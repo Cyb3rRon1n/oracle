@@ -43,14 +43,14 @@ class StubDM:
     def __init__(self):
         self.calls: list[list[dict]] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         self.calls.append(list(history))  # snapshot — engine mutates session.history in place after this call
         for word in ["You ", "swing ", "your ", "sword."]:
             yield word
 
 
 class FailingDM:
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         raise RuntimeError("boom")
         yield  # pragma: no cover - makes this an async generator
 
@@ -63,7 +63,7 @@ class UpdateCharacterDM:
         self._update = update
         self.tool_result: str | None = None
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         self.tool_result = apply_update(self._update)
         yield "You feel the effects immediately."
 
@@ -77,7 +77,7 @@ class UpdateSequenceDM:
         self._updates = updates
         self.tool_results: list[str] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         for update in self._updates:
             self.tool_results.append(apply_update(update))
         yield "Something happens."
@@ -91,7 +91,7 @@ class RequestRollDM:
         self._roll_input = roll_input
         self.tool_result: str | None = None
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         self.tool_result = request_roll(self._roll_input)
         yield "You attempt it."
 
@@ -104,21 +104,23 @@ class UpdateWorldDM:
         self._world_update = world_update
         self.tool_result: str | None = None
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         self.tool_result = update_world(self._world_update)
         yield "The story moves on."
 
 
 class OpeningSceneDM:
-    """Records the action_text of every narrate() call it receives, and
-    always narrates the same fixed text - used to test the opening-scene
-    hook without depending on real content."""
+    """Records the action_text (and world_summary) of every narrate() call
+    it receives, and always narrates the same fixed text - used to test
+    the opening-scene hook without depending on real content."""
 
     def __init__(self):
         self.action_texts: list[str] = []
+        self.world_summaries: list[str | None] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         self.action_texts.append(action_text)
+        self.world_summaries.append(world_summary)
         yield "Scene."
 
 
@@ -2767,6 +2769,35 @@ async def test_opening_scene_fires_on_explicit_start_not_on_join():
     assert turn_prompts, "turn_prompt should now be visible once the adventure has started"
 
 
+async def test_narrate_receives_the_current_world_state_as_a_summary():
+    # A real fix, not just a data field nobody reads (ROADMAP.md's
+    # update_world reliability investigation): complete_objective needs an
+    # exact text match, and recalling that correctly from several turns
+    # back in the rolling history window measured at 0% success in every
+    # prompt variant tried - giving the DM the real, current location and
+    # active objectives directly on every turn is what actually closes
+    # that gap, not another prompt tweak alone.
+    dm = OpeningSceneDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    # A fresh session has nothing to report yet.
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+    assert dm.world_summaries[-1] == ""
+
+    session.world.apply_update({"location": "Millbrook", "add_objective": "Find the missing goat"})
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I ask around town"},
+    ))
+    assert dm.world_summaries[-1] == "Current location: Millbrook\nActive objectives:\n- Find the missing goat"
+
+
 async def test_opening_scene_prompt_is_grounded_in_the_world_bible():
     # The near-death/transport/Guardian-greeting premise is composed from
     # real setting data (server/lore), not left for the DM to invent (and
@@ -3296,7 +3327,7 @@ class NarratesFixedTextDM:
         self._text = text
         self._update = update
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         if self._update is not None:
             apply_update(self._update)
         yield self._text

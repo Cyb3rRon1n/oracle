@@ -498,6 +498,30 @@ class WorldState(BaseModel):
             return "No changes applied (nothing matched, or all deltas were zero)."
         return "Applied: " + "; ".join(changes) + "."
 
+    def narrator_context(self) -> str:
+        """Plain-text current location + active objectives, given to the DM
+        on every turn as NarratorBackend.narrate()'s own world_summary
+        argument - not left for the model to infer or recall from `history`
+        alone. Built specifically to close a real, measured gap
+        (ROADMAP.md's update_world reliability investigation):
+        complete_objective needs an *exact* text match against a tracked
+        objective, and asking a small model to retype that text correctly
+        from memory several turns later measured at 0% success in every
+        prompt variant tried - giving it the real text directly, in the
+        same turn it needs to use it, sidesteps the recall problem
+        entirely rather than trying to prompt-engineer around it. "" when
+        there's nothing to report yet (a fresh session, no location or
+        active objectives set) - the same "don't render the absent
+        default" convention this project's other optional summaries
+        (_resume_recap, server/engine.py) already follow."""
+        parts = []
+        if self.location and self.location != "unknown":
+            parts.append(f"Current location: {self.location}")
+        active_objectives = [o.text for o in self.objectives if o.status == "active"]
+        if active_objectives:
+            parts.append("Active objectives:\n" + "\n".join(f"- {text}" for text in active_objectives))
+        return "\n".join(parts)
+
 
 MAX_HISTORY_MESSAGES = 12  # 6 player-action/DM-narration exchanges
 

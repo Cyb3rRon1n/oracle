@@ -422,6 +422,7 @@ class NarratorBackend(Protocol):
         apply_update: ApplyUpdate,
         request_roll: RequestRoll,
         update_world: UpdateWorld,
+        world_summary: str | None = None,
     ) -> AsyncIterator[str]:
         """Stream narration text in response to a player's action.
 
@@ -445,6 +446,16 @@ class NarratorBackend(Protocol):
         a new/completed objective, a location change, a world flag; it
         returns a description of what changed, which becomes that tool
         call's result.
+
+        `world_summary` is the current location and active objectives
+        (WorldState.narrator_context(), server/state.py), given directly
+        rather than left for the DM to infer from `history` alone - in
+        particular so completing an objective (update_world's
+        complete_objective, matched by exact text) can copy that text
+        straight from here instead of needing to recall it correctly from
+        several turns back in a rolling window that may have already
+        scrolled it out. Empty/None when there's nothing to report yet
+        (a fresh session) or the caller has no world-tracking to offer.
         """
 
 
@@ -474,8 +485,12 @@ class AnthropicNarrator:
         apply_update: ApplyUpdate,
         request_roll: RequestRoll | None = None,
         update_world: UpdateWorld | None = None,
+        world_summary: str | None = None,
     ) -> AsyncIterator[str]:
-        prompt = f"Character:\n{character_summary}\n\nPlayer action: {action_text}"
+        prompt = f"Character:\n{character_summary}\n\n"
+        if world_summary:
+            prompt += f"World state:\n{world_summary}\n\n"
+        prompt += f"Player action: {action_text}"
         messages: list[dict] = [*history, {"role": "user", "content": prompt}]
 
         for _ in range(MAX_TOOL_ROUNDS):
