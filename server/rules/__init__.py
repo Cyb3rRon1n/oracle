@@ -42,6 +42,17 @@ class RulesIndex:
         entries = self._data.get(key, {})
         return entries.get(slug(name))
 
+    def all_entries(self, category: str) -> dict[str, dict]:
+        """Every entry in a category, keyed by its internal slug - for
+        callers that need to enumerate a whole table (a data-integrity
+        check, a future "list known X" feature), not look up one known
+        name. {} for an unrecognized category, the same graceful-miss
+        convention get_entry already follows."""
+        key = CATEGORY_KEYS.get(category)
+        if key is None:
+            return {}
+        return dict(self._data.get(key, {}))
+
     def xp_thresholds(self) -> dict[int, int]:
         """Level -> cumulative XP required to reach it, from the SRD's own
         Character Advancement table. Not name-keyed like CATEGORY_KEYS'

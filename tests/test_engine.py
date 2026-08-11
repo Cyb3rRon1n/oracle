@@ -2395,6 +2395,74 @@ def test_compute_ac_only_counts_the_equipped_armor_not_everything_carried():
     assert _compute_ac(None, dex_modifier=1, rules=rules) == 11  # unarmored, even with armor "around"
 
 
+def test_compute_ac_medium_armor_caps_a_positive_dex_modifier():
+    # Real 5e RAW: medium armor's Dex bonus is capped at a real max (2
+    # here, "14 + Dex modifier (max 2)") - closes the "untested future
+    # work" gap _compute_ac's own docstring named before srd.json's
+    # equipment table grew beyond a single light-armor entry.
+    rules = RulesIndex.load_default()
+    assert _compute_ac("Breastplate", dex_modifier=4, rules=rules) == 16  # 14 + 2, not 14 + 4
+    assert _compute_ac("Breastplate", dex_modifier=1, rules=rules) == 15  # under the cap, applies in full
+
+
+def test_compute_ac_medium_armor_does_not_cap_a_negative_dex_modifier():
+    # Real 5e RAW: the cap only limits how much Dex can *help* - a
+    # negative modifier still applies in full, it isn't floored at the
+    # same cap value.
+    rules = RulesIndex.load_default()
+    assert _compute_ac("Breastplate", dex_modifier=-2, rules=rules) == 12  # 14 - 2, not clamped
+
+
+def test_compute_ac_heavy_armor_ignores_dex_modifier_entirely():
+    # Real 5e RAW: heavy armor contributes zero Dex, positive or negative -
+    # a flat base AC regardless of the wearer's own Dex score.
+    rules = RulesIndex.load_default()
+    assert _compute_ac("Plate Armor", dex_modifier=3, rules=rules) == 18
+    assert _compute_ac("Plate Armor", dex_modifier=-3, rules=rules) == 18  # not 15 - the min(dex, 0) bug this guards against
+
+
+def test_equipment_dataset_is_internally_consistent_at_scale():
+    # A real sanity check for the full-SRD-equipment expansion (132 new
+    # entries in one pass, ROADMAP.md 2026-08-10) - not testing any one
+    # item, but that hand-authoring that many entries didn't introduce a
+    # duplicate key/name or a malformed required field somewhere in the
+    # noise. get_entry's own slug() lookup (case/whitespace-insensitive,
+    # server/rules) is exercised here too, across every real entry, not
+    # just the handful individually spot-checked elsewhere.
+    rules = RulesIndex.load_default()
+    equipment = rules.all_entries("equipment")
+    assert len(equipment) >= 100  # weapons + armor + gear + packs + tools + trade goods + magic items
+
+    seen_names = set()
+    for key, entry in equipment.items():
+        assert entry.get("name"), f"{key} has no name"
+        assert entry["name"] not in seen_names, f"duplicate display name: {entry['name']}"
+        seen_names.add(entry["name"])
+        # Every entry is either a weapon (damage), armor (ac), or general
+        # gear/tool/trade-good/magic-item (weight or rarity) - nothing
+        # with none of those, which would mean a copy-paste field typo.
+        assert entry.get("damage") or entry.get("ac") or "weight" in entry or entry.get("rarity"), key
+        # Real end-to-end lookup, not just presence in the raw dict -
+        # confirms get_entry's slug() normalization round-trips correctly
+        # for every single new key, not a hand-picked few.
+        assert rules.get_entry("equipment", entry["name"]) == entry
+
+
+def test_full_weapon_and_armor_tables_are_present():
+    # A representative spot check across every real SRD weapon/armor
+    # category this expansion added, not just the pre-existing 8 items -
+    # martial/simple, melee/ranged weapons, and all three armor weight
+    # classes.
+    rules = RulesIndex.load_default()
+    for name in (
+        "Greatsword", "Longbow", "Dagger", "Sling",  # martial melee, martial ranged, simple melee, simple ranged
+        "Padded Armor", "Breastplate", "Plate Armor",  # light, medium, heavy
+    ):
+        entry = rules.get_entry("equipment", name)
+        assert entry is not None, f"missing: {name}"
+        assert entry["name"] == name
+
+
 async def test_npc_introduction_copies_ac_from_a_matched_srd_monster():
     dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -1}])
     engine, session, _ = make_engine(dm)
