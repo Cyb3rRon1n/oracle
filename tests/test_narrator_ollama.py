@@ -572,10 +572,13 @@ async def test_structured_narrate_world_updates_uses_the_world_schema_and_prompt
 
 async def test_structured_narrate_includes_world_summary_when_given():
     # Given directly in the same call's own prompt, not left for the model
-    # to recall from history - the real fix for complete_objective's own
-    # 0% measured reliability (ROADMAP.md's update_world investigation):
-    # an exact-text match is far more reliable to produce when the exact
-    # text is sitting right there to copy.
+    # to recall from history - tests a real, if ultimately unproven,
+    # hypothesis for complete_objective's own 0% measured reliability
+    # (ROADMAP.md's update_world investigation): that recalling an
+    # objective's exact text was the bottleneck. Real testing found that
+    # wasn't the case even with the text sitting right here - see
+    # WORLD_UPDATE_PROMPT_ADDENDUM's own comment (server/narrator_ollama.py)
+    # for the full writeup. Kept as real, defensible context regardless.
     narrator = make_structured_world_narrator()
     payload = {"narration": "Nothing changes.", "mechanical_change": False, "world_change": False}
     narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])

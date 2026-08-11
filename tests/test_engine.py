@@ -2770,13 +2770,14 @@ async def test_opening_scene_fires_on_explicit_start_not_on_join():
 
 
 async def test_narrate_receives_the_current_world_state_as_a_summary():
-    # A real fix, not just a data field nobody reads (ROADMAP.md's
-    # update_world reliability investigation): complete_objective needs an
-    # exact text match, and recalling that correctly from several turns
-    # back in the rolling history window measured at 0% success in every
-    # prompt variant tried - giving the DM the real, current location and
-    # active objectives directly on every turn is what actually closes
-    # that gap, not another prompt tweak alone.
+    # Confirms the wiring itself works end to end - this data actually
+    # reaching the DM was built to test a real hypothesis for
+    # complete_objective's own 0% measured reliability (ROADMAP.md's
+    # update_world investigation): that recalling an objective's exact
+    # text from several turns back was the bottleneck. Real --repeat
+    # testing found that wasn't the case - see WORLD_UPDATE_PROMPT_ADDENDUM
+    # (server/narrator_ollama.py) for the full writeup. Kept as real,
+    # defensible context for the DM regardless of that specific result.
     dm = OpeningSceneDM()
     engine, session, _ = make_engine(dm)
     player_id = str(uuid.uuid4())

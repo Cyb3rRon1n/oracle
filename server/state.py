@@ -502,18 +502,22 @@ class WorldState(BaseModel):
         """Plain-text current location + active objectives, given to the DM
         on every turn as NarratorBackend.narrate()'s own world_summary
         argument - not left for the model to infer or recall from `history`
-        alone. Built specifically to close a real, measured gap
-        (ROADMAP.md's update_world reliability investigation):
-        complete_objective needs an *exact* text match against a tracked
-        objective, and asking a small model to retype that text correctly
-        from memory several turns later measured at 0% success in every
-        prompt variant tried - giving it the real text directly, in the
-        same turn it needs to use it, sidesteps the recall problem
-        entirely rather than trying to prompt-engineer around it. "" when
-        there's nothing to report yet (a fresh session, no location or
-        active objectives set) - the same "don't render the absent
-        default" convention this project's other optional summaries
-        (_resume_recap, server/engine.py) already follow."""
+        alone. Built to test a specific hypothesis for complete_objective's
+        own 0% measured reliability (ROADMAP.md's update_world
+        investigation): that it was a *recall* problem - a small model
+        needing to retype an objective's exact text correctly from several
+        turns back. That hypothesis measured as wrong (re-tested across 10
+        repeat runs with the exact text sitting directly in the prompt via
+        this same method: still 0/10) - see server/narrator_ollama.py's
+        WORLD_UPDATE_PROMPT_ADDENDUM comment for the full writeup. Kept
+        anyway as real, defensible infrastructure - grounding
+        location/add_objective in the session's actual current state
+        rather than nothing measured as not worse than not having it - but
+        this alone does not fix complete_objective. "" when there's
+        nothing to report yet (a fresh session, no location or active
+        objectives set) - the same "don't render the absent default"
+        convention this project's other optional summaries (_resume_recap,
+        server/engine.py) already follow."""
         parts = []
         if self.location and self.location != "unknown":
             parts.append(f"Current location: {self.location}")

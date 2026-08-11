@@ -109,9 +109,9 @@ async def test_narrate_prepends_rolling_history_to_the_request():
 async def test_narrate_includes_world_summary_when_given():
     # Given directly rather than left for the model to infer from history
     # alone - see NarratorBackend.narrate's own docstring (server/
-    # narrator.py) and ROADMAP.md's update_world reliability investigation
-    # for why: complete_objective needs an exact text match, and this is
-    # what lets the model copy it instead of recalling it from memory.
+    # narrator.py) and ROADMAP.md's update_world reliability investigation.
+    # Anthropic never needed this to run at all (no world_updates-style
+    # opt-in gate) - gets the same context unconditionally.
     narrator = make_narrator()
     final = FakeMessage(stop_reason="end_turn", content=[])
     narrator._client = FakeClient([(["Okay."], final)])

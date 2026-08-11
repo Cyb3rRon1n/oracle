@@ -449,13 +449,17 @@ class NarratorBackend(Protocol):
 
         `world_summary` is the current location and active objectives
         (WorldState.narrator_context(), server/state.py), given directly
-        rather than left for the DM to infer from `history` alone - in
-        particular so completing an objective (update_world's
-        complete_objective, matched by exact text) can copy that text
-        straight from here instead of needing to recall it correctly from
-        several turns back in a rolling window that may have already
-        scrolled it out. Empty/None when there's nothing to report yet
-        (a fresh session) or the caller has no world-tracking to offer.
+        rather than left for the DM to infer from `history` alone. Built
+        to test whether completing an objective (update_world's
+        complete_objective, matched by exact text) would go more reliably
+        if the DM could copy that text directly instead of recalling it
+        from several turns back - real --repeat testing found that wasn't
+        the actual bottleneck (see server/narrator_ollama.py's
+        WORLD_UPDATE_PROMPT_ADDENDUM comment for the full writeup), so
+        this is kept as real, defensible grounding for the DM rather than
+        a proven fix for that specific gap. Empty/None when there's
+        nothing to report yet (a fresh session) or the caller has no
+        world-tracking to offer.
         """
 
 

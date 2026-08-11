@@ -299,6 +299,31 @@ _WORLD_PROPERTIES = {
 # its own exact prior text in particular never worked in any variant
 # tried (0% in every configuration), a genuine, still-open reliability
 # gap this rewrite does not claim to have solved.
+#
+# complete_objective follow-up (2026-08-10): the leading hypothesis was
+# that 0% recall was a *recall* problem - asking a small model to retype
+# an objective's exact text correctly from several turns back in the
+# rolling history window. NarratorBackend.narrate() gained a
+# world_summary parameter (WorldState.narrator_context(), server/
+# state.py) specifically to test this - giving the DM the real, current
+# active objectives directly in the same turn's own prompt, so
+# complete_objective could copy the text rather than recall it. **This
+# hypothesis was wrong.** Re-measured across 10 repeat runs with the
+# exact objective text sitting directly in the prompt: complete_objective
+# still fired successfully 0/10 times. Verified with a raw-response
+# diagnostic, not just the aggregate number: on a turn whose narration
+# unambiguously resolved the one active objective explicitly listed in
+# that same call's own "World state" section, the model still answered
+# world_change: false. The real bottleneck isn't recalling the text - the
+# model doesn't reliably recognize "this narration resolves an active
+# goal" as a world_change-worthy event category at all, a different and
+# apparently deeper problem than the location-tracking gap this same
+# investigation did manage to fix. world_summary is kept anyway (grounds
+# location/add_objective in real current state rather than nothing,
+# measured as not worse than the prompt-only version - 24/50 vs 21/40
+# pooled, well within this scenario's own already-documented 40-80%
+# per-run noise band) - but it is not a fix for complete_objective, and
+# isn't claimed to be one.
 WORLD_UPDATE_PROMPT_ADDENDUM = """
 
 You must also track world_change, exactly as carefully as mechanical_change above - it is not
