@@ -34,13 +34,13 @@ this file.
 `equipment` is the one category that aims for real SRD *completeness*
 rather than a small hand-picked slice — the full SRD 5.1 weapon table
 (simple/martial, melee/ranged), the full armor table (light/medium/heavy,
-plus a reference-only `shield` entry — see below), a broad adventuring
+plus a real, wearable `shield` entry — see below), a broad adventuring
 gear list, the standard equipment packs, and the SRD's own small generic
 magic item list (`+1 Weapon`, `Bag of Holding`, etc. — not the Dungeon
 Master's Guide's much larger magic item catalog, which isn't SRD-licensed
 at all).
 
-Two deliberate scoping choices, not oversights:
+One deliberate scoping choice, not an oversight:
 - **Tools are a representative subset, not all ~30 SRD variants.** Real
   5e lists 17 near-identical Artisan's Tools types (Smith's Tools,
   Weaver's Tools, ...) differing only by name/cost, plus a similarly long
@@ -49,14 +49,14 @@ Two deliberate scoping choices, not oversights:
   Forgery Kit, Navigator's Tools, Poisoner's Kit) are included in full;
   the rest weren't, since they'd add JSON volume without adding anything
   a DM or player could do differently.
-- **`shield` has no `ac` field, on purpose.** A shield's real +2 AC is
-  additive on top of whatever body armor is also worn - Oracle's
-  `equipped_armor` is a single slot that *replaces* the base AC value
-  (`_compute_ac`, `server/engine.py`), not a stack, so a shield can't be
-  represented as ordinary armor data without silently computing AC wrong.
-  It's real reference/lookup data (cost, weight, a description explaining
-  why `/equip` doesn't apply it) - actually wearing one needs a genuine
-  second equipment slot, a real, separate, not-yet-built feature.
+
+`shield` has a real `ac_bonus` field (2026-08-10), not an `ac` field -
+a shield's +2 AC is additive on top of whatever body armor is also worn,
+not a replacement base value the way `ac` is for real armor. `equip`/
+`unequip`/`_compute_ac` (`server/engine.py`) now have a genuine third
+slot (`CharacterSheet.equipped_shield`, `server/state.py`) specifically
+so this stacks correctly instead of silently computing AC wrong - closes
+what this section originally documented as a real, not-yet-built gap.
 
 Medium and heavy armor's AC formulas (`_compute_ac`) got real support at
 the same time this data landed — a Dex bonus capped at a real maximum for

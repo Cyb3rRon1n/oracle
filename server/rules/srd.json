@@ -813,7 +813,7 @@
       "category": "Shield",
       "cost": "10 gp",
       "weight": "6 lb.",
-      "description": "+2 AC while wielded - not currently wearable via /equip's single armor slot; see server/engine.py's _compute_ac."
+      "ac_bonus": 2
     },
     "backpack": {
       "name": "Backpack",

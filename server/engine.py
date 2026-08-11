@@ -362,16 +362,21 @@ def _parse_armor_ac(ac_text: str) -> tuple[int, int | None, bool]:
     return base, (int(cap_match.group(1)) if cap_match else None), False
 
 
-def _compute_ac(equipped_armor: str | None, dex_modifier: int, rules: RulesIndex) -> int:
+def _compute_ac(
+    equipped_armor: str | None, dex_modifier: int, rules: RulesIndex, equipped_shield: str | None = None
+) -> int:
     """Real 5e's own formula: 10 (unarmored) + DEX modifier, or the
     specific equipped armor's own base AC + a real DEX contribution that
     depends on the armor's own weight class (see _parse_armor_ac: none
     capped for light, capped at a real max for medium, none at all for
-    heavy). Takes a single equipped_armor name, not the whole inventory -
-    only what a character actually has equipped affects AC, not everything
-    they're carrying. Unrecognized/blank equipped_armor falls back to
-    unarmored, the same graceful-miss convention every other name-based
-    SRD lookup here already follows."""
+    heavy) - plus a shield's own flat `ac_bonus` (server/rules/srd.json),
+    additive on top of that base+Dex result rather than a replacement
+    value the way equipped_armor's own `ac` field is. Takes single
+    equipped_* names, not the whole inventory - only what a character
+    actually has equipped affects AC, not everything they're carrying.
+    Unrecognized/blank equipped_armor/equipped_shield falls back to no
+    contribution, the same graceful-miss convention every other
+    name-based SRD lookup here already follows."""
     base = 10
     dex_cap: int | None = None
     heavy = False
@@ -386,20 +391,32 @@ def _compute_ac(equipped_armor: str | None, dex_modifier: int, rules: RulesIndex
         effective_dex = dex_modifier
     else:
         effective_dex = min(dex_modifier, dex_cap)
-    return base + effective_dex
+    shield_bonus = 0
+    if equipped_shield:
+        shield_entry = rules.get_entry("equipment", equipped_shield)
+        if shield_entry is not None:
+            shield_bonus = shield_entry.get("ac_bonus") or 0
+    return base + effective_dex + shield_bonus
 
 
-def _auto_equip_starting_gear(inventory: list[str], rules: RulesIndex) -> tuple[str | None, str | None]:
-    """Picks the first weapon-like and first armor-like item out of a
-    fresh character's starting inventory (CLASS_STARTING_EQUIPMENT) to
+def _auto_equip_starting_gear(
+    inventory: list[str], rules: RulesIndex
+) -> tuple[str | None, str | None, str | None]:
+    """Picks the first weapon-like, armor-like, and shield-like item out of
+    a fresh character's starting inventory (CLASS_STARTING_EQUIPMENT) to
     equip automatically - real tabletop chargen starts you already
     wielding/wearing your starting gear, not carrying it unequipped until
     a player remembers to run /equip. A weapon is any SRD equipment entry
-    with a `damage` field, armor any entry with an `ac` field - the same
-    distinction _parse_armor_ac already draws for AC, generalized to also
-    recognize weapons rather than hardcoding "the second item is armor"."""
+    with a `damage` field, armor any entry with an `ac` field, a shield any
+    entry with an `ac_bonus` field - the same distinction _parse_armor_ac/
+    _compute_ac already draw for AC, generalized to also recognize weapons
+    rather than hardcoding "the second item is armor". No current class
+    starts with a shield (CLASS_STARTING_EQUIPMENT), so this is untested
+    by real starting-kit data yet - included for the same completeness
+    reason weapon/armor detection isn't hardcoded to "exactly 2 items"."""
     weapon: str | None = None
     armor: str | None = None
+    shield: str | None = None
     for item in inventory:
         entry = rules.get_entry("equipment", item)
         if entry is None:
@@ -408,7 +425,9 @@ def _auto_equip_starting_gear(inventory: list[str], rules: RulesIndex) -> tuple[
             weapon = item
         elif armor is None and entry.get("ac"):
             armor = item
-    return weapon, armor
+        elif shield is None and entry.get("ac_bonus"):
+            shield = item
+    return weapon, armor, shield
 
 
 def _public_character_view(character: CharacterSheet) -> dict:
@@ -569,7 +588,7 @@ def build_starting_character(
     dex_mod = ability_modifier(stats["dex"]) if stats else 0
     known_spells = list(CLASS_KNOWN_SPELLS.get(character_class.strip().lower(), []))
     spell_slots = rules.spell_slots_by_level(1) if known_spells else {}
-    equipped_weapon, equipped_armor = _auto_equip_starting_gear(inventory, rules)
+    equipped_weapon, equipped_armor, equipped_shield = _auto_equip_starting_gear(inventory, rules)
     return CharacterSheet(
         player_id=player_id,
         name=name,
@@ -580,7 +599,8 @@ def build_starting_character(
         inventory=inventory,
         equipped_weapon=equipped_weapon,
         equipped_armor=equipped_armor,
-        ac=_compute_ac(equipped_armor, dex_mod, rules),
+        equipped_shield=equipped_shield,
+        ac=_compute_ac(equipped_armor, dex_mod, rules, equipped_shield),
         known_spells=known_spells,
         spell_slots=dict(spell_slots),
         max_spell_slots=dict(spell_slots),
@@ -1691,12 +1711,16 @@ class GameEngine:
                 return
             character.inventory.remove(item)
             # Removing an equipped item unequips it too - a dangling
-            # equipped_weapon/equipped_armor pointing at something no
-            # longer owned would be a real, confusing inconsistency.
+            # equipped_weapon/equipped_armor/equipped_shield pointing at
+            # something no longer owned would be a real, confusing
+            # inconsistency.
             if character.equipped_weapon == item:
                 character.equipped_weapon = None
             if character.equipped_armor == item:
                 character.equipped_armor = None
+                ac_changed = True
+            if character.equipped_shield == item:
+                character.equipped_shield = None
                 ac_changed = True
         elif field == "equip":
             item = str(value)
@@ -1711,10 +1735,13 @@ class GameEngine:
             elif entry is not None and entry.get("ac"):
                 character.equipped_armor = item
                 ac_changed = True
+            elif entry is not None and entry.get("ac_bonus"):
+                character.equipped_shield = item
+                ac_changed = True
             else:
                 await self._send_to(
                     player_id,
-                    self._system_envelope(f"'{item}' isn't a recognized weapon or armor.", level="warning"),
+                    self._system_envelope(f"'{item}' isn't a recognized weapon, armor, or shield.", level="warning"),
                 )
                 return
         elif field == "unequip":
@@ -1724,6 +1751,9 @@ class GameEngine:
             elif character.equipped_armor == item:
                 character.equipped_armor = None
                 ac_changed = True
+            elif character.equipped_shield == item:
+                character.equipped_shield = None
+                ac_changed = True
             else:
                 await self._send_to(
                     player_id, self._system_envelope(f"You don't have '{item}' equipped.", level="warning")
@@ -1732,7 +1762,8 @@ class GameEngine:
 
         if ac_changed:
             character.ac = _compute_ac(
-                character.equipped_armor, character.stat_modifiers.get("dex", 0), self._rules
+                character.equipped_armor, character.stat_modifiers.get("dex", 0), self._rules,
+                character.equipped_shield,
             )
 
         # notes/inventory/equipped_weapon/equipped_armor stay private, the

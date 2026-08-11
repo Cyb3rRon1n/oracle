@@ -328,24 +328,28 @@ class CharacterSheetPanel(Vertical):
         return "\n".join(lines).rstrip()
 
     def _inventory_text(self) -> str:
-        # Equipped (weapon/armor - real slots, server/state.py's
-        # equipped_weapon/equipped_armor) separate from Carried (everything
-        # else you own), not one flat list - a direct owner ask ("not just
-        # a general listing of items"), and the same "closely resemble a
-        # real tabletop sheet" reasoning driving this tab split in the
-        # first place. equipped_weapon/armor are still just names in
-        # inventory, not their own separate store - carried is inventory
-        # minus whichever of those two are currently set.
+        # Equipped (weapon/armor/shield - real slots, server/state.py's
+        # equipped_weapon/equipped_armor/equipped_shield) separate from
+        # Carried (everything else you own), not one flat list - a direct
+        # owner ask ("not just a general listing of items"), and the same
+        # "closely resemble a real tabletop sheet" reasoning driving this
+        # tab split in the first place. equipped_weapon/armor/shield are
+        # still just names in inventory, not their own separate store -
+        # carried is inventory minus whichever of those three are
+        # currently set.
         character = self._character
         inventory = character.get("inventory") or []
         if not inventory:
             return ""
         equipped_weapon = character.get("equipped_weapon")
         equipped_armor = character.get("equipped_armor")
+        equipped_shield = character.get("equipped_shield")
         lines = ["[b]Equipped[/b]"]
         lines.append(f"Weapon: {equipped_weapon}" if equipped_weapon else "Weapon: [dim](none)[/dim]")
         lines.append(f"Armor: {equipped_armor}" if equipped_armor else "Armor: [dim](none)[/dim]")
-        carried = [item for item in inventory if item not in (equipped_weapon, equipped_armor)]
+        if equipped_shield:
+            lines.append(f"Shield: {equipped_shield}")
+        carried = [item for item in inventory if item not in (equipped_weapon, equipped_armor, equipped_shield)]
         if carried:
             lines.append("")
             lines.append("[b]Carried[/b]")

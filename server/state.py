@@ -77,6 +77,16 @@ class CharacterSheet(BaseModel):
     # nothing in that slot (unarmored, or fighting bare-handed).
     equipped_weapon: str | None = None
     equipped_armor: str | None = None
+    # A real second equipment slot, not another armor pointer - a shield's
+    # +2 AC (server/rules/srd.json's own "shield" entry) is additive on
+    # top of whatever's in equipped_armor, not a replacement base value
+    # the way equipped_armor's own `ac` field is - see _compute_ac
+    # (server/engine.py) for the real formula this feeds. Closes a real,
+    # previously-documented gap: "Structured Equipment" (ROADMAP.md)
+    # originally shipped a single equipped_armor slot specifically
+    # because a shield couldn't be represented in it without silently
+    # computing AC wrong.
+    equipped_shield: str | None = None
     conditions: list[str] = Field(default_factory=list)
     notes: str = ""
     # Who this character was before Aetherfall - generated once at
