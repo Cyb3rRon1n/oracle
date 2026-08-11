@@ -1579,6 +1579,7 @@ class GameEngine:
             request_roll=request_roll,
             update_world=update_world,
             world_summary=self._session.world.narrator_context(),
+            active_objectives=[o.text for o in self._session.world.objectives if o.status == "active"],
         ):
             buffer += chunk
             await self._broadcast(self._log_envelope("narration", chunk, done=False))

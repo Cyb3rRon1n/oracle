@@ -723,6 +723,187 @@ async def test_structured_narrate_roll_and_world_together_no_roll_fired_uses_fir
     assert len(narrator._client.calls) == 1
 
 
+async def test_structured_narrate_omits_resolved_objective_with_no_active_objectives():
+    # Asking "which of these" with an empty list is pure noise, not a real
+    # question - the field shouldn't even be in the schema/prompt when
+    # there's nothing to pick from.
+    narrator = make_structured_world_narrator()
+    payload = {"narration": "Nothing changes.", "mechanical_change": False, "world_change": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    _ = [c async for c in narrator.narrate([], "{}", "I wait", noop_apply_update, active_objectives=[])]
+
+    call = narrator._client.calls[0]
+    assert "resolved_objective" not in call["format"]["properties"]
+    assert "resolved_objective" not in call["format"]["required"]
+    assert "resolved_objective" not in call["messages"][0]["content"]
+
+
+async def test_structured_narrate_resolved_objective_is_a_real_enum_of_active_objectives():
+    narrator = make_structured_world_narrator()
+    payload = {"narration": "Nothing changes.", "mechanical_change": False, "world_change": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+    active = ["Find the missing goat", "Deliver the letter"]
+
+    _ = [c async for c in narrator.narrate([], "{}", "I wait", noop_apply_update, active_objectives=active)]
+
+    call = narrator._client.calls[0]
+    field = call["format"]["properties"]["resolved_objective"]
+    assert field["enum"] == ["Find the missing goat", "Deliver the letter", "none"]
+    assert "resolved_objective" in call["format"]["required"]
+    assert "Separately from world_change above" in call["messages"][0]["content"]
+
+
+async def test_structured_narrate_resolved_objective_completes_independent_of_world_change():
+    # The whole point of this field: it fires even when the model answers
+    # world_change: false, unlike the old complete_objective free-text
+    # field which was nested under that same gate and never fired (0%).
+    narrator = make_structured_world_narrator()
+    payload = {
+        "narration": "You free the goat and lead it home.",
+        "mechanical_change": False,
+        "world_change": False,
+        "resolved_objective": "Find the missing goat",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    world_calls: list[dict] = []
+
+    def record_update_world(update: dict) -> str:
+        world_calls.append(update)
+        return "ok"
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I free the goat", noop_apply_update,
+            update_world=record_update_world, active_objectives=["Find the missing goat"],
+        )
+    ]
+
+    assert "".join(chunks) == "You free the goat and lead it home."
+    assert world_calls == [{"complete_objective": "Find the missing goat"}]
+
+
+async def test_structured_narrate_resolved_objective_none_never_calls_update_world():
+    narrator = make_structured_world_narrator()
+    payload = {
+        "narration": "Nothing notable happens.",
+        "mechanical_change": False,
+        "world_change": False,
+        "resolved_objective": "none",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I look around", noop_apply_update,
+            update_world=noop_update_world, active_objectives=["Find the missing goat"],
+        )
+    ]
+
+    assert "".join(chunks) == "Nothing notable happens."
+
+
+async def test_structured_narrate_resolved_objective_combines_with_a_real_world_change():
+    # Both can fire the same turn - resolved_objective isn't exclusive with
+    # location/add_objective/add_location, just independently gated.
+    narrator = make_structured_world_narrator()
+    payload = {
+        "narration": "You free the goat, then head back toward town.",
+        "mechanical_change": False,
+        "world_change": True,
+        "location": "Millbrook",
+        "resolved_objective": "Find the missing goat",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    world_calls: list[dict] = []
+
+    def record_update_world(update: dict) -> str:
+        world_calls.append(update)
+        return "ok"
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I free the goat and head back", noop_apply_update,
+            update_world=record_update_world, active_objectives=["Find the missing goat"],
+        )
+    ]
+
+    assert "".join(chunks) == "You free the goat, then head back toward town."
+    assert world_calls == [{"location": "Millbrook", "complete_objective": "Find the missing goat"}]
+
+
+async def test_structured_narrate_resolved_objective_off_schema_value_is_ignored():
+    # Defensive: constrained JSON isn't an absolute guarantee (the existing
+    # JSONDecodeError handling already accepts this) - a value that isn't
+    # actually one of the offered active objectives shouldn't reach
+    # apply_update's own exact-match logic at all.
+    narrator = make_structured_world_narrator()
+    payload = {
+        "narration": "Nothing notable happens.",
+        "mechanical_change": False,
+        "world_change": False,
+        "resolved_objective": "Something the model made up",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I look around", noop_apply_update,
+            update_world=noop_update_world, active_objectives=["Find the missing goat"],
+        )
+    ]
+
+    assert "".join(chunks) == "Nothing notable happens."
+
+
+async def test_structured_narrate_resolved_objective_survives_the_roll_followup_call():
+    # World fields (including resolved_objective) are additive on whichever
+    # call ends up final - the roll-deciding first call's own world fields
+    # are discarded, same as its narration/mechanical_change.
+    narrator = make_structured_roll_and_world_narrator()
+    first_payload = {
+        "narration": "placeholder", "mechanical_change": False, "roll_requested": True, "roll_kind": "check",
+        "world_change": False, "resolved_objective": "none",
+    }
+    second_payload = {
+        "narration": "You free the goat and lead it home.",
+        "mechanical_change": False,
+        "world_change": False,
+        "resolved_objective": "Find the missing goat",
+    }
+    narrator._client = FakeOllamaClient(
+        [FakeChatResponse(json.dumps(first_payload)), FakeChatResponse(json.dumps(second_payload))]
+    )
+
+    world_calls: list[dict] = []
+
+    def record_update_world(update: dict) -> str:
+        world_calls.append(update)
+        return "ok"
+
+    chunks = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I try to free the goat", noop_apply_update,
+            request_roll=lambda u: "Rolled: 15 vs DC 10 — success.",
+            update_world=record_update_world, active_objectives=["Find the missing goat"],
+        )
+    ]
+
+    assert "".join(chunks) == "You free the goat and lead it home."
+    assert world_calls == [{"complete_objective": "Find the missing goat"}]
+    # The first (discarded) call's schema/format still needed the field -
+    # both calls in this exchange offer the same active objectives.
+    first_call_format = narrator._client.calls[0]["format"]
+    assert "resolved_objective" in first_call_format["properties"]
+
+
 def test_default_structured_output_is_true():
     # A live 5-repeat qwen2.5:7b comparison found this roughly doubles
     # real tool-call correctness over native tool-calling - see

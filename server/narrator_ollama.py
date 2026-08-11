@@ -215,7 +215,12 @@ STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA = {
 # merged onto whichever schema is already in play, via _with_world_fields
 # below. Deliberately a small slice of the real update_world tool
 # (server/narrator.py's UPDATE_WORLD_TOOL): location/add_objective/
-# complete_objective/add_location only - no summary (harder for a small
+# add_location, plus resolved_objective (an enum-constrained field, kept
+# separate from _WORLD_PROPERTIES since its own value set is per-session
+# dynamic - see _resolved_objective_field/RESOLVED_OBJECTIVE_PROMPT_ADDENDUM
+# below for why complete_objective moved out of this dict entirely rather
+# than staying as dead weight next to a working replacement) - no summary
+# (harder for a small
 # model to write well without duplicating narration), no expire_objective/
 # fail_objective/remove_objective/set_flag/clear_flag/connect_locations
 # (connect_locations especially - a 2-element array is more failure-prone
@@ -243,13 +248,6 @@ _WORLD_PROPERTIES = {
         "description": (
             "A new active objective/plot thread/quest hook worth tracking for the rest of "
             "the campaign, in plain language. Leave blank if none."
-        ),
-    },
-    "complete_objective": {
-        "type": "string",
-        "description": (
-            "The exact text of an existing active objective this turn's outcome completed. "
-            "Leave blank if none."
         ),
     },
     "add_location": {
@@ -336,27 +334,76 @@ fill in the matching field:
   deliver something specific -> set `add_objective` to a short plain-language version of that
   exact request. Vague rumors, gossip, or background lore with no direct request attached are
   NOT an objective - leave add_objective blank for those.
-- Your own narration this turn describes successfully finishing a task an NPC earlier and
-  directly asked of you -> set `complete_objective` to that task's exact text. If a "World
-  state" section above lists current active objectives, copy the matching one's text from
-  there character-for-character - don't retype it from memory.
 - A new place worth remembering is discovered -> set `add_location` to its name.
 Set world_change to false for anything else - idle conversation, background rumors with no
 direct request, examining something without traveling, or combat with no location/goal change."""
 
+# The complete_objective fix attempted above (giving the DM the exact text
+# to copy) measured at 0/10 - not a recall problem. Root cause: the model
+# never reliably recognizes "this narration resolves an active goal" as a
+# world_change-worthy *category* in the first place, so it never even gets
+# to the point of filling in the field - the same "decide whether" failure
+# mode this project's own update_character investigation already found and
+# fixed once (ROADMAP.md item 6: constrained JSON turned "decide whether to
+# call this tool" into "fill in this field" and roughly doubled real
+# correctness). resolved_objective applies that same fix one layer deeper:
+# instead of a free-text field nested under a boolean gate the model has to
+# notice on its own (world_change -> "which of four sub-things happened?"
+# -> retype the matching text), it's now its own required field, asked
+# independently of world_change every turn there's something to pick from,
+# constrained to a real closed-set enum built from the session's actual
+# current active objectives (+ "none") rather than free text. "Notice an
+# abstract category, then transcribe" becomes "pick one of these options" -
+# a strictly easier task shape for a small model, and the enum constraint
+# also kills exact-string-match fragility for free (WorldState.apply_update
+# matches complete_objective by exact text - a hallucinated near-match can
+# no longer silently fail to match). Only added to the schema when there's
+# at least one real active objective to choose from - asking "which of
+# these" with an empty list is pure noise, not a question with a real
+# answer. Not yet validated at the same rigor as the structured-output
+# switch itself (a real --repeat study) - see ROADMAP.md for what
+# scripts/live_world_reliability_check.py finds once run against it.
+RESOLVED_OBJECTIVE_PROMPT_ADDENDUM = """
 
-def _with_world_fields(schema: dict, include_world: bool) -> dict:
-    if not include_world:
-        return schema
+Separately from world_change above, and even on a turn where world_change is false: look at
+the "Active objectives" listed in the World state section and decide whether this turn's
+narrated outcome just resolved one of them (the task is done, the goal is achieved, the thing
+asked for was delivered). If so, set resolved_objective to that exact option from the list
+given to you. If none of them were resolved this turn, set resolved_objective to "none" -
+don't guess or leave it blank. This is its own required decision, not a sub-case of
+world_change - answer it every turn regardless of what you set world_change to."""
+
+
+def _resolved_objective_field(active_objectives: list[str]) -> dict:
     return {
-        "type": "object",
-        "properties": {**schema["properties"], **_WORLD_PROPERTIES},
-        "required": [*schema["required"], "world_change"],
+        "type": "string",
+        "enum": [*active_objectives, "none"],
+        "description": (
+            "Which of the active objectives listed in the World state section, if any, does "
+            "this turn's narrated outcome resolve? Pick the exact matching option, or 'none' "
+            "if this turn didn't resolve any of them."
+        ),
     }
 
 
-def _with_world_prompt(prompt: str, include_world: bool) -> str:
-    return prompt + WORLD_UPDATE_PROMPT_ADDENDUM if include_world else prompt
+def _with_world_fields(schema: dict, include_world: bool, active_objectives: list[str]) -> dict:
+    if not include_world:
+        return schema
+    properties = {**schema["properties"], **_WORLD_PROPERTIES}
+    required = [*schema["required"], "world_change"]
+    if active_objectives:
+        properties["resolved_objective"] = _resolved_objective_field(active_objectives)
+        required.append("resolved_objective")
+    return {"type": "object", "properties": properties, "required": required}
+
+
+def _with_world_prompt(prompt: str, include_world: bool, active_objectives: list[str]) -> str:
+    if not include_world:
+        return prompt
+    prompt += WORLD_UPDATE_PROMPT_ADDENDUM
+    if active_objectives:
+        prompt += RESOLVED_OBJECTIVE_PROMPT_ADDENDUM
+    return prompt
 
 
 STRUCTURED_OUTPUT_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
@@ -467,10 +514,18 @@ class OllamaNarrator:
         request_roll: RequestRoll | None = None,
         update_world: UpdateWorld | None = None,
         world_summary: str | None = None,
+        active_objectives: list[str] | None = None,
     ) -> AsyncIterator[str]:
         if self._structured_output:
             return self._narrate_structured(
-                history, character_summary, action_text, apply_update, request_roll, update_world, world_summary
+                history,
+                character_summary,
+                action_text,
+                apply_update,
+                request_roll,
+                update_world,
+                world_summary,
+                active_objectives,
             )
         return self._narrate_tool_calling(history, character_summary, action_text, apply_update)
 
@@ -483,6 +538,7 @@ class OllamaNarrator:
         request_roll: RequestRoll | None = None,
         update_world: UpdateWorld | None = None,
         world_summary: str | None = None,
+        active_objectives: list[str] | None = None,
     ) -> AsyncIterator[str]:
         """The structured-output path (see STRUCTURED_OUTPUT_SCHEMA above) -
         constrains the entire response to JSON via Ollama's format parameter
@@ -506,7 +562,16 @@ class OllamaNarrator:
         multi-turn tool round trip, just done as two constrained JSON calls
         instead. Costs real extra latency, but only on turns the model
         itself judges genuinely uncertain - most turns still cost exactly
-        one call, unchanged from before this existed."""
+        one call, unchanged from before this existed.
+
+        active_objectives (the session's current active-objective texts,
+        WorldState's own live list, not a parsed-from-world_summary
+        re-derivation) drives a real, independent decision field -
+        resolved_objective - alongside world_change (see
+        RESOLVED_OBJECTIVE_PROMPT_ADDENDUM above for why complete_objective
+        needed this rather than another prompt tweak to the existing free-
+        text field)."""
+        active_objectives = active_objectives or []
         schema = STRUCTURED_OUTPUT_ROLL_SCHEMA if self._roll_requests else STRUCTURED_OUTPUT_SCHEMA
         system_prompt = self._structured_roll_system_prompt if self._roll_requests else self._structured_system_prompt
         # world fields are additive on top of whichever schema/prompt was
@@ -514,8 +579,8 @@ class OllamaNarrator:
         # requested) or might not (a follow-up call replaces it below), but
         # either way it needs to be able to express a world change if this
         # turns out to be the response that matters.
-        schema = _with_world_fields(schema, self._world_updates)
-        system_prompt = _with_world_prompt(system_prompt, self._world_updates)
+        schema = _with_world_fields(schema, self._world_updates, active_objectives)
+        system_prompt = _with_world_prompt(system_prompt, self._world_updates, active_objectives)
         prompt = f"Character:\n{character_summary}\n\n"
         # Only when world_updates is actually on - otherwise world_summary
         # would describe fields the schema doesn't even expose this call,
@@ -561,8 +626,10 @@ class OllamaNarrator:
             if self._world_updates and world_summary:
                 followup_prompt += f"World state:\n{world_summary}\n\n"
             followup_prompt += f"Player action: {action_text}\n\nRoll result: {roll_result_text}"
-            followup_schema = _with_world_fields(STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA, self._world_updates)
-            followup_system_prompt = _with_world_prompt(self._structured_followup_system_prompt, self._world_updates)
+            followup_schema = _with_world_fields(STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA, self._world_updates, active_objectives)
+            followup_system_prompt = _with_world_prompt(
+                self._structured_followup_system_prompt, self._world_updates, active_objectives
+            )
             followup_messages: list[dict] = [
                 {"role": "system", "content": followup_system_prompt},
                 *history,
@@ -587,16 +654,33 @@ class OllamaNarrator:
                 update["add_condition"] = data["add_condition"]
             apply_update(update)
 
-        if self._world_updates and data.get("world_change") and update_world is not None:
+        if self._world_updates and update_world is not None:
             world_update: dict = {}
-            if data.get("location"):
-                world_update["location"] = data["location"]
-            if data.get("add_objective"):
-                world_update["add_objective"] = data["add_objective"]
-            if data.get("complete_objective"):
-                world_update["complete_objective"] = data["complete_objective"]
-            if data.get("add_location"):
-                world_update["add_location"] = data["add_location"]
+            # location/add_objective/add_location stay gated behind
+            # world_change - that hasn't been shown to be the broken part
+            # (location in particular measures ~100% recall with it).
+            # resolved_objective deliberately is NOT gated behind it - the
+            # whole point (see RESOLVED_OBJECTIVE_PROMPT_ADDENDUM) is that
+            # requiring the model to first recognize "this is a
+            # world_change-worthy turn" before objective completion could
+            # even register was itself part of why completion measured 0%.
+            if data.get("world_change"):
+                if data.get("location"):
+                    world_update["location"] = data["location"]
+                if data.get("add_objective"):
+                    world_update["add_objective"] = data["add_objective"]
+                if data.get("add_location"):
+                    world_update["add_location"] = data["add_location"]
+            resolved = data.get("resolved_objective")
+            # The enum constraint already limits this to a real active
+            # objective's exact text or "none" - the `in` check is a second,
+            # cheap belt-and-suspenders guard against a constrained-output
+            # model still managing to emit something off-schema (the same
+            # defensive posture the JSONDecodeError handling above already
+            # takes toward "the format constraint isn't an absolute
+            # guarantee").
+            if resolved and resolved != "none" and resolved in active_objectives:
+                world_update["complete_objective"] = resolved
             if world_update:
                 update_world(world_update)
 

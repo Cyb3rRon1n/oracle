@@ -423,6 +423,7 @@ class NarratorBackend(Protocol):
         request_roll: RequestRoll,
         update_world: UpdateWorld,
         world_summary: str | None = None,
+        active_objectives: list[str] | None = None,
     ) -> AsyncIterator[str]:
         """Stream narration text in response to a player's action.
 
@@ -460,6 +461,19 @@ class NarratorBackend(Protocol):
         a proven fix for that specific gap. Empty/None when there's
         nothing to report yet (a fresh session) or the caller has no
         world-tracking to offer.
+
+        `active_objectives` is the same session's current active-objective
+        texts as a plain list, not just the rendered `world_summary` text -
+        OllamaNarrator's structured-output path uses it to build a real
+        closed-set enum field (resolved_objective) rather than asking the
+        DM to recognize and retype an objective from free text, the fix
+        that finally moved complete_objective off its measured 0% recall
+        (see server/narrator_ollama.py's RESOLVED_OBJECTIVE_PROMPT_ADDENDUM
+        for the full reasoning). AnthropicNarrator ignores this parameter -
+        Claude's own update_world tool call already has the real session
+        state to match against server-side via WorldState.apply_update,
+        with no constrained-JSON enum mechanism to build a list for in the
+        first place.
         """
 
 
@@ -490,6 +504,7 @@ class AnthropicNarrator:
         request_roll: RequestRoll | None = None,
         update_world: UpdateWorld | None = None,
         world_summary: str | None = None,
+        active_objectives: list[str] | None = None,  # unused - interface parity, see Protocol docstring
     ) -> AsyncIterator[str]:
         prompt = f"Character:\n{character_summary}\n\n"
         if world_summary:

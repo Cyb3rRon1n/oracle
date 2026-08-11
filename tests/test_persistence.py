@@ -11,7 +11,7 @@ from shared.protocol import Envelope
 
 
 class StubDM:
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         yield "You see nothing of note."
 
 

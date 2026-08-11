@@ -43,14 +43,14 @@ class StubDM:
     def __init__(self):
         self.calls: list[list[dict]] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         self.calls.append(list(history))  # snapshot — engine mutates session.history in place after this call
         for word in ["You ", "swing ", "your ", "sword."]:
             yield word
 
 
 class FailingDM:
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         raise RuntimeError("boom")
         yield  # pragma: no cover - makes this an async generator
 
@@ -63,7 +63,7 @@ class UpdateCharacterDM:
         self._update = update
         self.tool_result: str | None = None
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         self.tool_result = apply_update(self._update)
         yield "You feel the effects immediately."
 
@@ -77,7 +77,7 @@ class UpdateSequenceDM:
         self._updates = updates
         self.tool_results: list[str] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         for update in self._updates:
             self.tool_results.append(apply_update(update))
         yield "Something happens."
@@ -91,7 +91,7 @@ class RequestRollDM:
         self._roll_input = roll_input
         self.tool_result: str | None = None
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         self.tool_result = request_roll(self._roll_input)
         yield "You attempt it."
 
@@ -104,7 +104,7 @@ class UpdateWorldDM:
         self._world_update = world_update
         self.tool_result: str | None = None
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         self.tool_result = update_world(self._world_update)
         yield "The story moves on."
 
@@ -118,7 +118,7 @@ class OpeningSceneDM:
         self.action_texts: list[str] = []
         self.world_summaries: list[str | None] = []
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         self.action_texts.append(action_text)
         self.world_summaries.append(world_summary)
         yield "Scene."
@@ -3343,7 +3343,7 @@ class NarratesFixedTextDM:
         self._text = text
         self._update = update
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         if self._update is not None:
             apply_update(self._update)
         yield self._text

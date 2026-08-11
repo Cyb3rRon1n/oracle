@@ -60,7 +60,7 @@ class CastsSpellDM:
     (server/engine.py's _cast_spell) rather than guessing at slot
     bookkeeping - the same explicit-tool-call path a real DM would use."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         apply_update({"cast_spell": "magic_missile"})
         yield "Arcane light gathers at your fingertips - three glowing darts of force streak out and slam home."
 
@@ -73,7 +73,7 @@ class LevelsUpDM:
     regardless of any SRD Challenge-Rating lookup - the same explicit-
     override path a real DM narrating a tougher-than-usual foe would use."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, active_objectives=None):
         apply_update({"target": "dire wolf", "max_hp": 20, "hp_delta": -20, "xp": 300})
         yield "Your blade finds its mark, and the dire wolf collapses."
 
