@@ -261,15 +261,62 @@ _WORLD_PROPERTIES = {
     },
 }
 
+# Revised 2026-08-10 (ROADMAP.md's update_world reliability investigation)
+# after the original wording above measured at 0/12 real recall (0%, not
+# the 33% a single earlier one-off run had suggested) across 3 full
+# --repeat runs (scripts/live_world_reliability_check.py) against
+# qwen2.5:7b - the model wrote narration that unambiguously described a
+# location change or a real quest hook, but consistently answered
+# world_change: false anyway. The old wording buried the instruction as a
+# same-priority afterthought ("Also decide...") tacked onto the end of the
+# base prompt, competing with mechanical_change for attention with no
+# concrete example of what should trigger it.
+#
+# This version was arrived at empirically, not by first guess - two
+# earlier candidates were tried and rejected on real evidence, not
+# intuition:
+#   - A version giving location an explicit "always true on arrival"
+#     anchor, plus a blanket "any task-like dialogue is always an
+#     objective" instruction and a "when unsure, prefer true" bias: fixed
+#     location cleanly (0% -> ~100% recall on arrival/travel turns,
+#     reproduced across 6 repeat runs) but introduced a NEW false
+#     positive - the neutral "just making conversation" turn started
+#     inventing a spurious third objective out of ambient rumor dialogue,
+#     every single run.
+#   - A version narrowing the objective trigger to a direct, explicit
+#     request: fixed the false positive (neutral turns correctly stayed
+#     unchanged again) but then missed even a genuinely explicit, direct
+#     quest request 3/3 times - net zero versus the original wording for
+#     objectives specifically, not an improvement.
+#
+# The version below keeps only what measured as a clean, reproducible win
+# with no observed regression: the explicit "always true" anchor for
+# location specifically (verified 3/3 correct across every repeat run
+# tested, in an isolated worktree, not assumed to generalize from one
+# sample). Objective add/complete keep more conservative wording than the
+# rejected "always"/"prefer true" versions, matching what real testing
+# showed didn't help without also hurting - completing an objective by
+# its own exact prior text in particular never worked in any variant
+# tried (0% in every configuration), a genuine, still-open reliability
+# gap this rewrite does not claim to have solved.
 WORLD_UPDATE_PROMPT_ADDENDUM = """
 
-Also decide `world_change`: true only if this turn's outcome changes the campaign's persistent
-world state - the party's location, an objective completing, or a genuinely new place being
-discovered - false for anything that's just passing scene detail with nothing lasting to
-remember. If true, fill in whichever of location/add_objective/complete_objective/add_location
-actually apply and leave the rest blank. Use complete_objective only for an objective you (the
-DM) actually introduced earlier via add_objective, matched by its exact text - don't invent one
-to complete that was never tracked."""
+You must also track world_change, exactly as carefully as mechanical_change above - it is not
+optional or secondary. Set world_change to true whenever ANY of these happen this turn, and
+fill in the matching field:
+- The party arrives somewhere, travels somewhere, or is now clearly in a different place than
+  before -> set `location` to that place's name. This includes a first arrival into any named
+  location - always true then.
+- An NPC directly and explicitly asks you for help, or asks you to find, rescue, retrieve, or
+  deliver something specific -> set `add_objective` to a short plain-language version of that
+  exact request. Vague rumors, gossip, or background lore with no direct request attached are
+  NOT an objective - leave add_objective blank for those.
+- Your own narration this turn describes successfully finishing a task an NPC earlier and
+  directly asked of you -> set `complete_objective` to that task's exact text, copied verbatim
+  from when you originally wrote it in add_objective.
+- A new place worth remembering is discovered -> set `add_location` to its name.
+Set world_change to false for anything else - idle conversation, background rumors with no
+direct request, examining something without traveling, or combat with no location/goal change."""
 
 
 def _with_world_fields(schema: dict, include_world: bool) -> dict:
