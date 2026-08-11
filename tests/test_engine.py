@@ -2423,6 +2423,21 @@ def test_compute_ac_heavy_armor_ignores_dex_modifier_entirely():
     assert _compute_ac("Plate Armor", dex_modifier=-3, rules=rules) == 18  # not 15 - the min(dex, 0) bug this guards against
 
 
+def test_compute_ac_adds_a_shields_bonus_additively():
+    # A real second equipment slot (server/state.py's equipped_shield),
+    # not a replacement value the way equipped_armor's own `ac` field is -
+    # closes the gap ATTRIBUTION.md's own equipment-coverage note flagged.
+    rules = RulesIndex.load_default()
+    assert _compute_ac(None, dex_modifier=1, rules=rules, equipped_shield="Shield") == 13  # 10 + 1 + 2
+    assert _compute_ac("Leather Armor", dex_modifier=1, rules=rules, equipped_shield="Shield") == 14  # 11 + 1 + 2
+    assert _compute_ac("Plate Armor", dex_modifier=-3, rules=rules, equipped_shield="Shield") == 20  # 18 + 0 + 2
+
+
+def test_compute_ac_unrecognized_shield_contributes_nothing():
+    rules = RulesIndex.load_default()
+    assert _compute_ac(None, dex_modifier=1, rules=rules, equipped_shield="not a real item") == 11
+
+
 def test_equipment_dataset_is_internally_consistent_at_scale():
     # A real sanity check for the full-SRD-equipment expansion (132 new
     # entries in one pass, ROADMAP.md 2026-08-10) - not testing any one
@@ -3730,6 +3745,75 @@ async def test_character_edit_equip_armor_recomputes_ac_and_broadcasts_player_up
     updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
     assert updates, "a real ac change should broadcast the public player_update"
     assert updates[-1][2]["ac"] == character.ac
+
+
+async def test_character_edit_equip_shield_adds_its_bonus_to_ac():
+    # A real second equipment slot (server/state.py's equipped_shield),
+    # additive on top of armor rather than a replacement value - closes
+    # the gap ATTRIBUTION.md's own equipment-coverage note flagged: a
+    # shield couldn't be worn at all before this.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inventory.append("Shield")
+    ac_before = session.characters[player_id].ac
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "equip", "value": "Shield"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.equipped_shield == "Shield"
+    assert character.ac == ac_before + 2
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
+    assert updates and updates[-1][2]["ac"] == character.ac
+
+
+async def test_character_edit_unequip_shield_removes_its_bonus_from_ac():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inventory.append("Shield")
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "equip", "value": "Shield"},
+    ))
+    ac_with_shield = session.characters[player_id].ac
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "unequip", "value": "Shield"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.equipped_shield is None
+    assert character.ac == ac_with_shield - 2
+
+
+async def test_character_edit_remove_item_that_is_the_equipped_shield_also_unequips_it():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inventory.append("Shield")
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "equip", "value": "Shield"},
+    ))
+    ac_with_shield = session.characters[player_id].ac
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "remove_item", "value": "Shield"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.equipped_shield is None
+    assert "Shield" not in character.inventory
+    assert character.ac == ac_with_shield - 2
 
 
 async def test_character_edit_equip_item_not_owned_warns():

@@ -1297,6 +1297,31 @@ async def test_inventory_tab_separates_equipped_from_carried():
             assert rendered.count("Leather Armor") == 1
 
 
+async def test_inventory_tab_shows_equipped_shield_when_present():
+    # A real second equipment slot (server/state.py's equipped_shield),
+    # not another armor pointer - closes the gap ATTRIBUTION.md's own
+    # equipment-coverage note flagged: a shield couldn't be worn at all
+    # before this, only referenced as data.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Rook", "hp": 12, "max_hp": 12,
+                    "inventory": ["Longsword", "Shield"],
+                    "equipped_weapon": "Longsword", "equipped_shield": "Shield",
+                },
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            rendered = sheet._inventory_text()
+            assert "Shield: Shield" in rendered
+            assert "Carried" not in rendered  # not also listed as a carried item
+
+
 async def test_inventory_tab_shows_none_for_empty_equipment_slots():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
