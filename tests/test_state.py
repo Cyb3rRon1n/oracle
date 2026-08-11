@@ -524,6 +524,42 @@ def test_world_apply_update_no_matching_keys_reports_no_change():
     assert result.startswith("No changes applied")
 
 
+def test_narrator_context_is_empty_for_a_fresh_world():
+    world = WorldState()
+    assert world.narrator_context() == ""
+
+
+def test_narrator_context_includes_location_when_known():
+    world = WorldState()
+    world.apply_update({"location": "Millbrook"})
+    assert world.narrator_context() == "Current location: Millbrook"
+
+
+def test_narrator_context_includes_only_active_objectives():
+    # Given to the DM specifically so complete_objective can copy an
+    # exact text match (ROADMAP.md's update_world reliability
+    # investigation) - an already-completed/expired/failed objective has
+    # nothing left to complete, so listing it here would be noise, not
+    # help.
+    world = WorldState()
+    world.apply_update({"add_objective": "Find the missing goat"})
+    world.apply_update({"add_objective": "Deliver the letter"})
+    world.apply_update({"complete_objective": "Deliver the letter"})
+
+    context = world.narrator_context()
+    assert "Active objectives:" in context
+    assert "- Find the missing goat" in context
+    assert "Deliver the letter" not in context
+
+
+def test_narrator_context_combines_location_and_objectives():
+    world = WorldState()
+    world.apply_update({"location": "Millbrook", "add_objective": "Find the missing goat"})
+
+    context = world.narrator_context()
+    assert context == "Current location: Millbrook\nActive objectives:\n- Find the missing goat"
+
+
 def test_append_turn_accumulates_history():
     session = Session(session_id="s")
     session.append_turn("hello", "hi there")

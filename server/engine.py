@@ -1558,6 +1558,7 @@ class GameEngine:
             apply_update=apply_update,
             request_roll=request_roll,
             update_world=update_world,
+            world_summary=self._session.world.narrator_context(),
         ):
             buffer += chunk
             await self._broadcast(self._log_envelope("narration", chunk, done=False))

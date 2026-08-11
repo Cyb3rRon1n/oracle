@@ -16,7 +16,7 @@ from shared.protocol import Envelope
 
 
 class StubDM:
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         yield "ok."
 
 
@@ -210,7 +210,7 @@ class NarratesOpeningDM:
     lobby -> start -> live-streamed-opening-scene flow, with only the
     narration content itself substituted."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         yield "A cold wind sweeps through the village square."
 
 
@@ -266,7 +266,7 @@ async def test_real_client_lobby_to_session_flow_over_real_websocket():
 
 
 class NarratesTurnDM:
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         yield f"The DM responds to: {action_text}"
 
 
@@ -276,7 +276,7 @@ class DefeatsGoblinDM:
     so this exercises the real automatic CR-to-XP lookup, not just an
     explicit xp override."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         apply_update({"target": "goblin", "max_hp": 5, "hp_delta": -5})
         yield "You strike the goblin down."
 
@@ -334,7 +334,7 @@ class DefeatsBossForLevel4DM:
     (server/engine.py's _apply_ability_score_improvements), not just a
     level-2 XP-award turn like DefeatsGoblinDM above."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         apply_update({"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 2700})
         yield "You strike the boss down."
 
@@ -398,7 +398,7 @@ class RequestsAbilityRollDM:
     server/state.py's stat_modifiers computed field) over an actual
     websocket, not just at the engine-unit level."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         request_roll({"dice": "1d20", "dc": 10, "reason": "tumble past the guard", "ability": "dex"})
         yield "You attempt to slip past the guard."
 
@@ -456,7 +456,7 @@ class RequestsSkillCheckDM:
     (server/engine.py's request_roll closure resolving ability, roll_kind,
     and proficiency all from one field) over an actual websocket."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         request_roll({"dice": "1d20", "dc": 15, "reason": "climb the wall", "skill": "athletics"})
         yield "You attempt to scale the wall."
 
@@ -511,7 +511,7 @@ class RequestsWeaponDamageRollDM:
     request_roll closure resolving a real srd.json damage die) over an
     actual websocket."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         request_roll({"weapon": "longsword", "ability": "str", "reason": "damage roll"})
         yield "Your longsword bites deep."
 
@@ -570,7 +570,7 @@ class RequestsRollWhilePoisonedDM:
     (server/engine.py's request_roll closure, _has_disadvantage) over an
     actual websocket."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         apply_update({"add_condition": "poisoned"})
         request_roll({"dice": "1d20", "dc": 10, "reason": "stealth check"})
         yield "Sickened by the poison, you try to move quietly anyway."
@@ -626,7 +626,7 @@ class RequestsRollWhilePoisonedWithSaveKindDM:
     get disadvantage, unlike the roll_kind-omitted case that test already
     covers."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         apply_update({"add_condition": "poisoned"})
         request_roll({"dice": "1d20", "dc": 10, "reason": "resist the poison", "roll_kind": "save"})
         yield "You grit your teeth against the venom."
@@ -725,7 +725,7 @@ class DealsLethalSelfDamageDM:
     HP - target omitted defaults to "self" (server/engine.py's apply_update
     closure), the same as any ordinary hp_delta call."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         apply_update({"hp_delta": -100})
         yield "The blow lands hard and you crumple to the ground."
 
@@ -895,7 +895,7 @@ class NarratesLethalDamageWithNoToolCallDM:
     heuristic's advisory system_message over a real websocket, not just the
     mocked-DM unit tests in test_engine.py."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         yield "Your blade finds its mark - the bandit staggers, bleeding, and falls dead."
 
 
@@ -939,7 +939,7 @@ class IntroducesHostileGoblinDM:
     exercises the disposition field over an actual websocket session, not
     just the mocked-DM unit test in test_engine.py."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         apply_update({"target": "goblin", "max_hp": 7, "disposition": "hostile"})
         yield "A goblin bursts from the underbrush, weapon raised."
 
@@ -988,7 +988,7 @@ class SequentialNPCUpdatesDM:
         self._updates = updates
         self._index = 0
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         apply_update(self._updates[self._index])
         self._index += 1
         yield "The goblin reacts."
@@ -1301,7 +1301,7 @@ class CastsFireBoltDM:
     the same turn - exercises the full spellcasting chain over an actual
     websocket, not just each half in isolation."""
 
-    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None):
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
         apply_update({"cast_spell": "Magic Missile"})
         request_roll({"dice": "1d20", "spell": "fire_bolt"})
         yield "You hurl a mote of fire at the rat."

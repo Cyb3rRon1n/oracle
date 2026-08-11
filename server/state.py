@@ -498,6 +498,34 @@ class WorldState(BaseModel):
             return "No changes applied (nothing matched, or all deltas were zero)."
         return "Applied: " + "; ".join(changes) + "."
 
+    def narrator_context(self) -> str:
+        """Plain-text current location + active objectives, given to the DM
+        on every turn as NarratorBackend.narrate()'s own world_summary
+        argument - not left for the model to infer or recall from `history`
+        alone. Built to test a specific hypothesis for complete_objective's
+        own 0% measured reliability (ROADMAP.md's update_world
+        investigation): that it was a *recall* problem - a small model
+        needing to retype an objective's exact text correctly from several
+        turns back. That hypothesis measured as wrong (re-tested across 10
+        repeat runs with the exact text sitting directly in the prompt via
+        this same method: still 0/10) - see server/narrator_ollama.py's
+        WORLD_UPDATE_PROMPT_ADDENDUM comment for the full writeup. Kept
+        anyway as real, defensible infrastructure - grounding
+        location/add_objective in the session's actual current state
+        rather than nothing measured as not worse than not having it - but
+        this alone does not fix complete_objective. "" when there's
+        nothing to report yet (a fresh session, no location or active
+        objectives set) - the same "don't render the absent default"
+        convention this project's other optional summaries (_resume_recap,
+        server/engine.py) already follow."""
+        parts = []
+        if self.location and self.location != "unknown":
+            parts.append(f"Current location: {self.location}")
+        active_objectives = [o.text for o in self.objectives if o.status == "active"]
+        if active_objectives:
+            parts.append("Active objectives:\n" + "\n".join(f"- {text}" for text in active_objectives))
+        return "\n".join(parts)
+
 
 MAX_HISTORY_MESSAGES = 12  # 6 player-action/DM-narration exchanges
 
