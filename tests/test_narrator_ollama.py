@@ -567,7 +567,7 @@ async def test_structured_narrate_world_updates_uses_the_world_schema_and_prompt
     assert "world_change" in call["format"]["properties"]
     assert "location" in call["format"]["properties"]
     assert "world_change" in call["format"]["required"]
-    assert "Also decide `world_change`" in call["messages"][0]["content"]
+    assert "You must also track world_change" in call["messages"][0]["content"]
 
 
 async def test_structured_narrate_world_change_applies_a_real_update():
