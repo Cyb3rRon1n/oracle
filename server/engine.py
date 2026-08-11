@@ -178,15 +178,22 @@ CONTENT_PREFERENCE_HINTS = {
 STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
 
 # Deliberately hand-written per class, not derived from a formula - same
-# style CLASS_STARTING_EQUIPMENT already uses, and grounded in real data
-# already in this dataset rather than a fresh judgment call: each class's
-# own two entries are exactly its SRD saving_throws (server/rules/srd.json
-# - e.g. fighter's "Strength, Constitution"), CON placed second for every
-# class as a universal survival stat, and the remaining three ordered by
-# ordinary class-archetype priority (a caster wants its remaining physical
-# stat over its remaining mental one, etc.). A blank/unrecognized class
-# has no entry here and gets no stats at all - the same fallback
-# build_starting_character's HP/inventory already use.
+# style CLASS_STARTING_EQUIPMENT already uses. Corrected 2026-08-11: this
+# comment used to claim each class's own first *two* entries were exactly
+# its SRD saving_throws - checked directly against server/rules/srd.json
+# while building CLASS_SAVING_THROW_PROFICIENCIES (below) and found that
+# was only ever true for fighter (Str, Con). CON was placed second for
+# every class here as a universal survival-stat priority pick, not
+# because it's a real saving-throw proficiency for wizard/rogue/cleric
+# (their real SRD saving throws are Int+Wis, Dex+Int, and Wis+Cha - none
+# include Con) - this table is for Standard Array assignment priority
+# only, never used for real saving-throw proficiency, which now has its
+# own separately, correctly authored table. Only the class's own *first*
+# entry reliably matches its real primary saving throw; the remaining
+# four are ordered by ordinary class-archetype priority (a caster wants
+# its remaining physical stat over its remaining mental one, etc.). A
+# blank/unrecognized class has no entry here and gets no stats at all -
+# the same fallback build_starting_character's HP/inventory already use.
 CLASS_ABILITY_PRIORITY: dict[str, tuple[str, ...]] = {
     "fighter": ("str", "con", "dex", "wis", "cha", "int"),
     "wizard": ("int", "con", "dex", "wis", "cha", "str"),
@@ -208,6 +215,25 @@ CLASS_SKILL_PROFICIENCIES: dict[str, tuple[str, ...]] = {
     "wizard": ("arcana", "investigation"),
     "rogue": ("stealth", "sleight_of_hand", "perception", "deception"),
     "cleric": ("insight", "religion"),
+}
+
+# Real 5e's own fixed pair of proficient saving-throw abilities per class
+# (the SRD's own "saving_throws" field, server/rules/srd.json - e.g.
+# fighter's "Strength, Constitution") - verified directly against that
+# data while writing this, not assumed from CLASS_ABILITY_PRIORITY above,
+# whose own CON-second convention only happens to match for fighter (see
+# that constant's own corrected comment). `proficiency_bonus` applies to
+# a saving throw only when its ability is one of these two, real 5e's own
+# rule - previously not modeled at all (request_roll's `roll_kind ==
+# "save"` case got no proficiency consideration whatsoever, a real,
+# previously-named gap - see ROADMAP.md). A blank/unrecognized class has
+# no entry and is proficient in no saves, the same fallback
+# CLASS_SKILL_PROFICIENCIES' own absence already produces.
+CLASS_SAVING_THROW_PROFICIENCIES: dict[str, tuple[str, str]] = {
+    "fighter": ("str", "con"),
+    "wizard": ("int", "wis"),
+    "rogue": ("dex", "int"),
+    "cleric": ("wis", "cha"),
 }
 
 # Real 5e's own baseline Ability Score Improvement levels - the SRD's
@@ -1255,21 +1281,34 @@ class GameEngine:
             ability_mod = character.stat_modifiers.get(ability) if ability else None
 
             # Proficiency bonus - real 5e's own level-scaled bonus
-            # (CharacterSheet.proficiency_bonus, a computed field). Two
-            # different rules for when it applies, both real 5e: a skill
+            # (CharacterSheet.proficiency_bonus, a computed field). Three
+            # different rules for when it applies, all real 5e: a skill
             # check only gets it if the character happens to be proficient
             # in that specific skill (CLASS_SKILL_PROFICIENCIES); a spell
             # attack always gets it (5e never lets a caster be "not
-            # proficient" with their own spells) - a real, deliberate
-            # difference between the two, not an inconsistency. Fully
-            # automatic either way, the same "the engine computes this from
-            # real tracked state" reasoning disadvantage/XP/ASI already
-            # follow - the DM never has to know or track proficiencies.
+            # proficient" with their own spells); a saving throw only gets
+            # it if its ability is one of the character's class's own two
+            # proficient saves (CLASS_SAVING_THROW_PROFICIENCIES) - three
+            # real, deliberately different rules, not an inconsistency.
+            # Fully automatic either way, the same "the engine computes
+            # this from real tracked state" reasoning disadvantage/XP/ASI
+            # already follow - the DM never has to know or track
+            # proficiencies.
             proficient = bool(skill) and skill in CLASS_SKILL_PROFICIENCIES.get(
                 character.character_class.strip().lower(), ()
             )
             proficiency_bonus = character.proficiency_bonus if proficient else 0
             if spell_entry and spell_entry.get("attack"):
+                proficient = True
+                proficiency_bonus = character.proficiency_bonus
+            # update.get("roll_kind"), not the local roll_kind variable -
+            # that's only (re)computed further below, and only ever
+            # inferred for "check"/"attack", never "save" (a save has no
+            # equivalent auto-detectable signal the way skill/spell-attack
+            # do), so reading the raw input here is correct, not a race.
+            if update.get("roll_kind") == "save" and ability in CLASS_SAVING_THROW_PROFICIENCIES.get(
+                character.character_class.strip().lower(), ()
+            ):
                 proficient = True
                 proficiency_bonus = character.proficiency_bonus
 
@@ -1356,7 +1395,14 @@ class GameEngine:
             spell_label = ""
             if spell_entry and spell_entry.get("attack"):
                 spell_label = f" ({spell_entry['name']}, +{proficiency_bonus} proficiency)"
-            roll_kind_label = f" ({roll_kind})" if roll_kind else ""
+            # A save is the one roll_kind that can carry real proficiency
+            # (CLASS_SAVING_THROW_PROFICIENCIES) with no skill/spell label
+            # of its own to show it on - skill/spell already cover
+            # themselves above, so this only adds the tag when neither did.
+            if roll_kind == "save" and proficient and not skill_label and not spell_label:
+                roll_kind_label = f" ({roll_kind}, +{proficiency_bonus} proficiency)"
+            else:
+                roll_kind_label = f" ({roll_kind})" if roll_kind else ""
             disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage else ""
             critical_label = " CRITICAL HIT!" if critical else ""
             label = damage_label + ability_label + skill_label + spell_label + roll_kind_label + disadvantage_label
@@ -1945,6 +1991,15 @@ class GameEngine:
         if roll.get("spell"):
             payload["spell"] = roll["spell"]
             payload["proficiency_bonus"] = roll["proficiency_bonus"]
+        # A save has no skill/spell field of its own to carry proficient/
+        # proficiency_bonus alongside (CLASS_SAVING_THROW_PROFICIENCIES) -
+        # without this, a proficient save's own bonus was silently missing
+        # from the broadcast payload entirely, even though it was already
+        # correctly included in the roll's own total.
+        if roll.get("roll_kind") == "save" and not roll.get("skill") and not roll.get("spell"):
+            payload["proficient"] = roll["proficient"]
+            if roll["proficient"]:
+                payload["proficiency_bonus"] = roll["proficiency_bonus"]
         if roll.get("disadvantage"):
             payload["disadvantage"] = True
             payload["disadvantage_reasons"] = roll["disadvantage_reasons"]

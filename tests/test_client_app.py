@@ -1771,6 +1771,63 @@ async def test_dice_result_shows_skill_and_proficiency_tag_when_present():
             assert "Athletics, +2 proficiency" in log_text
 
 
+async def test_dice_result_shows_save_proficiency_tag_when_present():
+    # A save has no skill/spell tag of its own to carry proficiency on
+    # (CLASS_SAVING_THROW_PROFICIENCIES, server/engine.py) - shown on the
+    # roll_kind tag itself instead, the same "explain the roll" reasoning
+    # the skill/spell tags already follow.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 17, "rolls": [15],
+                    "sides": 20, "purpose": "resist the poison", "dc": 12, "success": True,
+                    "ability": "con", "ability_modifier": 2,
+                    "roll_kind": "save", "proficient": True, "proficiency_bonus": 2,
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "save, +2 proficiency" in log_text
+
+
+async def test_dice_result_save_without_proficiency_shows_bare_tag():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 10, "max_hp": 10},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d20", "result": 13, "rolls": [11],
+                    "sides": 20, "purpose": "resist the illusion", "dc": 12, "success": True,
+                    "ability": "wis", "ability_modifier": 2,
+                    "roll_kind": "save", "proficient": False,
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "(save)" in log_text
+            assert "proficiency" not in log_text
+
+
 async def test_dice_result_shows_spell_and_proficiency_tag_when_present():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)

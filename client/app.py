@@ -1223,10 +1223,19 @@ class DungeonMasterApp(App):
         # (server/engine.py's request_roll closure) - purely descriptive of
         # what the roll represents (attack/save/check), shown the same way
         # damage_type/ability are so the roll reads as "what it actually
-        # was", not just a bare number.
+        # was", not just a bare number. A save is the one roll_kind that
+        # can carry real proficiency (CLASS_SAVING_THROW_PROFICIENCIES,
+        # server/engine.py) with no skill/spell tag of its own to show it
+        # on - skill/spell already show their own "+N proficiency" above,
+        # so this only adds one when neither already did, the same
+        # "explain the roll, don't just show a bare number" transparency
+        # every other tag here already follows.
         roll_kind = payload.get("roll_kind")
         if roll_kind:
-            notation = f"{notation} ({roll_kind})"
+            if roll_kind == "save" and payload.get("proficient") and not skill and not spell:
+                notation = f"{notation} ({roll_kind}, +{payload['proficiency_bonus']} proficiency)"
+            else:
+                notation = f"{notation} ({roll_kind})"
 
         # disadvantage_reasons only ever appears on a request_roll the
         # engine automatically rolled with disadvantage (server/engine.py's
