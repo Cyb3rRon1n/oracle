@@ -2031,6 +2031,69 @@ async def test_request_roll_skill_no_bonus_when_not_proficient():
     assert payload["ability"] == "dex"  # still auto-resolved, just no proficiency added
 
 
+async def test_request_roll_save_adds_proficiency_bonus_when_class_is_proficient():
+    # Fighter is proficient in Str/Con saves (CLASS_SAVING_THROW_PROFICIENCIES,
+    # matching the SRD's own real class saving_throws data) - a fresh
+    # fighter has CON 14 (+2 modifier).
+    dm = RequestRollDM({"dice": "1d20", "ability": "con", "roll_kind": "save"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as_fighter(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I brace against the poison"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["roll_kind"] == "save"
+    assert payload["proficient"] is True
+    assert payload["proficiency_bonus"] == 2  # level 1
+    assert payload["result"] == payload["rolls"][0] + 2 + 2  # both the CON mod and proficiency
+
+
+async def test_request_roll_save_no_bonus_when_class_not_proficient():
+    # Wisdom saves aren't in the fighter's own Str/Con pair.
+    dm = RequestRollDM({"dice": "1d20", "ability": "wis", "roll_kind": "save"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as_fighter(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I resist the illusion"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["roll_kind"] == "save"
+    assert payload["proficient"] is False
+    assert "proficiency_bonus" not in payload
+
+
+async def test_request_roll_matching_ability_without_save_roll_kind_gets_no_proficiency():
+    # A fighter's own CON is a proficient save, but only when the DM
+    # actually marks the roll a save (roll_kind: "save") - the same
+    # ability used for a plain check/no roll_kind shouldn't silently gain
+    # saving-throw proficiency it was never asked for.
+    dm = RequestRollDM({"dice": "1d20", "ability": "con"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as_fighter(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try to hold my breath"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload.get("roll_kind") is None
+    assert "proficient" not in payload
+    assert "proficiency_bonus" not in payload
+
+
 async def test_request_roll_skill_defaults_roll_kind_to_check():
     # Naming a skill implies roll_kind="check" automatically, which in
     # turn gets the real per-condition disadvantage scoping for free -
