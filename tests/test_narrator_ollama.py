@@ -731,6 +731,29 @@ def test_default_structured_output_is_true():
     assert OllamaNarrator(rules=RulesIndex.load_default())._structured_output is True
 
 
+def test_few_shot_example_defaults_off():
+    # Off by default - a real, untested candidate (ROADMAP.md item 6),
+    # not yet validated the way structured_output itself was before its
+    # own default flipped.
+    narrator = OllamaNarrator(rules=RulesIndex.load_default())
+    assert "Worked example" not in narrator._structured_system_prompt
+
+
+def test_few_shot_example_opt_in_augments_the_base_structured_prompt():
+    narrator = OllamaNarrator(rules=RulesIndex.load_default(), few_shot_example=True)
+    assert "Worked example" in narrator._structured_system_prompt
+    assert '"target": "bandit"' in narrator._structured_system_prompt
+
+
+def test_few_shot_example_does_not_reach_the_roll_or_followup_prompts():
+    # Deliberately scoped to only the base structured prompt for this
+    # first test (STRUCTURED_OUTPUT_FEW_SHOT_EXAMPLE's own docstring) -
+    # not yet extended to the roll-deciding or follow-up variants.
+    narrator = OllamaNarrator(rules=RulesIndex.load_default(), roll_requests=True, few_shot_example=True)
+    assert "Worked example" not in narrator._structured_roll_system_prompt
+    assert "Worked example" not in narrator._structured_followup_system_prompt
+
+
 def test_create_ollama_narrator_defaults_to_structured_output(monkeypatch):
     monkeypatch.delenv("OLLAMA_STRUCTURED_OUTPUT", raising=False)
     assert create_ollama_narrator()._structured_output is True

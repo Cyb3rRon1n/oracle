@@ -344,7 +344,7 @@ async def main_async(args: argparse.Namespace) -> None:
         model_label = args.model or "qwen2.5:7b"
         narrator = OllamaNarrator(
             model=model_label, host=args.host, rules=RulesIndex.load_default(),
-            structured_output=not args.tool_calling,
+            structured_output=not args.tool_calling, few_shot_example=args.few_shot,
         )
     else:
         from server.narrator import AnthropicNarrator
@@ -408,6 +408,17 @@ def main() -> None:
             "real tool-call correctness, see ROADMAP.md item 6). Pass this to reproduce the "
             "older baseline numbers documented earlier in that item. Ignored for --backend "
             "anthropic."
+        ),
+    )
+    parser.add_argument(
+        "--few-shot",
+        action="store_true",
+        help=(
+            "Ollama backend, structured output only - append a single worked example to the "
+            "system prompt once (server/narrator_ollama.py's STRUCTURED_OUTPUT_FEW_SHOT_EXAMPLE), "
+            "distinct from the per-turn reminder tried and reverted in ROADMAP.md item 6's fifth "
+            "experiment. Off by default - a real, untested candidate, not yet validated the way "
+            "structured output itself was."
         ),
     )
     args = parser.parse_args()
