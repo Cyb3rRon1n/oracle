@@ -13,6 +13,7 @@ from client.app import (
     SessionScreen,
     WelcomeScreen,
     _npc_status_line,
+    _race_class_label,
     _recommend_class,
 )
 from shared.protocol import Envelope
@@ -194,6 +195,17 @@ def test_recommend_class_returns_none_for_an_unanswered_survey():
     assert _recommend_class({"fighter": 0, "rogue": 0}) is None
 
 
+def test_race_class_label_combines_both():
+    assert _race_class_label("Fighter", "Dwarf") == "Dwarf Fighter"
+
+
+def test_race_class_label_falls_back_to_whichever_half_is_present():
+    assert _race_class_label("Fighter", None) == "Fighter"
+    assert _race_class_label(None, "Dwarf") == "Dwarf"
+    assert _race_class_label(None, None) == ""
+    assert _race_class_label("", "") == ""
+
+
 def test_recommend_class_breaks_ties_by_character_classes_own_order():
     # CHARACTER_CLASSES = ["fighter", "wizard", "rogue", "cleric"] - a
     # fighter/rogue tie should resolve to fighter, since it comes first
@@ -269,7 +281,91 @@ async def test_survey_recommendation_is_still_just_a_suggestion_and_stays_editab
             await pilot.click("#join")
             await pilot.pause()
 
-            assert app.transport.sent[-1] == ("join_session", {"player_name": "Thrain", "character_class": "wizard"})
+            assert app.transport.sent[-1] == (
+                "join_session", {"player_name": "Thrain", "character_class": "wizard", "race": ""}
+            )
+
+
+async def test_race_picker_is_hidden_until_the_toggle_is_pressed():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        # Taller than the 80x24 default - same reason the class-survey's
+        # own toggle tests above need it: revealing the picker adds real
+        # height.
+        async with app.run_test(size=(80, 40)) as pilot:
+            assert app.screen.query_one("#race-picker").display is False
+
+            await pilot.click("#race-toggle")
+            await pilot.pause()
+            assert app.screen.query_one("#race-picker").display is True
+
+            # A real sleep, not just pilot.pause() - same layout-settling
+            # reason the class-survey's own double-click test needs it.
+            await asyncio.sleep(0.3)
+            await pilot.click("#race-toggle")
+            await pilot.pause()
+            assert app.screen.query_one("#race-picker").display is False
+
+
+async def test_picking_a_race_sends_it_on_join():
+    # No separate free-text race field - _join() reads whichever
+    # #race-select RadioButton ends up pressed directly.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.click("#race-toggle")
+            await pilot.pause()
+            await pilot.click("#race-select-dwarf")
+            await pilot.pause()
+
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == (
+                "join_session", {"player_name": "Thrain", "character_class": "", "race": "dwarf"}
+            )
+
+
+async def test_changing_the_race_pick_sends_the_latest_choice():
+    # A RadioSet only ever has one real pressed button at a time - picking
+    # a second option after a first must fully replace it, not add to it.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.click("#race-toggle")
+            await pilot.pause()
+            await pilot.click("#race-select-halfling")
+            await pilot.pause()
+            await pilot.click("#race-select-elf")
+            await pilot.pause()
+
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == (
+                "join_session", {"player_name": "Thrain", "character_class": "", "race": "elf"}
+            )
+
+
+async def test_never_opening_the_race_picker_sends_a_blank_race():
+    # Picker-only, no default pick - a player who never touches it should
+    # join exactly like blank/skipped class already does, not get some
+    # arbitrary default race.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == (
+                "join_session", {"player_name": "Thrain", "character_class": "", "race": ""}
+            )
 
 
 async def test_join_with_valid_import_file_sends_imported_character(tmp_path):
@@ -331,7 +427,9 @@ async def test_join_with_blank_import_field_omits_imported_character():
             await pilot.click("#join")
             await pilot.pause()
 
-            assert app.transport.sent[-1] == ("join_session", {"player_name": "Thrain", "character_class": ""})
+            assert app.transport.sent[-1] == (
+                "join_session", {"player_name": "Thrain", "character_class": "", "race": ""}
+            )
 
 
 async def test_join_with_typed_stat_priority_sends_it_as_a_list():
@@ -348,7 +446,7 @@ async def test_join_with_typed_stat_priority_sends_it_as_a_list():
             assert app.transport.sent[-1] == (
                 "join_session",
                 {
-                    "player_name": "Thrain", "character_class": "",
+                    "player_name": "Thrain", "character_class": "", "race": "",
                     "stat_priority": ["cha", "con", "dex", "wis", "int", "str"],
                 },
             )
@@ -363,7 +461,9 @@ async def test_join_with_blank_stat_priority_omits_it():
             await pilot.click("#join")
             await pilot.pause()
 
-            assert app.transport.sent[-1] == ("join_session", {"player_name": "Thrain", "character_class": ""})
+            assert app.transport.sent[-1] == (
+                "join_session", {"player_name": "Thrain", "character_class": "", "race": ""}
+            )
 
 
 async def test_fresh_join_lands_on_lobby_not_session():
@@ -379,7 +479,9 @@ async def test_fresh_join_lands_on_lobby_not_session():
             await pilot.pause()
 
             assert isinstance(app.screen, LobbyScreen)
-            assert app.transport.sent[-1] == ("join_session", {"player_name": "Thrain", "character_class": ""})
+            assert app.transport.sent[-1] == (
+                "join_session", {"player_name": "Thrain", "character_class": "", "race": ""}
+            )
 
 
 async def test_reconnect_into_started_session_skips_the_lobby():
@@ -1044,6 +1146,46 @@ async def test_party_updates_render_in_lobby_sheet_panel_without_inventory():
             assert "inventory" not in rendered.lower()
 
 
+async def test_party_line_shows_race_alongside_class():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="player_joined", session_id="s", sender_id="server",
+                payload={
+                    "player_id": "p2", "name": "Rowan", "character_class": "Rogue", "race": "Halfling",
+                    "hp": 8, "max_hp": 8, "conditions": [],
+                },
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet").all_text()
+            assert "Rowan (Halfling Rogue)" in rendered
+
+
+async def test_overview_shows_race_alongside_class():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12,
+                    "character_class": "Fighter", "race": "Dwarf",
+                },
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
+            assert "Thrain[/b] (Dwarf Fighter)" in rendered
+
+
 async def test_sheet_panel_renders_own_ability_scores_with_modifiers():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
@@ -1216,6 +1358,43 @@ async def test_sheet_panel_renders_class_features_and_skill_proficiencies():
             assert "Arcane Recovery" in sheet._features_text()
             assert "Arcana" in sheet._abilities_text()
             assert "Investigation" in sheet._abilities_text()
+
+
+async def test_sheet_panel_renders_racial_traits():
+    # racial_traits is a new owner-only field (server/engine.py's
+    # _owner_character_view, the race system) - real SRD racial trait
+    # text, the same "existed as data, had nowhere to render" gap
+    # class_features closed above.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Thrain", "hp": 6, "max_hp": 6,
+                    "racial_traits": ["Darkvision: you can see in dim light within 60 feet."],
+                },
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            assert "Darkvision" in sheet._features_text()
+
+
+async def test_sheet_panel_omits_racial_traits_when_no_race_was_chosen():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Thrain", "hp": 6, "max_hp": 6},
+            }))
+            await pilot.pause()
+
+            sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
+            assert "Racial Traits" not in sheet._features_text()
 
 
 async def test_sheet_panel_renders_notes_on_the_features_tab():

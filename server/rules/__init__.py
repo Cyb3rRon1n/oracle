@@ -9,6 +9,7 @@ CATEGORY_KEYS = {
     "monster": "monsters",
     "spell": "spells",
     "class": "classes",
+    "race": "races",
     "equipment": "equipment",
     "condition": "conditions",
 }

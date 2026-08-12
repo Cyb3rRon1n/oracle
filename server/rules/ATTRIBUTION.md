@@ -1,7 +1,7 @@
 # Data source and license
 
 `srd.json` is a small, hand-curated starter set of game data (a few monsters,
-spells, conditions, classes, equipment, and the character-advancement/
+spells, conditions, classes, races, equipment, and the character-advancement/
 challenge-rating XP tables) drawn from the **D&D 5th Edition System
 Reference Document 5.1**, released by Wizards of the Coast under the
 **Creative Commons Attribution 4.0 International License**
@@ -65,6 +65,15 @@ would have been a real, known correctness bug (the exact trap this file's
 own "Deliberately did not add heavier armor" note, prior to this
 expansion, existed specifically to avoid).
 
+## Race coverage (2026-08-11)
+
+`races` covers the SRD's four core playable races - Human, Elf, Dwarf,
+Halfling - each with its own real `ability_score_increase` and `traits`
+text. **Deliberately no subraces** (Hill vs. Mountain Dwarf, High vs. Wood
+Elf, etc.) - named and scoped out for a later pass rather than half-built,
+the same discipline this file's own equipment/shield sections already
+followed for their own deferred pieces.
+
 Expanding coverage further (more monsters, spells, full class
-progressions) is future work; any addition should stay within
-SRD-licensed content.
+progressions, race subraces) is future work; any addition should stay
+within SRD-licensed content.
