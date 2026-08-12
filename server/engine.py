@@ -558,6 +558,58 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     }
 
 
+def _dice_roll_tags(roll: dict) -> str:
+    """The shared descriptive tag suffix for a roll - damage type, a
+    carried weapon's real magic bonus, ability modifier, skill/spell
+    proficiency, roll kind, and any tracked-condition disadvantage -
+    everything that explains *why* a roll's total is what it is, beyond
+    the bare dice notation. `roll` is the same dict shape `request_roll`
+    (below) already appends to `rolls_made` and `_dice_result_envelope`
+    already reads from, so any field this needs is already present by
+    the time either caller runs.
+
+    Used identically by request_roll's own DM-facing tool_result text and
+    GameEngine._dice_log_text's broadcast log line - previously two
+    independent copies of this exact logic that had already drifted out
+    of sync once (weapon_magic_bonus landed in one but not the other - a
+    real bug found while building the structured-items feature, ROADMAP.md
+    item 14). One shared function means that class of bug can't recur.
+    Deliberately doesn't include `reason`/`purpose` or the critical-hit
+    callout - those two are real, deliberate differences between the two
+    callers (the DM already knows why it asked for the roll, so its own
+    tool_result never echoes `reason` back; `_dice_log_text` does, since
+    the player has no other way to know it) rather than something to
+    unify away."""
+    damage_type = roll.get("damage_type")
+    damage_label = f" ({damage_type})" if damage_type else ""
+    weapon_magic_bonus = roll.get("weapon_magic_bonus")
+    weapon_magic_label = f" +{weapon_magic_bonus} magic" if weapon_magic_bonus else ""
+    ability_mod = roll.get("ability_modifier")
+    ability_label = f" +{ability_mod} {roll['ability'].upper()}" if ability_mod is not None else ""
+    skill = roll.get("skill")
+    skill_label = ""
+    if skill:
+        skill_label = f" ({skill.replace('_', ' ').title()}"
+        skill_label += f", +{roll['proficiency_bonus']} proficiency)" if roll.get("proficient") else ")"
+    spell = roll.get("spell")
+    spell_label = f" ({spell}, +{roll['proficiency_bonus']} proficiency)" if spell else ""
+    # A save is the one roll_kind that can carry real proficiency
+    # (CLASS_SAVING_THROW_PROFICIENCIES) with no skill/spell label of its
+    # own to show it on - skill/spell already cover themselves above, so
+    # this only adds the tag when neither did.
+    roll_kind = roll.get("roll_kind")
+    if roll_kind == "save" and roll.get("proficient") and not skill_label and not spell_label:
+        roll_kind_label = f" ({roll_kind}, +{roll['proficiency_bonus']} proficiency)"
+    else:
+        roll_kind_label = f" ({roll_kind})" if roll_kind else ""
+    disadvantage_reasons = roll.get("disadvantage_reasons")
+    disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
+    return (
+        damage_label + weapon_magic_label + ability_label + skill_label + spell_label
+        + roll_kind_label + disadvantage_label
+    )
+
+
 def _outcome_category(update: dict) -> str | None:
     """Picks a single dominant category for a real update_character change,
     so the client can color-code the resulting log line by what actually
@@ -1465,44 +1517,21 @@ class GameEngine:
             kept_roll = min(rolls) if disadvantage else rolls[0]
             critical = roll_kind == "attack" and sides == 20 and kept_roll == 20
 
-            rolls_made.append(
-                {
-                    "dice": notation, "total": total, "rolls": rolls, "sides": sides,
-                    "dc": dc, "success": success, "reason": reason,
-                    "ability": ability, "ability_modifier": ability_mod,
-                    "damage_type": damage_type, "roll_kind": roll_kind,
-                    "skill": skill, "proficient": proficient, "proficiency_bonus": proficiency_bonus,
-                    "spell": spell_entry["name"] if spell_entry and spell_entry.get("attack") else None,
-                    "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
-                    "critical": critical,
-                    "weapon_magic_bonus": weapon_magic_bonus or None,
-                }
-            )
+            roll_entry = {
+                "dice": notation, "total": total, "rolls": rolls, "sides": sides,
+                "dc": dc, "success": success, "reason": reason,
+                "ability": ability, "ability_modifier": ability_mod,
+                "damage_type": damage_type, "roll_kind": roll_kind,
+                "skill": skill, "proficient": proficient, "proficiency_bonus": proficiency_bonus,
+                "spell": spell_entry["name"] if spell_entry and spell_entry.get("attack") else None,
+                "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
+                "critical": critical,
+                "weapon_magic_bonus": weapon_magic_bonus or None,
+            }
+            rolls_made.append(roll_entry)
 
-            damage_label = f" ({damage_type})" if damage_type else ""
-            weapon_magic_label = f" +{weapon_magic_bonus} magic" if weapon_magic_bonus else ""
-            ability_label = f" +{ability_mod} {ability.upper()}" if ability_mod is not None else ""
-            skill_label = ""
-            if skill:
-                skill_label = f" ({skill.replace('_', ' ').title()}"
-                skill_label += f", +{proficiency_bonus} proficiency)" if proficient else ")"
-            spell_label = ""
-            if spell_entry and spell_entry.get("attack"):
-                spell_label = f" ({spell_entry['name']}, +{proficiency_bonus} proficiency)"
-            # A save is the one roll_kind that can carry real proficiency
-            # (CLASS_SAVING_THROW_PROFICIENCIES) with no skill/spell label
-            # of its own to show it on - skill/spell already cover
-            # themselves above, so this only adds the tag when neither did.
-            if roll_kind == "save" and proficient and not skill_label and not spell_label:
-                roll_kind_label = f" ({roll_kind}, +{proficiency_bonus} proficiency)"
-            else:
-                roll_kind_label = f" ({roll_kind})" if roll_kind else ""
-            disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage else ""
+            label = _dice_roll_tags(roll_entry)
             critical_label = " CRITICAL HIT!" if critical else ""
-            label = (
-                damage_label + weapon_magic_label + ability_label + skill_label + spell_label
-                + roll_kind_label + disadvantage_label
-            )
             if dc is None:
                 return f"Rolled {notation}{label}: {total} {rolls}.{critical_label}"
             return (
@@ -2041,37 +2070,21 @@ class GameEngine:
 
     @staticmethod
     def _dice_log_text(name: str, roll: dict) -> str:
-        # ability/ability_modifier are only ever present on a DM-requested
-        # roll (request_roll) - a plain player /roll never sets them, so
-        # .get() rather than indexing keeps this one shared helper working
-        # for both call sites without every dict-building call site having
-        # to carry two always-None keys just for this function's benefit.
-        ability_mod = roll.get("ability_modifier")
-        ability_label = f" +{ability_mod} {roll['ability'].upper()}" if ability_mod is not None else ""
-        damage_type = roll.get("damage_type")
-        damage_label = f" ({damage_type})" if damage_type else ""
-        weapon_magic_bonus = roll.get("weapon_magic_bonus")
-        weapon_magic_label = f" +{weapon_magic_bonus} magic" if weapon_magic_bonus else ""
-        skill = roll.get("skill")
-        skill_label = ""
-        if skill:
-            skill_label = f" ({skill.replace('_', ' ').title()}"
-            skill_label += f", +{roll['proficiency_bonus']} proficiency)" if roll.get("proficient") else ")"
-        spell = roll.get("spell")
-        spell_label = f" ({spell}, +{roll['proficiency_bonus']} proficiency)" if spell else ""
-        roll_kind = roll.get("roll_kind")
-        roll_kind_label = f" ({roll_kind})" if roll_kind else ""
-        disadvantage_reasons = roll.get("disadvantage_reasons")
-        disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
-        label = f" ({roll['reason']})" if roll["reason"] else ""
-        text = (
-            f"{name} rolls {roll['dice']}{damage_label}{weapon_magic_label}{ability_label}{skill_label}"
-            f"{spell_label}{roll_kind_label}{disadvantage_label}{label}: {roll['total']} {roll['rolls']}"
-        )
+        # _dice_roll_tags (module-level, above) builds the shared part of
+        # this label - previously duplicated here independently of
+        # request_roll's own copy, which had already drifted out of sync
+        # (see that function's own docstring). reason/purpose and the
+        # critical-hit callout stay specific to this function, the same
+        # deliberate difference _dice_roll_tags' docstring explains.
+        label = _dice_roll_tags(roll)
+        reason_label = f" ({roll['reason']})" if roll["reason"] else ""
+        critical_label = " CRITICAL HIT!" if roll.get("critical") else ""
+        text = f"{name} rolls {roll['dice']}{label}{reason_label}: {roll['total']} {roll['rolls']}"
         if roll["dc"] is not None:
             text += f" vs DC {roll['dc']}"
         if roll["success"] is not None:
             text += " — success" if roll["success"] else " — failure"
+        text += critical_label
         return text
 
     def _dice_result_envelope(self, roller_id: str, roll: dict) -> Envelope:
