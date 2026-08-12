@@ -4703,3 +4703,93 @@ async def test_death_save_is_exempt_from_turn_order():
         await _death_save(engine, other_id)
 
     assert session.characters[other_id].death_save_successes == 1
+
+
+async def test_reconnect_into_a_started_session_queues_a_pending_dm_recap():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
+
+    await join(engine, player_id)  # reconnect, session already underway
+
+    assert session.pending_dm_recap == [player_id]
+
+
+async def test_a_brand_new_player_joining_an_in_progress_session_does_not_queue_a_dm_recap():
+    # pending_dm_recap exists to re-ground a returning player's *own*
+    # history that's since scrolled out of the rolling window - a
+    # brand-new player has no prior turns of their own to have lost, so
+    # nothing needs re-grounding for them (they still get their own
+    # player-facing _resume_recap() message, just not this DM-facing one).
+    engine, session, received = make_engine(StubDM())
+    first_player = str(uuid.uuid4())
+    await join(engine, first_player)
+    await start_session(engine, first_player)
+
+    new_player = str(uuid.uuid4())
+    await join(engine, new_player)
+
+    assert session.pending_dm_recap == []
+
+
+async def test_reconnect_before_session_started_does_not_queue_a_dm_recap():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await join(engine, player_id)  # reconnect, still pre-game
+
+    assert session.pending_dm_recap == []
+
+
+async def test_reconnecting_players_next_action_gets_the_recap_prepended_for_the_dm():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
+    session.world.summary = "The party discovered a hidden shrine beneath the ruins."
+
+    await join(engine, player_id)  # reconnect after a long gap
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I check my map"},
+    ))
+
+    assert len(dm.action_texts) == 1
+    assert "hidden shrine beneath the ruins" in dm.action_texts[0]
+    assert dm.action_texts[0].endswith("I check my map")
+    # Invisible to the rest of the table - the visible action log line
+    # comes from the envelope's own raw text, not the recap-prefixed text
+    # the DM itself received (same discipline as the content-preference
+    # hint's own test above).
+    action_lines = [
+        r[2]["text"] for r in received
+        if r[0] == "broadcast" and r[2].get("kind") == "action"
+    ]
+    assert action_lines == ["Thrain: I check my map"]
+
+
+async def test_reconnect_recap_is_only_prepended_once():
+    dm = OpeningSceneDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await start_session(engine, player_id)
+    await join(engine, player_id)  # reconnect
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I check my map"},
+    ))
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I keep moving"},
+    ))
+
+    assert len(dm.action_texts) == 2
+    assert "Context:" not in dm.action_texts[1]
+    assert dm.action_texts[1] == "I keep moving"
+    assert session.pending_dm_recap == []

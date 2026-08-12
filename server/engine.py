@@ -984,6 +984,15 @@ class GameEngine:
         # elsewhere in this file.
         if self._has_started():
             await self._send_to(player_id, self._system_envelope(self._resume_recap(), level="info"))
+            # A returning character specifically (not a brand-new player,
+            # who has no own prior turns that could have scrolled out of
+            # the rolling history window in the first place) gets the same
+            # grounding fed to the DM itself, once, on their next real
+            # action - see Session.pending_dm_recap's own docstring
+            # (server/state.py) for the full "why" and _on_player_action
+            # for where this actually gets consumed.
+            if not is_new_character and player_id not in self._session.pending_dm_recap:
+                self._session.pending_dm_recap.append(player_id)
 
         await self._broadcast(self._system_envelope(f"{character.name} joined the session.", level="info"))
         # Structured counterpart to the text log line above - lets a client
@@ -1280,8 +1289,18 @@ class GameEngine:
         text = envelope.payload.get("text", "")
         await self._broadcast(self._log_envelope("action", f"{character.name}: {text}"))
 
+        # Consumed (popped) here, not just checked - a real gap between
+        # this reconnecting player's join and their first real action
+        # shouldn't re-trigger on every later turn, only this one. See
+        # Session.pending_dm_recap's own docstring (server/state.py) for
+        # the full "why".
+        dm_recap = None
+        if player_id in self._session.pending_dm_recap:
+            self._session.pending_dm_recap.remove(player_id)
+            dm_recap = self._resume_recap()
+
         try:
-            buffer = await self._narrate_and_apply(character, text)
+            buffer = await self._narrate_and_apply(character, text, dm_recap=dm_recap)
         except Exception as exc:
             logger.exception("Turn narration failed for player_id=%s", player_id)
             await self._send_to(
@@ -1296,14 +1315,24 @@ class GameEngine:
         await self._broadcast(self._turn_prompt_envelope())
 
     async def _narrate_and_apply(
-        self, character: CharacterSheet, action_text: str, check_for_missed_changes: bool = True
+        self,
+        character: CharacterSheet,
+        action_text: str,
+        check_for_missed_changes: bool = True,
+        dm_recap: str | None = None,
     ) -> str:
         """Runs one DM narrate() call for the given character/action, wiring
         up apply_update/request_roll/update_world, broadcasting narration and
         any resulting state changes exactly as a normal turn does. Returns
         the full narration text. Shared by _on_player_action (a real turn)
         and _narrate_opening_scene (a synthetic "turn" on campaign start that
-        doesn't consume the turn queue)."""
+        doesn't consume the turn queue).
+
+        dm_recap, when given (_on_player_action's own Session.pending_dm_recap
+        consumption), is prepended to the DM-facing action text the same way
+        CONTENT_PREFERENCE_HINTS already is - invisible to the player (never
+        touches the broadcast action_text/action log line, only what the
+        narrator backend itself receives)."""
         player_id = character.player_id
         # Captured before this turn's apply_update closure can mutate them
         # (the acting character is the same mutable object throughout this
@@ -1741,6 +1770,14 @@ class GameEngine:
         # even called) keeps the hint invisible to players.
         hint = CONTENT_PREFERENCE_HINTS.get(self._session.content_preference)
         narrate_action_text = f"[{hint}]\n{action_text}" if hint else action_text
+        # dm_recap (this reconnecting player's own pending_dm_recap, popped
+        # by _on_player_action) goes in front of the content-preference
+        # hint - context for "what's going on" belongs before a tone
+        # instruction, not after it.
+        if dm_recap:
+            narrate_action_text = (
+                f"[Context: {character.name} is picking back up after a gap - {dm_recap}]\n{narrate_action_text}"
+            )
 
         buffer = ""
         async for chunk in self._dm.narrate(

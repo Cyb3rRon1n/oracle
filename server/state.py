@@ -659,6 +659,23 @@ class Session(BaseModel):
     pre_combat_turn_order: list[str] | None = None
     log: list[dict] = Field(default_factory=list)
     history: list[dict] = Field(default_factory=list)
+    # player_ids whose *next* turn should get a DM-facing recap prepended
+    # to their action text (server/engine.py's _on_player_action) -
+    # addresses a real, distinct gap from _resume_recap()'s own player-
+    # facing "story so far" message: the rolling history window
+    # (max_history_messages) only ever holds the last few turns, so a
+    # player reconnecting after a long gap and then acting again could
+    # have the DM narrate against a context that's already scrolled past
+    # anything relevant to them - the player gets a recap, but the model
+    # generating the *next* narration doesn't. Persisted (not a plain
+    # engine-instance attribute) since a reconnect can happen across a
+    # server restart, the same reason turn_order/current_turn_index are
+    # persisted rather than kept purely in memory. Set in
+    # _on_join_session's reconnect branch, consumed (popped) the moment
+    # that player's next player_action actually arrives - a real
+    # multi-session gap between join and first action doesn't re-trigger
+    # this every join, only the one time.
+    pending_dm_recap: list[str] = Field(default_factory=list)
     # A lightweight session-zero choice (server/engine.py's
     # _on_start_session), set once by whoever starts the adventure - a
     # real tabletop practice (agreeing on tone/intensity before play
