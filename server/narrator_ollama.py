@@ -371,6 +371,26 @@ that NPC's name, never the acting character's own name or 'self'. Set mechanical
 false (and leave the other fields at their defaults) for a turn with no real mechanical
 outcome. Never break character in `narration`."""
 
+# Opt-in (few_shot_example, off by default - see OllamaNarrator.__init__),
+# a single worked example appended once to the base structured-output
+# prompt above. Distinct from the per-turn reminder tried and reverted in
+# ROADMAP.md item 6's fifth experiment - that one repeated an instruction
+# every turn and made things worse (leaked pseudo-tool-call text, no
+# correctness gain); this is one static example baked into the system
+# prompt a single time, a genuinely different intervention shape
+# (in-context learning from a worked case vs. a repeated imperative) that
+# item never isolated and tested on its own. Deliberately demonstrates
+# the self-vs-NPC mistargeting failure mode specifically - the single
+# most consistently-recurring miss across every experiment in that item -
+# rather than a generic or ambiguous example.
+STRUCTURED_OUTPUT_FEW_SHOT_EXAMPLE = """
+
+Worked example, showing exactly how narration maps to the JSON fields above:
+Player action: "I swing my sword at the bandit."
+Correct response: {"narration": "Your blade cuts deep into the bandit's shoulder. He staggers back, blood soaking his tunic, but stays on his feet.", "mechanical_change": true, "target": "bandit", "hp_delta": -6, "add_condition": ""}
+Note that target is "bandit" - whoever actually got hurt - never "self" or the acting
+character's own name, even though the player is the one who swung the sword."""
+
 # Only used when OLLAMA_ROLL_REQUESTS is on (see STRUCTURED_OUTPUT_ROLL_SCHEMA
 # above) - the base prompt above plus the roll-deciding paragraph.
 STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT = (
@@ -415,6 +435,7 @@ class OllamaNarrator:
         roll_requests: bool = False,
         world_updates: bool = False,
         world_bible: WorldBible | None = None,
+        few_shot_example: bool = False,
     ):
         self._client = ollama.AsyncClient(host=host)
         self._model = model
@@ -427,7 +448,15 @@ class OllamaNarrator:
         # system prompt.
         lore_block = (world_bible or load_default_world_bible()).system_prompt_block()
         self._tool_calling_system_prompt = OLLAMA_SYSTEM_PROMPT + lore_block
-        self._structured_system_prompt = STRUCTURED_OUTPUT_SYSTEM_PROMPT + lore_block
+        # few_shot_example only ever augments the base structured prompt,
+        # not the roll/followup variants - a deliberately scoped first
+        # test (STRUCTURED_OUTPUT_FEW_SHOT_EXAMPLE's own docstring), not
+        # yet extended to every prompt variant until this one is proven
+        # to actually help under real-engine testing.
+        structured_prompt = STRUCTURED_OUTPUT_SYSTEM_PROMPT
+        if few_shot_example:
+            structured_prompt += STRUCTURED_OUTPUT_FEW_SHOT_EXAMPLE
+        self._structured_system_prompt = structured_prompt + lore_block
         self._structured_roll_system_prompt = STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT + lore_block
         self._structured_followup_system_prompt = STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT + lore_block
         # Defaults on (see STRUCTURED_OUTPUT_SCHEMA above for why) - a
