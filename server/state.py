@@ -59,6 +59,31 @@ def proficiency_bonus_for_level(level: int) -> int:
     return 2 + (level - 1) // 4
 
 
+class InventoryItem(BaseModel):
+    """A single carried stack - server/rules/srd.json's own equipment
+    name, a count (real 5e stacks identical items - two potions of
+    healing are one stack of 2, not two separate list entries the way a
+    plain string list used to force), and an optional flat magic_bonus:
+    a DM-granted enhancement (e.g. update_character's own add_item +
+    magic_bonus="1" narrating a found +1 longsword) applied on top of
+    the item's own real SRD base stats (_compute_ac/request_roll's
+    weapon-damage resolution, server/engine.py) rather than replacing
+    them - the "structured item objects with real special properties"
+    gap named and deferred twice already (ROADMAP.md items 9 and 13).
+
+    Two stacks can share the same name but a different magic_bonus (a
+    mundane Longsword and a +1 Longsword aren't the same stack) - a
+    real, deliberate limitation for now: equip/unequip/remove_item all
+    still resolve a bare name to "whichever stack matches first"
+    (find_item, below), the same name-based convention this project's
+    equipped_weapon/equipped_armor/equipped_shield pointers already
+    use, not a full per-item id system."""
+
+    name: str
+    quantity: int = 1
+    magic_bonus: int = 0
+
+
 class CharacterSheet(BaseModel):
     player_id: str
     name: str
@@ -75,15 +100,18 @@ class CharacterSheet(BaseModel):
     # (ROADMAP.md item 7) until a real race system existed to back it.
     race: str = ""
     stats: dict[str, int] = Field(default_factory=dict)
-    inventory: list[str] = Field(default_factory=list)
-    # Pointers into inventory (by name), not a separate item store - a
-    # deliberately small step for now (ROADMAP.md's equip/carry item), not
-    # a full structured-item system. Plain name strings, same as inventory
-    # itself, since equipment with real special properties/abilities
-    # (magic items, unique loot) would need inventory to become a list of
-    # structured item objects, not just names - a genuinely bigger schema
-    # change, explicitly deferred rather than half-built here. None means
-    # nothing in that slot (unarmored, or fighting bare-handed).
+    # A list of InventoryItem stacks, not plain name strings - closes the
+    # "structured item objects with real special properties" gap named
+    # and explicitly deferred twice already (ROADMAP.md items 9 and 13):
+    # real quantities (a stack, not N duplicate entries) and a real
+    # magic_bonus, both previously impossible to represent.
+    inventory: list[InventoryItem] = Field(default_factory=list)
+    # Pointers into inventory by name (find_item, above), not a separate
+    # item store or an id - still just strings, since the equip/unequip
+    # mechanic only ever needs "which name is currently worn/wielded",
+    # not a reference to one specific stack among several sharing that
+    # name (InventoryItem's own docstring covers that edge case). None
+    # means nothing in that slot (unarmored, or fighting bare-handed).
     equipped_weapon: str | None = None
     equipped_armor: str | None = None
     # A real second equipment slot, not another armor pointer - a shield's
@@ -243,6 +271,50 @@ class CharacterSheet(BaseModel):
             levels_gained += 1
         return levels_gained
 
+    def find_item(self, name: str | None) -> InventoryItem | None:
+        """The first inventory stack whose name matches (case-insensitive) -
+        "whichever comes first" is the same resolution equip/unequip/
+        remove_item all use for a name that could match more than one
+        stack (see InventoryItem's own docstring on why that can happen).
+        None for a blank name or no match, the same graceful-miss
+        convention every other name-based lookup in this project follows."""
+        if not name:
+            return None
+        normalized = name.strip().lower()
+        return next((item for item in self.inventory if item.name.strip().lower() == normalized), None)
+
+    def add_item(self, name: str, magic_bonus: int = 0) -> InventoryItem:
+        """Adds one of `name` to inventory - stacks onto an existing entry
+        with the same name AND the same magic_bonus (real 5e's own
+        "identical items stack" convention), rather than always appending
+        a new entry the way a plain string list used to force. A
+        genuinely different item (the same base name but a different
+        enchantment) gets its own separate stack instead of merging into
+        one that would misrepresent it."""
+        for item in self.inventory:
+            if item.name.strip().lower() == name.strip().lower() and item.magic_bonus == magic_bonus:
+                item.quantity += 1
+                return item
+        item = InventoryItem(name=name, magic_bonus=magic_bonus)
+        self.inventory.append(item)
+        return item
+
+    def remove_item(self, name: str) -> bool:
+        """Removes one of `name` from whichever stack matches first
+        (find_item, above) - decrements its quantity, dropping the stack
+        entirely once it reaches zero rather than leaving a zero-quantity
+        entry behind. Returns whether a matching stack actually existed,
+        so callers (apply_update below, server/engine.py's character_edit
+        handling) can tell a real removal from a no-op the same way the
+        old `remove_item in self.inventory` check already did."""
+        item = self.find_item(name)
+        if item is None:
+            return False
+        item.quantity -= 1
+        if item.quantity <= 0:
+            self.inventory.remove(item)
+        return True
+
     def apply_update(self, update: dict) -> str:
         """Apply a DM-issued mechanical update (the update_character tool).
         Returns a human-readable summary of what changed, for the tool_result
@@ -314,12 +386,18 @@ class CharacterSheet(BaseModel):
 
         add_item = update.get("add_item")
         if add_item:
-            self.inventory.append(add_item)
-            changes.append(f"gained '{add_item}'")
+            # magic_bonus only ever comes from the DM's own tool call, never
+            # from a player's own character_edit add_item (server/engine.py) -
+            # the same "the engine or the DM decides mechanical state, the
+            # player only decides fiction/bookkeeping" boundary every other
+            # mechanical field already draws.
+            magic_bonus = update.get("magic_bonus") or 0
+            self.add_item(add_item, magic_bonus=magic_bonus)
+            label = f"+{magic_bonus} {add_item}" if magic_bonus else add_item
+            changes.append(f"gained '{label}'")
 
         remove_item = update.get("remove_item")
-        if remove_item and remove_item in self.inventory:
-            self.inventory.remove(remove_item)
+        if remove_item and self.remove_item(remove_item):
             changes.append(f"lost '{remove_item}'")
 
         add_condition = update.get("add_condition")

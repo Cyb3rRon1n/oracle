@@ -284,15 +284,75 @@ def test_apply_update_inventory_add_and_remove():
     character = make_character()
 
     character.apply_update({"add_item": "rusty key"})
-    assert "rusty key" in character.inventory
+    assert character.find_item("rusty key") is not None
 
     character.apply_update({"remove_item": "rusty key"})
-    assert "rusty key" not in character.inventory
+    assert character.find_item("rusty key") is None
 
     # removing something not present is a no-op, not an error
     result = character.apply_update({"remove_item": "nonexistent"})
-    assert "nonexistent" not in character.inventory
+    assert character.find_item("nonexistent") is None
     assert result.startswith("No changes applied")
+
+
+def test_apply_update_add_item_with_magic_bonus():
+    # magic_bonus only ever comes from the DM's own tool call - real 5e's
+    # magic weapons/armor/shields, tracked on the item itself rather than
+    # trusted to the model's own arithmetic at roll time.
+    character = make_character()
+
+    result = character.apply_update({"add_item": "Longsword", "magic_bonus": 1})
+
+    item = character.find_item("Longsword")
+    assert item is not None
+    assert item.magic_bonus == 1
+    assert "+1 Longsword" in result
+
+
+def test_apply_update_add_item_stacks_identical_items():
+    character = make_character()
+
+    character.apply_update({"add_item": "Potion of Healing"})
+    character.apply_update({"add_item": "Potion of Healing"})
+
+    assert len(character.inventory) == 1
+    assert character.find_item("Potion of Healing").quantity == 2
+
+
+def test_apply_update_add_item_keeps_different_magic_bonus_as_a_separate_stack():
+    character = make_character()
+
+    character.apply_update({"add_item": "Longsword"})
+    character.apply_update({"add_item": "Longsword", "magic_bonus": 1})
+
+    assert len(character.inventory) == 2
+    assert character.find_item("Longsword").magic_bonus == 0  # first match is still the mundane one
+
+
+def test_apply_update_remove_item_decrements_a_stack_before_dropping_it():
+    character = make_character()
+    character.apply_update({"add_item": "Potion of Healing"})
+    character.apply_update({"add_item": "Potion of Healing"})
+
+    character.apply_update({"remove_item": "Potion of Healing"})
+    assert character.find_item("Potion of Healing").quantity == 1
+
+    character.apply_update({"remove_item": "Potion of Healing"})
+    assert character.find_item("Potion of Healing") is None
+
+
+def test_find_item_is_case_insensitive():
+    character = make_character()
+    character.apply_update({"add_item": "Rusty Key"})
+
+    assert character.find_item("rusty key") is not None
+    assert character.find_item("RUSTY KEY") is not None
+
+
+def test_find_item_returns_none_for_blank_name():
+    character = make_character()
+    assert character.find_item(None) is None
+    assert character.find_item("") is None
 
 
 def test_apply_update_conditions_add_and_remove():

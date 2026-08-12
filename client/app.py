@@ -133,6 +133,34 @@ def _race_class_label(character_class: str | None, race: str | None) -> str:
     return " ".join(part for part in (race, character_class) if part)
 
 
+def _find_inventory_item(inventory: list[dict], name: str | None) -> dict | None:
+    """First inventory stack whose name matches - a client-side mirror of
+    server/state.py's CharacterSheet.find_item, since the wire payload is
+    a plain list of dicts (InventoryItem.model_dump()), not real model
+    instances. Case-sensitive, unlike the server's own lookup - unlike a
+    freshly-typed player command, equipped_weapon/armor/shield are always
+    set from a name the server itself already resolved exactly."""
+    if not name:
+        return None
+    return next((item for item in inventory if item.get("name") == name), None)
+
+
+def _format_item_label(item: dict) -> str:
+    """"Longsword +1 x2" - name, then its real magic_bonus (if any - the
+    structured-items feature, server/state.py's InventoryItem) and
+    quantity (if more than one), the same "explain it, don't just show a
+    bare number/name" transparency this project's dice-result tags
+    already follow."""
+    label = item.get("name", "?")
+    magic_bonus = item.get("magic_bonus") or 0
+    if magic_bonus:
+        label += f" +{magic_bonus}"
+    quantity = item.get("quantity") or 1
+    if quantity > 1:
+        label += f" x{quantity}"
+    return label
+
+
 def _load_character_file(path: str) -> tuple[dict | None, str | None]:
     """Reads and parses a character export file for WelcomeScreen's optional
     import field - local file I/O, so this happens client-side before
@@ -361,9 +389,11 @@ class CharacterSheetPanel(Vertical):
         # owner ask ("not just a general listing of items"), and the same
         # "closely resemble a real tabletop sheet" reasoning driving this
         # tab split in the first place. equipped_weapon/armor/shield are
-        # still just names in inventory, not their own separate store -
-        # carried is inventory minus whichever of those three are
-        # currently set.
+        # still just names, not their own separate store - carried is
+        # inventory minus whichever *one* stack each of those three names
+        # actually resolves to (not every stack sharing that name - a
+        # mundane and a magic copy of the same base item can coexist as
+        # separate stacks, server/state.py's InventoryItem).
         character = self._character
         inventory = character.get("inventory") or []
         if not inventory:
@@ -371,16 +401,22 @@ class CharacterSheetPanel(Vertical):
         equipped_weapon = character.get("equipped_weapon")
         equipped_armor = character.get("equipped_armor")
         equipped_shield = character.get("equipped_shield")
+        weapon_item = _find_inventory_item(inventory, equipped_weapon)
+        armor_item = _find_inventory_item(inventory, equipped_armor)
+        shield_item = _find_inventory_item(inventory, equipped_shield)
         lines = ["[b]Equipped[/b]"]
-        lines.append(f"Weapon: {equipped_weapon}" if equipped_weapon else "Weapon: [dim](none)[/dim]")
-        lines.append(f"Armor: {equipped_armor}" if equipped_armor else "Armor: [dim](none)[/dim]")
-        if equipped_shield:
-            lines.append(f"Shield: {equipped_shield}")
-        carried = [item for item in inventory if item not in (equipped_weapon, equipped_armor, equipped_shield)]
+        lines.append(f"Weapon: {_format_item_label(weapon_item)}" if weapon_item else "Weapon: [dim](none)[/dim]")
+        lines.append(f"Armor: {_format_item_label(armor_item)}" if armor_item else "Armor: [dim](none)[/dim]")
+        if shield_item:
+            lines.append(f"Shield: {_format_item_label(shield_item)}")
+        carried = list(inventory)
+        for equipped_item in (weapon_item, armor_item, shield_item):
+            if equipped_item is not None and equipped_item in carried:
+                carried.remove(equipped_item)
         if carried:
             lines.append("")
             lines.append("[b]Carried[/b]")
-            lines.extend(f"- {item}" for item in carried)
+            lines.extend(f"- {_format_item_label(item)}" for item in carried)
         return "\n".join(lines).rstrip()
 
     def _spells_text(self) -> str:
@@ -1271,6 +1307,16 @@ class DungeonMasterApp(App):
         damage_type = payload.get("damage_type")
         if damage_type:
             notation = f"{notation} ({damage_type})"
+
+        # weapon_magic_bonus only ever appears on a DM-requested weapon
+        # damage roll for a weapon the acting character's own inventory
+        # carries with a real magic_bonus (server/engine.py's request_roll
+        # closure, the structured-items feature) - shown as its own tag,
+        # the same transparency reasoning ability_modifier's own tag below
+        # already follows.
+        weapon_magic_bonus = payload.get("weapon_magic_bonus")
+        if weapon_magic_bonus:
+            notation = f"{notation} +{weapon_magic_bonus} magic"
 
         # ability/ability_modifier only ever appear on a DM-requested roll
         # tied to one of the character's own ability scores

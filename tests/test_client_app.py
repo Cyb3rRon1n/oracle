@@ -12,6 +12,7 @@ from client.app import (
     LobbyScreen,
     SessionScreen,
     WelcomeScreen,
+    _format_item_label,
     _npc_status_line,
     _race_class_label,
     _recommend_class,
@@ -1459,7 +1460,10 @@ async def test_inventory_tab_separates_equipped_from_carried():
             await app._handle(_state_sync("p1", started=False, characters={
                 "p1": {
                     "player_id": "p1", "name": "Rook", "hp": 12, "max_hp": 12,
-                    "inventory": ["Longsword", "Leather Armor", "a torch", "3 rations"],
+                    "inventory": [
+                        {"name": "Longsword"}, {"name": "Leather Armor"},
+                        {"name": "a torch"}, {"name": "rations", "quantity": 3},
+                    ],
                     "equipped_weapon": "Longsword", "equipped_armor": "Leather Armor",
                 },
             }))
@@ -1470,7 +1474,7 @@ async def test_inventory_tab_separates_equipped_from_carried():
             assert "Weapon: Longsword" in rendered
             assert "Armor: Leather Armor" in rendered
             assert "a torch" in rendered
-            assert "3 rations" in rendered
+            assert "rations x3" in rendered
             # Equipped items shouldn't also appear a second time under Carried.
             assert rendered.count("Longsword") == 1
             assert rendered.count("Leather Armor") == 1
@@ -1489,7 +1493,7 @@ async def test_inventory_tab_shows_equipped_shield_when_present():
             await app._handle(_state_sync("p1", started=False, characters={
                 "p1": {
                     "player_id": "p1", "name": "Rook", "hp": 12, "max_hp": 12,
-                    "inventory": ["Longsword", "Shield"],
+                    "inventory": [{"name": "Longsword"}, {"name": "Shield"}],
                     "equipped_weapon": "Longsword", "equipped_shield": "Shield",
                 },
             }))
@@ -1508,7 +1512,7 @@ async def test_inventory_tab_shows_none_for_empty_equipment_slots():
             await pilot.click("#join")
             await pilot.pause()
             await app._handle(_state_sync("p1", started=False, characters={
-                "p1": {"player_id": "p1", "name": "Rook", "hp": 12, "max_hp": 12, "inventory": ["a torch"]},
+                "p1": {"player_id": "p1", "name": "Rook", "hp": 12, "max_hp": 12, "inventory": [{"name": "a torch"}]},
             }))
             await pilot.pause()
 
@@ -1517,6 +1521,64 @@ async def test_inventory_tab_shows_none_for_empty_equipment_slots():
             assert "Weapon: " in rendered and "(none)" in rendered
             assert "Armor: " in rendered and "(none)" in rendered
             assert "a torch" in rendered
+
+
+def test_format_item_label_shows_quantity_and_magic_bonus():
+    assert _format_item_label({"name": "Potion of Healing"}) == "Potion of Healing"
+    assert _format_item_label({"name": "Potion of Healing", "quantity": 3}) == "Potion of Healing x3"
+    assert _format_item_label({"name": "Longsword", "magic_bonus": 1}) == "Longsword +1"
+    assert _format_item_label(
+        {"name": "Longsword", "magic_bonus": 1, "quantity": 2}
+    ) == "Longsword +1 x2"
+
+
+async def test_inventory_tab_shows_magic_bonus_and_quantity_on_equipped_and_carried_items():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Rook", "hp": 12, "max_hp": 12,
+                    "inventory": [
+                        {"name": "Longsword", "magic_bonus": 1},
+                        {"name": "Potion of Healing", "quantity": 2},
+                    ],
+                    "equipped_weapon": "Longsword",
+                },
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel)._inventory_text()
+            assert "Weapon: Longsword +1" in rendered
+            assert "Potion of Healing x2" in rendered
+
+
+async def test_inventory_tab_only_hides_one_matching_stack_per_equipped_slot():
+    # A mundane and a magic copy of the same base item are two separate
+    # stacks (server/state.py's InventoryItem) - equipping one shouldn't
+    # also hide the other from Carried.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Rook", "hp": 12, "max_hp": 12,
+                    "inventory": [
+                        {"name": "Longsword"},
+                        {"name": "Longsword", "magic_bonus": 1},
+                    ],
+                    "equipped_weapon": "Longsword",
+                },
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel)._inventory_text()
+            assert "Weapon: Longsword" in rendered  # the mundane one - first match
+            assert "[b]Carried[/b]\n- Longsword +1" in rendered
 
 
 async def test_spells_tab_is_hidden_for_a_non_caster_and_shown_for_a_caster():
@@ -2085,6 +2147,31 @@ async def test_dice_result_shows_damage_type_and_ability_together():
 
             log_text = _log_text(app.screen.query_one("#log"))
             assert "1d8 (slashing) +2 STR" in log_text
+
+
+async def test_dice_result_shows_weapon_magic_bonus_tag_when_present():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True, characters={
+                "p1": {"name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="dice_result", session_id="s", sender_id="server",
+                payload={
+                    "roller_id": "p1", "dice": "1d8", "result": 9, "rolls": [6],
+                    "sides": 8, "purpose": "damage roll",
+                    "damage_type": "slashing", "weapon_magic_bonus": 1,
+                },
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#log"))
+            assert "1d8 (slashing) +1 magic" in log_text
 
 
 async def test_dice_result_shows_disadvantage_tag_and_kept_roll():

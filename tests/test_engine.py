@@ -96,6 +96,23 @@ class RequestRollDM:
         yield "You attempt it."
 
 
+class GrantsItemThenRollsWeaponDM:
+    """Calls apply_update (e.g. granting a magic weapon) then request_roll
+    in the same turn, simulating a DM narrating a found item and an
+    attack with it together - the structured-items magic_bonus wiring
+    needs both tools in one turn to exercise end-to-end."""
+
+    def __init__(self, add_item_update: dict, roll_input: dict):
+        self._add_item_update = add_item_update
+        self._roll_input = roll_input
+        self.roll_result: str | None = None
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+        apply_update(self._add_item_update)
+        self.roll_result = request_roll(self._roll_input)
+        yield "You feel the new blade's power."
+
+
 class UpdateWorldDM:
     """Calls update_world with the given tool input, simulating the DM
     invoking update_world mid-turn, then narrates."""
@@ -192,7 +209,8 @@ def test_build_starting_character_gives_a_real_class_kit(
 
     assert sheet.hp == expected_hp
     assert sheet.max_hp == expected_hp
-    assert sheet.inventory == expected_inventory
+    assert [item.name for item in sheet.inventory] == expected_inventory
+    assert all(item.quantity == 1 and item.magic_bonus == 0 for item in sheet.inventory)
     assert sheet.character_class  # the SRD's display name, e.g. "Fighter"
     assert sheet.stats == expected_stats
     assert sheet.stat_modifiers["con"] == 2  # (14 - 10) // 2
@@ -307,7 +325,7 @@ async def test_join_with_character_class_builds_real_starting_sheet_end_to_end()
     character = session.characters[player_id]
     assert character.hp == 12  # d10 hit die max (10) + a real CON modifier (+2)
     assert character.character_class == "Fighter"
-    assert character.inventory == ["Longsword", "Leather Armor"]
+    assert [item.name for item in character.inventory] == ["Longsword", "Leather Armor"]
 
 
 async def test_join_with_unrecognized_class_warns_the_player_privately():
@@ -467,7 +485,7 @@ async def test_join_with_imported_character_uses_imported_sheet():
         "max_hp": 12,
         "character_class": "Cleric",
         "stats": {"str": 14},
-        "inventory": ["Mace", "Holy Symbol"],
+        "inventory": [{"name": "Mace"}, {"name": "Holy Symbol", "quantity": 2}],
         "conditions": ["blessed"],
         "notes": "Sworn to protect the village of Rivenwood.",
         "xp": 450,
@@ -485,10 +503,38 @@ async def test_join_with_imported_character_uses_imported_sheet():
     assert character.hp == 7
     assert character.max_hp == 12
     assert character.character_class == "Cleric"
-    assert character.inventory == ["Mace", "Holy Symbol"]
+    assert [item.name for item in character.inventory] == ["Mace", "Holy Symbol"]
+    assert character.inventory[1].quantity == 2
     assert character.notes == "Sworn to protect the village of Rivenwood."
     assert character.xp == 450
     assert character.level == 3
+
+
+async def test_join_with_legacy_plain_string_inventory_import_fails_gracefully():
+    # An export file from before the structured-items feature had
+    # inventory as a flat list of name strings, not {name, quantity,
+    # magic_bonus} dicts - a real shape mismatch CharacterSheet(**imported)
+    # now rejects. Falls back to a fresh character with a warning, the
+    # same "any shape mismatch means no import, not a crash" behavior
+    # _character_from_import already has for a corrupted/future-version
+    # file - not a new special case, just this project's existing
+    # fallback now also covering a real, previously-untested shape.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    imported = {
+        "player_id": "stale", "name": "Old Export", "hp": 5, "max_hp": 10,
+        "inventory": ["Mace", "Holy Symbol"],
+    }
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "", "imported_character": imported},
+    ))
+
+    character = session.characters[player_id]
+    assert character.name == "Rook"  # the fresh fallback, not the imported "Old Export"
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert any("couldn't import" in w[3]["text"].lower() for w in warnings)
 
 
 async def test_join_with_invalid_imported_character_falls_back_to_fresh_start():
@@ -617,7 +663,7 @@ async def test_update_character_tool_call_applies_and_pushes_character_update():
 
     character = session.characters[player_id]
     assert character.hp == 6  # 10 - 4
-    assert "torch" in character.inventory
+    assert character.find_item("torch") is not None
     assert "HP -4" in dm.tool_result
 
     updates = [
@@ -626,7 +672,7 @@ async def test_update_character_tool_call_applies_and_pushes_character_update():
     ]
     assert updates, "a real sheet change should push a character_update to the player"
     assert updates[-1][3]["sheet_delta"]["hp"] == 6
-    assert updates[-1][3]["sheet_delta"]["inventory"] == ["torch"]
+    assert updates[-1][3]["sheet_delta"]["inventory"] == [{"name": "torch", "quantity": 1, "magic_bonus": 0}]
 
 
 async def test_update_character_rest_heals_the_acting_character_through_a_real_turn():
@@ -1480,7 +1526,7 @@ async def test_sheet_change_broadcasts_public_player_update_alongside_private_ch
         r for r in received if r[0] == "send_to" and r[1] == player_id and r[2] == "character_update"
     ]
     assert private_updates
-    assert private_updates[-1][3]["sheet_delta"]["inventory"] == ["torch"]
+    assert private_updates[-1][3]["sheet_delta"]["inventory"] == [{"name": "torch", "quantity": 1, "magic_bonus": 0}]
 
     public_updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
     assert public_updates, "a sheet change should also broadcast the public view to everyone else"
@@ -2612,6 +2658,24 @@ def test_compute_ac_adds_a_shields_bonus_additively():
     assert _compute_ac("Plate Armor", dex_modifier=-3, rules=rules, equipped_shield="Shield") == 20  # 18 + 0 + 2
 
 
+def test_compute_ac_adds_armor_and_shield_magic_bonuses_additively():
+    # A magic item's real InventoryItem.magic_bonus (structured items,
+    # server/state.py) stacks on top of the SRD base stats the same way a
+    # shield's own ac_bonus already does - a +1 suit of armor is still
+    # whatever armor it is, plus 1.
+    rules = RulesIndex.load_default()
+    assert _compute_ac(
+        "Leather Armor", dex_modifier=1, rules=rules, armor_magic_bonus=1
+    ) == 13  # 11 + 1 + 1
+    assert _compute_ac(
+        None, dex_modifier=1, rules=rules, equipped_shield="Shield", shield_magic_bonus=1
+    ) == 14  # 10 + 1 + 2 + 1
+    assert _compute_ac(
+        "Leather Armor", dex_modifier=1, rules=rules,
+        equipped_shield="Shield", armor_magic_bonus=1, shield_magic_bonus=2,
+    ) == 17  # 11 + 1 + 1 + 2 + 2
+
+
 def test_compute_ac_unrecognized_shield_contributes_nothing():
     rules = RulesIndex.load_default()
     assert _compute_ac(None, dex_modifier=1, rules=rules, equipped_shield="not a real item") == 11
@@ -2731,6 +2795,60 @@ async def test_dm_requested_weapon_damage_roll_uses_real_srd_damage_die():
     ]
     assert "1d8 (slashing) +2 STR" in dice_logs[-1][2]["text"]
     assert dm.tool_result is not None and "(slashing)" in dm.tool_result
+
+
+async def test_dm_requested_weapon_damage_roll_adds_a_real_carried_magic_bonus():
+    # The structured-items feature: a weapon's real magic_bonus (granted
+    # via the DM's own add_item + magic_bonus, server/narrator.py's
+    # UPDATE_CHARACTER_TOOL) adds to its damage roll automatically. No
+    # starting class (a blank/unrecognized class starts with no inventory
+    # at all) - a fighter's own starting Longsword would otherwise be a
+    # second, mundane stack find_item's "first match" could resolve to
+    # instead of the magic one this test actually adds.
+    dm = GrantsItemThenRollsWeaponDM(
+        {"add_item": "Longsword", "magic_bonus": 1},
+        {"weapon": "longsword", "reason": "damage roll"},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I swing my new +1 longsword"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.find_item("Longsword").magic_bonus == 1
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["weapon_magic_bonus"] == 1
+    assert 1 + 1 <= payload["result"] <= 8 + 1  # the raw d8 roll + 1 magic
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "+1 magic" in dice_logs[-1][2]["text"]
+
+
+async def test_dm_requested_weapon_damage_roll_omits_magic_bonus_for_a_mundane_weapon():
+    dm = RequestRollDM({"weapon": "longsword", "ability": "str", "reason": "damage roll"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I swing my longsword"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert "weapon_magic_bonus" not in results[-1][2]
 
 
 async def test_dm_requested_roll_with_unmatched_weapon_falls_back_to_given_dice():
@@ -3831,21 +3949,21 @@ async def test_character_edit_add_item_appends_to_inventory():
         payload={"field": "add_item", "value": "a shiny rock"},
     ))
 
-    assert "a shiny rock" in session.characters[player_id].inventory
+    assert session.characters[player_id].find_item("a shiny rock") is not None
 
 
 async def test_character_edit_remove_item_removes_a_present_item():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())
     await join(engine, player_id)
-    session.characters[player_id].inventory.append("a torch")
+    session.characters[player_id].add_item("a torch")
 
     await engine.handle(Envelope(
         type="character_edit", session_id="test-session", sender_id=player_id,
         payload={"field": "remove_item", "value": "a torch"},
     ))
 
-    assert "a torch" not in session.characters[player_id].inventory
+    assert session.characters[player_id].find_item("a torch") is None
 
 
 async def test_character_edit_remove_item_not_in_inventory_warns_and_makes_no_change():
@@ -3888,7 +4006,7 @@ async def test_character_edit_equip_switches_weapon_and_does_not_touch_ac():
         type="join_session", session_id="test-session", sender_id=player_id,
         payload={"player_name": "Rook", "character_class": "fighter"},
     ))
-    session.characters[player_id].inventory.append("Shortbow")
+    session.characters[player_id].add_item("Shortbow")
     original_ac = session.characters[player_id].ac
     received.clear()
 
@@ -3910,7 +4028,7 @@ async def test_character_edit_equip_armor_recomputes_ac_and_broadcasts_player_up
     # A blank/unrecognized class starts unarmored (ac=10, no starting gear)
     # so equipping real armor for the first time has a real before/after.
     await join(engine, player_id)
-    session.characters[player_id].inventory.append("Leather Armor")
+    session.characters[player_id].add_item("Leather Armor")
     received.clear()
 
     await engine.handle(Envelope(
@@ -3934,7 +4052,7 @@ async def test_character_edit_equip_shield_adds_its_bonus_to_ac():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())
     await join(engine, player_id)
-    session.characters[player_id].inventory.append("Shield")
+    session.characters[player_id].add_item("Shield")
     ac_before = session.characters[player_id].ac
     received.clear()
 
@@ -3950,11 +4068,53 @@ async def test_character_edit_equip_shield_adds_its_bonus_to_ac():
     assert updates and updates[-1][2]["ac"] == character.ac
 
 
+async def test_character_edit_equip_carries_a_real_magic_armor_bonus_into_ac():
+    # A magic armor's real InventoryItem.magic_bonus (granted via the DM's
+    # own add_item + magic_bonus) applies the moment it's equipped, not
+    # just at creation.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    character = session.characters[player_id]
+    character.apply_update({"add_item": "Leather Armor", "magic_bonus": 1})
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "equip", "value": "Leather Armor"},
+    ))
+
+    assert character.equipped_armor == "Leather Armor"
+    assert character.ac == 11 + character.stat_modifiers.get("dex", 0) + 1  # base + dex + the magic bonus
+
+
+async def test_character_edit_add_item_never_grants_a_magic_bonus():
+    # magic_bonus is the DM tool's own field (update_character), never
+    # player-settable through character_edit - the same "engine/DM
+    # decides mechanical state" boundary equip/unequip's own ac side
+    # effect already respects. A player has no way to send magic_bonus
+    # over character_edit's {field, value} shape at all, but this locks
+    # in the actual resulting item regardless of what a malformed/
+    # adversarial payload might try.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "add_item", "value": "Longsword", "magic_bonus": 5},
+    ))
+
+    item = session.characters[player_id].find_item("Longsword")
+    assert item is not None
+    assert item.magic_bonus == 0
+
+
 async def test_character_edit_unequip_shield_removes_its_bonus_from_ac():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())
     await join(engine, player_id)
-    session.characters[player_id].inventory.append("Shield")
+    session.characters[player_id].add_item("Shield")
     await engine.handle(Envelope(
         type="character_edit", session_id="test-session", sender_id=player_id,
         payload={"field": "equip", "value": "Shield"},
@@ -3976,7 +4136,7 @@ async def test_character_edit_remove_item_that_is_the_equipped_shield_also_unequ
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())
     await join(engine, player_id)
-    session.characters[player_id].inventory.append("Shield")
+    session.characters[player_id].add_item("Shield")
     await engine.handle(Envelope(
         type="character_edit", session_id="test-session", sender_id=player_id,
         payload={"field": "equip", "value": "Shield"},
@@ -3991,7 +4151,7 @@ async def test_character_edit_remove_item_that_is_the_equipped_shield_also_unequ
 
     character = session.characters[player_id]
     assert character.equipped_shield is None
-    assert "Shield" not in character.inventory
+    assert character.find_item("Shield") is None
     assert character.ac == ac_with_shield - 2
 
 
@@ -4015,7 +4175,7 @@ async def test_character_edit_equip_something_not_a_weapon_or_armor_warns():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())
     await join(engine, player_id)
-    session.characters[player_id].inventory.append("Potion of Healing")
+    session.characters[player_id].add_item("Potion of Healing")
     received.clear()
 
     await engine.handle(Envelope(
@@ -4080,7 +4240,7 @@ async def test_character_edit_remove_item_that_is_equipped_also_unequips_it():
 
     character = session.characters[player_id]
     assert character.equipped_armor is None
-    assert "Leather Armor" not in character.inventory
+    assert character.find_item("Leather Armor") is None
     assert character.ac == 10 + character.stat_modifiers["dex"]
     assert any(r[0] == "broadcast" and r[1] == "player_update" for r in received)
 
