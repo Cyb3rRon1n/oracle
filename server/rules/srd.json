@@ -450,6 +450,72 @@
         "Brave: you have advantage on saving throws against being frightened.",
         "Halfling Nimbleness: you can move through the space of any creature that is of a size larger than yours."
       ]
+    },
+    "high_elf": {
+      "name": "High Elf",
+      "ability_score_increase": {"dex": 2, "int": 1},
+      "traits": [
+        "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
+        "Keen Senses: you have proficiency in the Perception skill.",
+        "Fey Ancestry: you have advantage on saving throws against being charmed, and magic can't put you to sleep.",
+        "Trance: elves don't need to sleep. Instead, they meditate deeply for 4 hours a day.",
+        "Elf Weapon Training: you have proficiency with the longsword, shortsword, shortbow, and longbow.",
+        "Cantrip: you know one cantrip of your choice from the wizard spell list. Intelligence is your spellcasting ability for it.",
+        "Extra Language: you can speak, read, and write one extra language of your choice."
+      ]
+    },
+    "wood_elf": {
+      "name": "Wood Elf",
+      "ability_score_increase": {"dex": 2, "wis": 1},
+      "traits": [
+        "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
+        "Keen Senses: you have proficiency in the Perception skill.",
+        "Fey Ancestry: you have advantage on saving throws against being charmed, and magic can't put you to sleep.",
+        "Trance: elves don't need to sleep. Instead, they meditate deeply for 4 hours a day.",
+        "Elf Weapon Training: you have proficiency with the longsword, shortsword, shortbow, and longbow.",
+        "Fleet of Foot: your base walking speed increases to 35 feet.",
+        "Mask of the Wild: you can attempt to hide even when you are only lightly obscured by foliage, heavy rain, falling snow, mist, and other natural phenomena."
+      ]
+    },
+    "hill_dwarf": {
+      "name": "Hill Dwarf",
+      "ability_score_increase": {"con": 2, "wis": 1},
+      "traits": [
+        "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
+        "Dwarven Resilience: you have advantage on saving throws against poison, and resistance against poison damage.",
+        "Stonecunning: whenever you make an Intelligence (History) check related to the origin of stonework, you are considered proficient and add double your proficiency bonus.",
+        "Dwarven Toughness: your hit point maximum increases by 1, and increases by 1 again every time you gain a level."
+      ]
+    },
+    "mountain_dwarf": {
+      "name": "Mountain Dwarf",
+      "ability_score_increase": {"con": 2, "str": 2},
+      "traits": [
+        "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
+        "Dwarven Resilience: you have advantage on saving throws against poison, and resistance against poison damage.",
+        "Stonecunning: whenever you make an Intelligence (History) check related to the origin of stonework, you are considered proficient and add double your proficiency bonus.",
+        "Dwarven Armor Training: you have proficiency with light and medium armor."
+      ]
+    },
+    "lightfoot_halfling": {
+      "name": "Lightfoot Halfling",
+      "ability_score_increase": {"dex": 2, "cha": 1},
+      "traits": [
+        "Lucky: when you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
+        "Brave: you have advantage on saving throws against being frightened.",
+        "Halfling Nimbleness: you can move through the space of any creature that is of a size larger than yours.",
+        "Naturally Stealthy: you can attempt to hide even when you are obscured only by a creature that is at least one size larger than you."
+      ]
+    },
+    "stout_halfling": {
+      "name": "Stout Halfling",
+      "ability_score_increase": {"dex": 2, "con": 1},
+      "traits": [
+        "Lucky: when you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
+        "Brave: you have advantage on saving throws against being frightened.",
+        "Halfling Nimbleness: you can move through the space of any creature that is of a size larger than yours.",
+        "Stout Resilience: you have advantage on saving throws against poison, and resistance against poison damage."
+      ]
     }
   },
   "equipment": {
