@@ -245,6 +245,45 @@ def test_build_starting_character_gives_a_non_caster_no_spells():
     assert sheet.max_spell_slots == {}
 
 
+def test_build_starting_character_applies_race_ability_bonus_and_display_name():
+    # Dwarf's real SRD ability_score_increase (+2 con) stacks additively on
+    # top of fighter's own class-priority Standard Array assignment (con
+    # already 14 there - see the class-kit test above) - 14 + 2 = 16, which
+    # also raises the CON modifier feeding starting HP (10 + 3 instead of
+    # the plain-fighter baseline's 10 + 2 = 12).
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules, race="dwarf")
+
+    assert sheet.race == "Dwarf"  # the SRD's display name, e.g. character_class
+    assert sheet.stats["con"] == 16
+    assert sheet.hp == 13
+    assert sheet.max_hp == 13
+
+
+@pytest.mark.parametrize("race", ["", "gnome", "not-a-real-race"])
+def test_build_starting_character_falls_back_on_blank_or_unknown_race(race):
+    # Same graceful-miss convention build_starting_character's own class
+    # handling already has - a blank/unrecognized race costs the ability
+    # bonus and racial traits, not a crash, and doesn't touch stats at all.
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules, race=race)
+
+    assert sheet.race == ""
+    assert sheet.stats["con"] == 14  # unchanged from the plain-fighter baseline
+
+
+def test_build_starting_character_records_race_independent_of_class():
+    # race and character_class are genuinely independent choices - a
+    # classless character (blank/unrecognized class) still gets their race
+    # recorded, even though there are no stats for a race bonus to apply to.
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "", rules, race="elf")
+
+    assert sheet.character_class == ""
+    assert sheet.race == "Elf"
+    assert sheet.stats == {}
+
+
 def test_rules_index_spell_slots_by_level_real_progression():
     rules = RulesIndex.load_default()
     assert rules.spell_slots_by_level(1) == {"1": 2}
@@ -345,6 +384,56 @@ async def test_join_with_invalid_stat_priority_falls_back_to_class_default():
 
     character = session.characters[player_id]
     assert character.stats == {"str": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "int": 8}
+
+
+async def test_join_with_race_builds_a_real_racial_bonus_end_to_end():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter", "race": "dwarf"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.race == "Dwarf"
+    assert character.stats["con"] == 16
+    assert character.hp == 13
+
+
+async def test_join_with_unrecognized_race_warns_the_player_privately():
+    # Same silent-mistake gap the unrecognized-class warning above closes,
+    # for the same reason - a typo'd race string otherwise costs a player
+    # their ability bonus and racial traits with no indication anything
+    # went wrong.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter", "race": "gnomeling"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.race == ""  # the existing graceful blank-fallback, unchanged
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert any("gnomeling" in w[3]["text"] for w in warnings)
+
+
+async def test_join_with_blank_race_is_not_treated_as_a_mistake():
+    # Blank is the UI's own explicit "blank to skip" option (WelcomeScreen's
+    # own Static label), not a typo - shouldn't get the unrecognized-race
+    # warning above.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings == []
 
 
 async def test_join_generates_a_random_origin_regardless_of_class():
@@ -1167,6 +1256,33 @@ async def test_owner_character_view_handles_a_blank_or_unrecognized_class():
     view = _owner_character_view(session.characters[player_id], engine._rules)
     assert view["class_features"] == []
     assert view["skill_proficiencies"] == []
+
+
+async def test_owner_character_view_includes_racial_traits():
+    # Real 5e SRD racial trait text (server/rules/srd.json's "races" table)
+    # - existed as data but was never attached to any payload before the
+    # race system, the same gap class_features closed for classes.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Elowen", "character_class": "wizard", "race": "elf"},
+    ))
+
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert "Fey Ancestry" in " ".join(view["racial_traits"])
+
+
+async def test_owner_character_view_handles_a_blank_or_unrecognized_race():
+    # No race_entry in the SRD dataset for a character who never picked
+    # one - the same graceful "not present isn't an error" fallback
+    # class_features already has for a blank/unrecognized class.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["racial_traits"] == []
 
 
 async def test_state_sync_sends_owner_view_with_class_features_to_the_owner_only():
@@ -4030,6 +4146,20 @@ async def test_public_character_view_includes_dying_and_dead():
     view = _public_character_view(session.characters[player_id])
     assert view["dying"] is True
     assert view["dead"] is False
+
+
+async def test_public_character_view_includes_race():
+    # Race is the same "visible fluff, not hidden bookkeeping" treatment
+    # class already gets - another player at the table would see it.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Rook", "character_class": "fighter", "race": "dwarf"},
+    ))
+
+    view = _public_character_view(session.characters[player_id])
+    assert view["race"] == "Dwarf"
 
 
 async def test_player_action_is_rejected_while_dying():

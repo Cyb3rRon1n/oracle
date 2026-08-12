@@ -358,6 +358,21 @@ def _generate_stats(character_class: str, stat_priority: tuple[str, ...] | None 
     return dict(zip(priority, STANDARD_ARRAY))
 
 
+def _apply_race_bonus(stats: dict[str, int], race_entry: dict | None) -> dict[str, int]:
+    """Applies a race's real ability_score_increase (server/rules/srd.json,
+    e.g. dwarf's +2 con) additively on top of the class-priority Standard
+    Array assignment above - real 5e stacks a racial bonus on whatever base
+    array a class/priority produced, it never replaces or reorders it. A
+    no-op when stats is empty (a blank/unrecognized class - see
+    build_starting_character, which never has stats to add a bonus onto)
+    or race_entry is None (blank/unrecognized race), the same graceful-miss
+    convention every other name-based SRD lookup here already follows."""
+    if not stats or not race_entry:
+        return stats
+    bonus = race_entry.get("ability_score_increase") or {}
+    return {key: value + bonus.get(key, 0) for key, value in stats.items()}
+
+
 def _parse_armor_ac(ac_text: str) -> tuple[int, int | None, bool]:
     """Parses a real SRD armor entry's own `ac` field into
     (base, dex_cap, heavy). Real 5e has three distinct shapes, all present
@@ -468,6 +483,11 @@ def _public_character_view(character: CharacterSheet) -> dict:
         "player_id": character.player_id,
         "name": character.name,
         "character_class": character.character_class,
+        # Same "fluff, not bookkeeping" treatment character_class already
+        # gets - another player's race is real, visible-at-the-table
+        # information (like a name or class), not private state the way
+        # inventory/stats/notes are.
+        "race": character.race,
         "hp": character.hp,
         "max_hp": character.max_hp,
         "ac": character.ac,
@@ -506,9 +526,11 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     owner-only payloads, the same "one place defines the shape" reasoning
     _public_character_view already follows for the public side."""
     class_entry = rules.get_entry("class", character.character_class)
+    race_entry = rules.get_entry("race", character.race) if character.race else None
     return {
         **character.model_dump(),
         "class_features": list((class_entry or {}).get("level_1_features", [])),
+        "racial_traits": list((race_entry or {}).get("traits", [])),
         "skill_proficiencies": list(
             CLASS_SKILL_PROFICIENCIES.get(character.character_class.strip().lower(), ())
         ),
@@ -582,6 +604,7 @@ def build_starting_character(
     rules: RulesIndex,
     origin_table: OriginTable | None = None,
     stat_priority: tuple[str, ...] | None = None,
+    race: str = "",
 ) -> CharacterSheet:
     """Builds a real starting sheet from a chosen class via the SRD data,
     or falls back to the original blank hp=10/max_hp=10 sheet for a blank
@@ -596,14 +619,25 @@ def build_starting_character(
     stat_priority is a player's own optional override of which ability
     gets which Standard Array slot (see _generate_stats) - ignored
     entirely for a blank/unrecognized class, the same way the class's own
-    equipment/spells are."""
+    equipment/spells are.
+
+    race is a genuinely independent choice from character_class - a
+    blank/unrecognized value degrades the same graceful way (no ability
+    bonus, no racial traits) rather than blocking creation, and is still
+    recorded even for a classless character, since race and class don't
+    depend on each other."""
     background = random_origin(origin_table or load_default_origin_table()).sheet_summary()
+
+    race_entry = rules.get_entry("race", race) if race else None
+    race_name = race_entry["name"] if race_entry else ""
 
     class_entry = rules.get_entry("class", character_class) if character_class else None
     if class_entry is None:
-        return CharacterSheet(player_id=player_id, name=name, hp=10, max_hp=10, background=background)
+        return CharacterSheet(
+            player_id=player_id, name=name, hp=10, max_hp=10, background=background, race=race_name
+        )
 
-    stats = _generate_stats(character_class, stat_priority)
+    stats = _apply_race_bonus(_generate_stats(character_class, stat_priority), race_entry)
     con_mod = ability_modifier(stats["con"]) if stats else 0
     # Real 5e's level-1 HP formula: hit die max + CON modifier, floored at
     # 1 (a character can't start with 0 or negative HP even from a bad
@@ -621,6 +655,7 @@ def build_starting_character(
         hp=max_hp,
         max_hp=max_hp,
         character_class=class_entry["name"],
+        race=race_name,
         stats=stats,
         inventory=inventory,
         equipped_weapon=equipped_weapon,
@@ -754,6 +789,10 @@ class GameEngine:
         if is_new_character:
             name = envelope.payload.get("player_name", player_id)
             character_class = envelope.payload.get("character_class", "")
+            # Independent of character_class - see build_starting_character's
+            # own docstring for why a blank/unrecognized value degrades
+            # gracefully rather than blocking creation.
+            race = envelope.payload.get("race", "")
             # A player's own optional override of the class's default
             # ability-priority order (see _generate_stats) - a list of the
             # 6 real ability keys, e.g. ["str", "con", "dex", "wis", "cha",
@@ -783,7 +822,7 @@ class GameEngine:
                     )
             if character is None:
                 character = build_starting_character(
-                    player_id, name, character_class, self._rules, self._origin_table, stat_priority
+                    player_id, name, character_class, self._rules, self._origin_table, stat_priority, race
                 )
                 # A real, live-found gap (ROADMAP.md's campaign dry-run,
                 # 2026-08-10): a typo'd/unrecognized class string used to
@@ -801,6 +840,20 @@ class GameEngine:
                             f"'{character_class.strip()}' isn't a recognized class - starting without one "
                             "(no starting stats, HP bonus, or kit). Recognized classes: fighter, wizard, "
                             "rogue, cleric.",
+                            level="warning",
+                        ),
+                    )
+                # Same silent-mistake gap the class warning above closed,
+                # for the same reason - a typo'd/unrecognized race string
+                # otherwise costs a player their ability bonus and racial
+                # traits with no indication anything went wrong.
+                if race.strip() and not character.race:
+                    await self._send_to(
+                        player_id,
+                        self._system_envelope(
+                            f"'{race.strip()}' isn't a recognized race - starting without one "
+                            "(no ability bonus or racial traits). Recognized races: human, elf, dwarf, "
+                            "halfling.",
                             level="warning",
                         ),
                     )

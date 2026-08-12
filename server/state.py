@@ -65,6 +65,15 @@ class CharacterSheet(BaseModel):
     hp: int
     max_hp: int
     character_class: str = ""
+    # A real, deliberately separate concept from character_class - server/
+    # rules/srd.json's own "races" table (server/engine.py's
+    # build_starting_character reads it the same way it already reads
+    # "classes"). Blank means no recognized race was chosen, the same
+    # graceful-miss convention character_class's own blank default already
+    # establishes - no ability bonus, no racial traits, not an error.
+    # Explicitly deferred when the tabbed character sheet shipped
+    # (ROADMAP.md item 7) until a real race system existed to back it.
+    race: str = ""
     stats: dict[str, int] = Field(default_factory=dict)
     inventory: list[str] = Field(default_factory=list)
     # Pointers into inventory (by name), not a separate item store - a

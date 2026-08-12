@@ -415,6 +415,43 @@
       "saving_throws": "Wisdom, Charisma"
     }
   },
+  "races": {
+    "human": {
+      "name": "Human",
+      "ability_score_increase": {"str": 1, "dex": 1, "con": 1, "int": 1, "wis": 1, "cha": 1},
+      "traits": [
+        "Versatile: humans have no single defining trait - just a well-rounded aptitude across every ability."
+      ]
+    },
+    "elf": {
+      "name": "Elf",
+      "ability_score_increase": {"dex": 2},
+      "traits": [
+        "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
+        "Keen Senses: you have proficiency in the Perception skill.",
+        "Fey Ancestry: you have advantage on saving throws against being charmed, and magic can't put you to sleep.",
+        "Trance: elves don't need to sleep. Instead, they meditate deeply for 4 hours a day."
+      ]
+    },
+    "dwarf": {
+      "name": "Dwarf",
+      "ability_score_increase": {"con": 2},
+      "traits": [
+        "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
+        "Dwarven Resilience: you have advantage on saving throws against poison, and resistance against poison damage.",
+        "Stonecunning: whenever you make an Intelligence (History) check related to the origin of stonework, you are considered proficient and add double your proficiency bonus."
+      ]
+    },
+    "halfling": {
+      "name": "Halfling",
+      "ability_score_increase": {"dex": 2},
+      "traits": [
+        "Lucky: when you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
+        "Brave: you have advantage on saving throws against being frightened.",
+        "Halfling Nimbleness: you can move through the space of any creature that is of a size larger than yours."
+      ]
+    }
+  },
   "equipment": {
     "longsword": {
       "name": "Longsword",

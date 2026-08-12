@@ -32,6 +32,22 @@ from .transport import ClientTransport
 # validated here.
 CHARACTER_CLASSES = ["fighter", "wizard", "rogue", "cleric"]
 
+# A guided race picker (owner asked for something closer to the class-
+# recommendation survey's UX, not a plain typed field) - unlike the class
+# survey, this isn't an inferred recommendation from playstyle questions
+# (race in 5e is mostly flavor, not a differentiated mechanical choice the
+# way class is), so it's a single direct pick with a one-line teaser per
+# option rather than a multi-question quiz, and there's no separate free-
+# text race field alongside it the way #class-input backs the class
+# survey - WelcomeScreen._join reads whichever #race-select RadioButton is
+# pressed (if any) directly at submit time, see below.
+RACE_OPTIONS: list[tuple[str, str]] = [
+    ("Human - versatile, +1 to every ability", "human"),
+    ("Elf - keen senses, fey ancestry, +2 DEX", "elf"),
+    ("Dwarf - resilient, darkvision, +2 CON", "dwarf"),
+    ("Halfling - lucky, brave, +2 DEX", "halfling"),
+]
+
 # Mirrors server/state.py's ABILITY_KEYS - the six real SRD ability scores,
 # in their conventional order. Used only to validate a player's own typed
 # stat-priority override (WelcomeScreen's #stat-priority-input, below)
@@ -105,6 +121,16 @@ def _recommend_class(tally: dict[str, int]) -> str | None:
     if not any(tally.values()):
         return None
     return max(CHARACTER_CLASSES, key=lambda c: tally.get(c, 0))
+
+
+def _race_class_label(character_class: str | None, race: str | None) -> str:
+    """Combines race + class into one label ("Dwarf Fighter") for the
+    overview header and party list - the same "visible fluff, not hidden
+    info" treatment class already got before race existed. Either half may
+    be blank (a skipped/unrecognized choice) - falls back to whichever
+    half is actually present, "" when neither is, so callers can just
+    `if label:` the result the same way they already check character_class."""
+    return " ".join(part for part in (race, character_class) if part)
 
 
 def _load_character_file(path: str) -> tuple[dict | None, str | None]:
@@ -239,17 +265,18 @@ class CharacterSheetPanel(Vertical):
 
     def render_others(self, others: dict) -> None:
         # others is keyed by player_id -> that player's public view
-        # (name/character_class/hp/max_hp/conditions - never inventory,
-        # same boundary the server's own public/private split enforces).
+        # (name/character_class/race/hp/max_hp/conditions - never
+        # inventory, same boundary the server's own public/private split
+        # enforces).
         self._others = others
         self._refresh_display()
 
     def _overview_text(self) -> str:
         character = self._character
         name_line = f"[b]{character.get('name', '?')}[/b]"
-        character_class = character.get("character_class")
-        if character_class:
-            name_line += f" ({character_class})"
+        race_class_label = _race_class_label(character.get("character_class"), character.get("race"))
+        if race_class_label:
+            name_line += f" ({race_class_label})"
         # "Lv N" alongside class - the same header real sheets put level in
         # (D&D Beyond shows it right next to class on the summary panel).
         # level defaults to 1 rather than being omitted when absent, since
@@ -396,6 +423,16 @@ class CharacterSheetPanel(Vertical):
         if background:
             lines.append("[b]Background[/b]")
             lines.append(background)
+        # racial_traits is owner-only, added by server/engine.py's
+        # _owner_character_view the same way class_features is (just below)
+        # - real SRD racial trait text (server/rules/srd.json's "races"
+        # table), empty for a character with no recognized race (the
+        # default for every character predating this feature, or one who
+        # skipped the race picker at creation).
+        racial_traits = character.get("racial_traits") or []
+        if racial_traits:
+            lines.append("[b]Racial Traits[/b]")
+            lines.extend(f"- {trait}" for trait in racial_traits)
         # class_features is owner-only, added by server/engine.py's
         # _owner_character_view (ROADMAP.md item 7) - real SRD data
         # (server/rules/srd.json's level_1_features) that existed all
@@ -534,9 +571,9 @@ class CharacterSheetPanel(Vertical):
     @classmethod
     def _other_player_line(cls, other: dict) -> str:
         line = f"- {other.get('name', '?')}"
-        character_class = other.get("character_class")
-        if character_class:
-            line += f" ({character_class})"
+        race_class_label = _race_class_label(other.get("character_class"), other.get("race"))
+        if race_class_label:
+            line += f" ({race_class_label})"
         line += f" Lv{other.get('level', 1)}"
         hp, max_hp = other.get("hp"), other.get("max_hp")
         # A shorter bar than the main sheet's own - a party glance is meant
@@ -622,13 +659,29 @@ class WelcomeScreen(Screen):
     visible region entirely). */
     #survey-toggle { border: none; height: 1; min-height: 1; padding: 0; margin-bottom: 0; }
     #class-survey RadioSet { margin-bottom: 0; }
+    /* Same compact/borderless treatment as #survey-toggle/#class-survey
+    above, same reason - this screen's row budget at a standard 80x24
+    terminal has no room to spare for another full-height Button/RadioSet. */
+    #race-toggle { border: none; height: 1; min-height: 1; padding: 0; margin-bottom: 0; }
+    #race-picker RadioSet { margin-bottom: 0; }
     /* Same compact fix as #survey-toggle above, same reason - Input also
     defaults to border: tall (2 extra rows), and this screen's row budget
     at a standard 80x24 terminal has no room left to spare for a new
     field - margin-bottom: 0 too, since #mode-select below now claims the
     single spare row this screen's layout can actually afford. */
-    #stat-priority-input { border: none; height: 1; min-height: 1; padding: 0 1; margin-bottom: 0; }
-    /* One less row than every other RadioSet on this screen - the new
+    #stat-priority-input { border: none; height: 1; min-height: 1; padding: 0 1; }
+    /* #welcome-box #stat-priority-input, not the bare #stat-priority-input
+    above - a real, previously-latent specificity bug found while adding
+    the race picker: #welcome-box Input's own margin-bottom:1 (ID+type,
+    higher specificity than a lone ID) was silently winning over a bare
+    #stat-priority-input { margin-bottom: 0 } override, wasting exactly
+    the one row this screen has never actually had to spare - #join was
+    already sitting flush against this viewport's very last visible row
+    (measured directly via widget .region) before the race picker below
+    added anything at all. #mode-select's own override just below already
+    uses this same two-ID form, which is what caught the inconsistency. */
+    #welcome-box #stat-priority-input { margin-bottom: 0; }
+    /* One less row than every other RadioSet on this screen - the
     #stat-priority-input field above needs the row back, and #join is
     otherwise pushed one row past the visible screen behind the Footer
     (measured directly via widget .region, the same way the #survey-toggle
@@ -686,6 +739,21 @@ class WelcomeScreen(Screen):
                             for label, class_name in options:
                                 yield RadioButton(label, id=f"survey-q{qi}-{class_name}")
                     yield Static("", id="survey-result")
+                # No separate #race-input field - this screen's row budget
+                # has no spare row for a second always-visible free-text
+                # field on top of #class-input's own (see the
+                # #stat-priority-input specificity-fix comment above for
+                # exactly how tight that budget already is). Race is picker-
+                # only: a single toggle row reveals #race-picker below, and
+                # WelcomeScreen._join reads whichever RadioButton ends up
+                # pressed there directly, the same way _update_class_
+                # recommendation reads the (also possibly-hidden)
+                # #survey-q* RadioSets' own pressed state.
+                yield Button("Not sure? Browse races", id="race-toggle")
+                with Vertical(id="race-picker"):
+                    with RadioSet(id="race-select"):
+                        for label, race_name in RACE_OPTIONS:
+                            yield RadioButton(label, id=f"race-select-{race_name}")
                 # Optional, independent of the class recommendation above -
                 # the "broader stats survey" from the original brainstorm:
                 # previously stats were 100% derived from class with no way
@@ -724,12 +792,16 @@ class WelcomeScreen(Screen):
         self.query_one("#session-input", Input).display = False  # Solo is the default selection
         if self.app.is_new_character:
             self.query_one("#class-survey", Vertical).display = False
+            self.query_one("#race-picker", Vertical).display = False
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         if event.radio_set.id == "mode-select":
             self.query_one("#session-input", Input).display = event.pressed.id == "mode-multiplayer"
         elif event.radio_set.id and event.radio_set.id.startswith("survey-q"):
             self._update_class_recommendation()
+        # race-select needs no handler here - unlike the class survey, it
+        # has no pre-filled text field to keep in sync; _join() reads its
+        # pressed_button directly at submit time instead (see below).
 
     def _update_class_recommendation(self) -> None:
         tally: dict[str, int] = {}
@@ -754,6 +826,9 @@ class WelcomeScreen(Screen):
         elif event.button.id == "survey-toggle":
             survey = self.query_one("#class-survey", Vertical)
             survey.display = not survey.display
+        elif event.button.id == "race-toggle":
+            picker = self.query_one("#race-picker", Vertical)
+            picker.display = not picker.display
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         await self._join()
@@ -779,10 +854,16 @@ class WelcomeScreen(Screen):
             # stale turn order - the actual bug this mode exists to avoid.
             session_id = f"solo-{self.app.player_id}"
         character_class = ""
+        race = ""
         imported_character = None
         stat_priority = None
         if self.app.is_new_character:
             character_class = self.query_one("#class-input", Input).value.strip()
+            # No separate free-text race field (see #race-picker's own
+            # comment in compose()) - whichever RadioButton the player
+            # picked, if any, wins; unanswered (the default) sends "".
+            race_pressed = self.query_one("#race-select", RadioSet).pressed_button
+            race = race_pressed.id.rsplit("-", 1)[-1] if race_pressed and race_pressed.id else ""
             raw_priority = self.query_one("#stat-priority-input", Input).value.strip()
             if raw_priority:
                 stat_priority = [ability.strip().lower() for ability in raw_priority.split(",") if ability.strip()]
@@ -795,7 +876,9 @@ class WelcomeScreen(Screen):
                     return
 
         try:
-            await self.app.connect_and_join(name, session_id, character_class, imported_character, stat_priority)
+            await self.app.connect_and_join(
+                name, session_id, character_class, imported_character, stat_priority, race
+            )
         except OSError as exc:
             join_button.disabled = False
             self.query_one("#welcome-error", Static).update(f"[red]Couldn't connect: {exc}[/red]")
@@ -1071,13 +1154,14 @@ class DungeonMasterApp(App):
         character_class: str,
         imported_character: dict | None = None,
         stat_priority: list[str] | None = None,
+        race: str = "",
     ) -> None:
         self.transport = ClientTransport(self._uri, session_id, self._player_id)
         await self.transport.connect()
         if not self._listening:
             self._listening = True
             asyncio.create_task(self._listen())
-        payload = {"player_name": player_name, "character_class": character_class}
+        payload = {"player_name": player_name, "character_class": character_class, "race": race}
         if imported_character is not None:
             payload["imported_character"] = imported_character
         if stat_priority is not None:
