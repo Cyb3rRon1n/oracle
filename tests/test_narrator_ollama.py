@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from server.narrator_ollama import (
+    MISSED_CHANGE_SCHEMA,
     OLLAMA_TOOLS,
     STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA,
     STRUCTURED_OUTPUT_ROLL_SCHEMA,
@@ -808,3 +809,63 @@ def test_create_ollama_narrator_respects_explicit_world_updates_opt_in(monkeypat
 def test_create_ollama_narrator_world_updates_opt_in_is_case_insensitive(monkeypatch):
     monkeypatch.setenv("OLLAMA_WORLD_UPDATES", "True")
     assert create_ollama_narrator()._world_updates is True
+
+
+async def test_check_missed_change_applies_a_real_correction():
+    narrator = make_structured_narrator()
+    response = FakeChatResponse(
+        json.dumps({"mechanical_change": True, "target": "bandit", "hp_delta": -6})
+    )
+    narrator._client = FakeOllamaClient([response])
+
+    received_updates = []
+
+    def apply_update(update: dict) -> str:
+        received_updates.append(update)
+        return "Applied."
+
+    corrected = await narrator.check_missed_change("Your blade cuts deep into the bandit.", "{}", apply_update)
+
+    assert corrected is True
+    assert received_updates == [{"target": "bandit", "hp_delta": -6}]
+    call = narrator._client.calls[0]
+    assert call["format"] == MISSED_CHANGE_SCHEMA
+    assert "narration" not in call["format"]["properties"]
+
+
+async def test_check_missed_change_returns_false_when_the_dm_declines_to_correct():
+    narrator = make_structured_narrator()
+    response = FakeChatResponse(json.dumps({"mechanical_change": False}))
+    narrator._client = FakeOllamaClient([response])
+
+    def unexpected_apply_update(update: dict) -> str:
+        raise AssertionError("should never be called - the DM found nothing to correct")
+
+    corrected = await narrator.check_missed_change("You walk into the empty room.", "{}", unexpected_apply_update)
+
+    assert corrected is False
+
+
+async def test_check_missed_change_returns_false_on_malformed_json():
+    narrator = make_structured_narrator()
+    narrator._client = FakeOllamaClient([FakeChatResponse("not valid json")])
+
+    def unexpected_apply_update(update: dict) -> str:
+        raise AssertionError("should never be called on a parse failure")
+
+    corrected = await narrator.check_missed_change("Something happened.", "{}", unexpected_apply_update)
+
+    assert corrected is False
+
+
+async def test_check_missed_change_is_a_no_op_for_the_legacy_tool_calling_path():
+    # Structured-output only, same "ignored entirely when structured_output
+    # is False" precedent request_roll/world_updates already have.
+    narrator = make_narrator()  # structured_output=False
+
+    def unexpected_apply_update(update: dict) -> str:
+        raise AssertionError("should never be called on the legacy tool-calling path")
+
+    corrected = await narrator.check_missed_change("Something happened.", "{}", unexpected_apply_update)
+
+    assert corrected is False

@@ -471,6 +471,26 @@ class NarratorBackend(Protocol):
         world-tracking to offer.
         """
 
+    async def check_missed_change(
+        self, narration: str, character_summary: str, apply_update: ApplyUpdate
+    ) -> bool:
+        """Optional - not every backend needs to implement this (checked via
+        getattr at the call site, server/engine.py's `_narrate_and_apply`).
+
+        A narrower follow-up check, not a full turn: called only when
+        `POSSIBLE_UNTRACKED_CHANGE_PATTERN` matches a turn's narration with
+        no real `apply_update` call already made this turn (server/
+        engine.py) - gives the DM one real chance to self-correct with a
+        genuine tool call before falling back to the passive "may be out
+        of sync" warning, rather than trying to parse a specific number out
+        of `narration`'s own prose (this project's own "the engine/model
+        decides via a real mechanism, never guessed from text" convention,
+        applied here the same way it already governs ability scores, XP,
+        and damage rolls elsewhere). Returns whether a correction was
+        actually applied - server/engine.py branches its own follow-up
+        messaging on this.
+        """
+
 
 class AnthropicNarrator:
     def __init__(
@@ -541,6 +561,42 @@ class AnthropicNarrator:
             if not tool_results:
                 return
             messages.append({"role": "user", "content": tool_results})
+
+    async def check_missed_change(
+        self, narration: str, character_summary: str, apply_update: ApplyUpdate
+    ) -> bool:
+        """See NarratorBackend.check_missed_change's own docstring for the
+        full "why" - a real, separate, non-streamed call, not part of
+        narrate()'s own tool-round loop above. Only offers update_character
+        (not request_roll/lookup_rule/update_world) - this is a correction
+        check on narration that already happened, not a new narrative turn,
+        so nothing else is relevant. `max_tokens` is small since the only
+        useful response is a tool call or nothing; a bare text reply (the
+        model deciding not to correct anything) is deliberately discarded,
+        never shown to the player - the real narration already streamed."""
+        prompt = (
+            f"Character:\n{character_summary}\n\n"
+            f"You just narrated this, but didn't call update_character:\n{narration}\n\n"
+            "Review it: if it describes a real change to a character's or NPC's hp, "
+            "inventory, or conditions that should have been recorded, call "
+            "update_character now with the correct target and fields. If nothing "
+            "actually needs correcting, don't call anything."
+        )
+        response = await self._client.messages.create(
+            model=self._model,
+            max_tokens=256,
+            system=self._system_prompt,
+            tools=[UPDATE_CHARACTER_TOOL],
+            messages=[{"role": "user", "content": prompt}],
+        )
+        if response.stop_reason != "tool_use":
+            return False
+        corrected = False
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "update_character":
+                apply_update(block.input)
+                corrected = True
+        return corrected
 
     def _run_tool(
         self,
