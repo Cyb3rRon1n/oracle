@@ -1826,6 +1826,17 @@ async def test_request_roll_natural_20_attack_is_a_critical_hit():
     assert results[-1][2]["critical"] is True
     assert dm.tool_result is not None and "CRITICAL HIT!" in dm.tool_result
 
+    # The broadcast plain-text log line (GameEngine._dice_log_text) must
+    # show the same critical callout the DM's own tool_result does - a
+    # real, previously-latent gap: _dice_log_text used to be a second,
+    # independent label-builder that never carried this at all, found and
+    # fixed while unifying it with request_roll's own copy.
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "CRITICAL HIT!" in dice_logs[-1][2]["text"]
+
 
 async def test_request_roll_natural_20_on_a_check_is_not_a_critical_hit():
     # Real 5e's critical-hit rule only applies to attack rolls - a great
@@ -2213,6 +2224,17 @@ async def test_request_roll_save_adds_proficiency_bonus_when_class_is_proficient
     assert payload["proficient"] is True
     assert payload["proficiency_bonus"] == 2  # level 1
     assert payload["result"] == payload["rolls"][0] + 2 + 2  # both the CON mod and proficiency
+
+    # The broadcast plain-text log line must show the same "+N proficiency"
+    # tag the dice_result payload already carries - a real, previously-
+    # latent gap: _dice_log_text's own roll_kind_label never had this
+    # save-proficiency special case at all, found and fixed while
+    # unifying it with request_roll's own copy (which already had it).
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "(save, +2 proficiency)" in dice_logs[-1][2]["text"]
 
 
 async def test_request_roll_save_no_bonus_when_class_not_proficient():
