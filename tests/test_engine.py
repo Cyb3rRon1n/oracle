@@ -278,6 +278,19 @@ def test_build_starting_character_applies_race_ability_bonus_and_display_name():
     assert sheet.max_hp == 13
 
 
+def test_build_starting_character_applies_a_subrace_combined_ability_bonus():
+    # hill_dwarf's own ability_score_increase ({"con": 2, "wis": 1}) is
+    # already the combined base-race-plus-subrace total, not something
+    # server/engine.py stacks itself - fighter's con is 14 before any
+    # race bonus, wis is 12 (see the class-kit test above).
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules, race="hill_dwarf")
+
+    assert sheet.race == "Hill Dwarf"
+    assert sheet.stats["con"] == 16  # 14 + 2
+    assert sheet.stats["wis"] == 13  # 12 + 1
+
+
 @pytest.mark.parametrize("race", ["", "gnome", "not-a-real-race"])
 def test_build_starting_character_falls_back_on_blank_or_unknown_race(race):
     # Same graceful-miss convention build_starting_character's own class
@@ -1317,6 +1330,24 @@ async def test_owner_character_view_includes_racial_traits():
 
     view = _owner_character_view(session.characters[player_id], engine._rules)
     assert "Fey Ancestry" in " ".join(view["racial_traits"])
+
+
+async def test_owner_character_view_includes_subrace_traits_combined_with_base_race():
+    # high_elf's own traits already include elf's base traits (Darkvision,
+    # Fey Ancestry, ...) plus its own subrace-specific ones (Cantrip,
+    # Elf Weapon Training) - one self-contained entry, not two merged at
+    # request time.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Elowen", "character_class": "wizard", "race": "high_elf"},
+    ))
+
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    traits_text = " ".join(view["racial_traits"])
+    assert "Fey Ancestry" in traits_text  # base elf trait
+    assert "Cantrip" in traits_text  # high elf's own subrace trait
 
 
 async def test_owner_character_view_handles_a_blank_or_unrecognized_race():

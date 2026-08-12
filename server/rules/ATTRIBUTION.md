@@ -65,15 +65,18 @@ would have been a real, known correctness bug (the exact trap this file's
 own "Deliberately did not add heavier armor" note, prior to this
 expansion, existed specifically to avoid).
 
-## Race coverage (2026-08-11)
+## Race coverage (2026-08-11, subraces added the same day)
 
 `races` covers the SRD's four core playable races - Human, Elf, Dwarf,
 Halfling - each with its own real `ability_score_increase` and `traits`
-text. **Deliberately no subraces** (Hill vs. Mountain Dwarf, High vs. Wood
-Elf, etc.) - named and scoped out for a later pass rather than half-built,
-the same discipline this file's own equipment/shield sections already
-followed for their own deferred pieces.
+text, plus the real SRD subrace for each race that has one: High Elf and
+Wood Elf, Hill Dwarf and Mountain Dwarf, Lightfoot Halfling and Stout
+Halfling (Human has no subrace in the SRD - a real asymmetry, not a gap).
+Each subrace entry is self-contained - its `ability_score_increase`/
+`traits` already include the base race's own bonus and traits combined
+with the subrace's, rather than requiring `server/engine.py` to stack two
+separate lookups at character-creation time.
 
 Expanding coverage further (more monsters, spells, full class
-progressions, race subraces) is future work; any addition should stay
-within SRD-licensed content.
+progressions) is future work; any addition should stay within
+SRD-licensed content.

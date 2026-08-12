@@ -41,11 +41,28 @@ CHARACTER_CLASSES = ["fighter", "wizard", "rogue", "cleric"]
 # text race field alongside it the way #class-input backs the class
 # survey - WelcomeScreen._join reads whichever #race-select RadioButton is
 # pressed (if any) directly at submit time, see below.
+#
+# Each base race is immediately followed by its own real SRD subraces
+# (ROADMAP.md item 13's own explicitly-deferred candidate) - Dwarf/Elf/
+# Halfling each have two, Human has none (real 5e's own asymmetry, not an
+# oversight). Deliberately additive, not RAW-strict: real 5e requires
+# picking a subrace wherever one exists, but the plain base entry is kept
+# selectable too rather than removed, so an existing "Dwarf" pick from
+# before subraces existed keeps meaning exactly what it always did - the
+# same "recommend a richer choice, never force a re-pick" tone this
+# project's other optional/overridable choices (the class survey, the
+# stat-priority override) already have.
 RACE_OPTIONS: list[tuple[str, str]] = [
     ("Human - versatile, +1 to every ability", "human"),
     ("Elf - keen senses, fey ancestry, +2 DEX", "elf"),
+    ("Elf (High) - elf traits, +1 INT, a wizard cantrip", "high_elf"),
+    ("Elf (Wood) - elf traits, +1 WIS, faster and stealthier", "wood_elf"),
     ("Dwarf - resilient, darkvision, +2 CON", "dwarf"),
+    ("Dwarf (Hill) - dwarf traits, +1 WIS, extra HP per level", "hill_dwarf"),
+    ("Dwarf (Mountain) - dwarf traits, +2 STR, armor training", "mountain_dwarf"),
     ("Halfling - lucky, brave, +2 DEX", "halfling"),
+    ("Halfling (Lightfoot) - halfling traits, +1 CHA, easier to hide", "lightfoot_halfling"),
+    ("Halfling (Stout) - halfling traits, +1 CON, poison resistance", "stout_halfling"),
 ]
 
 # Mirrors server/state.py's ABILITY_KEYS - the six real SRD ability scores,

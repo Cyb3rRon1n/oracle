@@ -329,6 +329,30 @@ async def test_picking_a_race_sends_it_on_join():
             )
 
 
+async def test_picking_a_subrace_sends_its_own_underscored_slug():
+    # A real regression risk: #race-select's id is f"race-select-{name}"
+    # and _join() recovers name via id.rsplit("-", 1)[-1] - subrace slugs
+    # use underscores (hill_dwarf), not hyphens, so the split still lands
+    # on the right boundary. Worth a dedicated test since a hyphenated
+    # slug would have broken this exact parsing.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test(size=(80, 60)) as pilot:
+            await pilot.click("#race-toggle")
+            await pilot.pause()
+            await pilot.click("#race-select-hill_dwarf")
+            await pilot.pause()
+
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == (
+                "join_session", {"player_name": "Thrain", "character_class": "", "race": "hill_dwarf"}
+            )
+
+
 async def test_changing_the_race_pick_sends_the_latest_choice():
     # A RadioSet only ever has one real pressed button at a time - picking
     # a second option after a first must fully replace it, not add to it.
