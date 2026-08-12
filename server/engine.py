@@ -1756,6 +1756,29 @@ class GameEngine:
             await self._broadcast(self._log_envelope("narration", chunk, done=False))
         await self._broadcast(self._log_envelope("narration", "", done=True))
 
+        # A real chance for the DM to self-correct, not just a passive
+        # warning - see check_for_missed_changes's own comment further
+        # below for the full "why". Deliberately placed here, before the
+        # sheet_changed/npcs_touched/outcomes broadcasts below, rather than
+        # alongside the warning itself: a correction applied via this call
+        # mutates that same nonlocal state through apply_update exactly
+        # like a normal in-turn tool call would, so it needs to happen
+        # before those broadcasts run to be picked up by them, not after.
+        # getattr, not a required Protocol method - most test doubles
+        # (StubDM and friends, tests/test_engine.py) have no need to
+        # implement this, the same "optional capability" convention this
+        # project already uses for request_roll/update_world being None.
+        missed_change_corrected = False
+        if (
+            check_for_missed_changes
+            and not sheet_changed
+            and not npcs_touched
+            and POSSIBLE_UNTRACKED_CHANGE_PATTERN.search(buffer)
+        ):
+            check_missed_change = getattr(self._dm, "check_missed_change", None)
+            if check_missed_change is not None:
+                missed_change_corrected = await check_missed_change(buffer, character.model_dump_json(), apply_update)
+
         for roll in rolls_made:
             await self._broadcast(self._log_envelope("dice", self._dice_log_text(character.name, roll)))
             await self._broadcast(self._dice_result_envelope(player_id, roll))
@@ -1817,7 +1840,25 @@ class GameEngine:
         if world_changed:
             await self._broadcast(self._world_update_envelope())
 
-        if (
+        if missed_change_corrected:
+            # A real correction actually landed above (via check_missed_change),
+            # not just a passive flag - lets the player know the sheet was
+            # double-checked and fixed, rather than either staying silent
+            # or still showing the "might be out of sync" warning below,
+            # which the sheet_changed/npcs_touched state a real correction
+            # just set would suppress anyway (see that condition below).
+            # Deliberately not advisory=True - the client renders that flag
+            # with a yellow warning triangle (client/app.py), the right
+            # treatment for "you might want to double check" but wrong for
+            # a real confirmation that the sheet's already been fixed.
+            await self._send_to(
+                player_id,
+                self._system_envelope(
+                    "The DM double-checked that last narration and updated the sheet to match.",
+                    level="info",
+                ),
+            )
+        elif (
             check_for_missed_changes
             and not sheet_changed
             and not npcs_touched

@@ -115,6 +115,25 @@ STRUCTURED_OUTPUT_SCHEMA = {
     "required": ["narration", "mechanical_change"],
 }
 
+# _OUTCOME_PROPERTIES minus `narration` - the missed-change follow-up check
+# (OllamaNarrator.check_missed_change, below) reviews narration that
+# already happened and streamed to the player; there's no new narration
+# to write, so unlike STRUCTURED_OUTPUT_SCHEMA above, `narration` isn't
+# even offered as a field, rather than requiring the model to fill in a
+# throwaway value that would never be shown to anyone.
+MISSED_CHANGE_SCHEMA = {
+    "type": "object",
+    "properties": {key: value for key, value in _OUTCOME_PROPERTIES.items() if key != "narration"},
+    "required": ["mechanical_change"],
+}
+
+MISSED_CHANGE_SYSTEM_PROMPT = """You are the Dungeon Master reviewing your own narration from a moment
+ago, given below, which did not call update_character. Respond with a single JSON object matching
+the given schema. Set `mechanical_change` to true only if that narration describes a real change to
+a character's or NPC's hp, inventory, or conditions that should have been recorded, and fill in
+`target`/`hp_delta`/`add_condition` accordingly. Otherwise set `mechanical_change` to false and
+leave the other fields at their defaults."""
+
 # Extends _OUTCOME_PROPERTIES with a second, independent decision: does this
 # turn need a real dice roll before the outcome can even be narrated? (See
 # _narrate_structured's two-pass docstring for the full reasoning.) A model
@@ -502,6 +521,42 @@ class OllamaNarrator:
                 history, character_summary, action_text, apply_update, request_roll, update_world, world_summary
             )
         return self._narrate_tool_calling(history, character_summary, action_text, apply_update)
+
+    async def check_missed_change(
+        self, narration: str, character_summary: str, apply_update: ApplyUpdate
+    ) -> bool:
+        """See NarratorBackend.check_missed_change (server/narrator.py) for
+        the full "why". Structured-output only - the legacy native tool-
+        calling path has no equivalent, matching request_roll/world_updates'
+        own existing "ignored entirely when structured_output is False"
+        precedent (see __init__ above). Reuses MISSED_CHANGE_SCHEMA (a
+        narration-less variant of STRUCTURED_OUTPUT_SCHEMA) via one
+        constrained, non-streamed call - the same mechanism a normal turn
+        already uses, just with a correction-focused prompt and no
+        narration field to write."""
+        if not self._structured_output:
+            return False
+        prompt = f"Character:\n{character_summary}\n\nYour narration:\n{narration}"
+        messages = [
+            {"role": "system", "content": MISSED_CHANGE_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        response = await self._client.chat(
+            model=self._model, messages=messages, format=MISSED_CHANGE_SCHEMA, stream=False
+        )
+        try:
+            data = json.loads(response.message.content or "")
+        except json.JSONDecodeError:
+            return False
+        if not data.get("mechanical_change"):
+            return False
+        update = {"target": data.get("target") or "self"}
+        if data.get("hp_delta"):
+            update["hp_delta"] = data["hp_delta"]
+        if data.get("add_condition"):
+            update["add_condition"] = data["add_condition"]
+        apply_update(update)
+        return True
 
     async def _narrate_structured(
         self,

@@ -3699,12 +3699,139 @@ class NarratesFixedTextDM:
         yield self._text
 
 
+class NarratesThenSelfCorrectsDM(NarratesFixedTextDM):
+    """Narrates the given fixed text with no tool call this turn (like
+    NarratesFixedTextDM with update=None), but implements
+    check_missed_change - simulating a real backend that gets a second
+    chance to self-correct and takes it (or, if correction is None,
+    reviews and finds nothing to fix)."""
+
+    def __init__(self, text: str, correction: dict | None):
+        super().__init__(text)
+        self._correction = correction
+        self.check_missed_change_calls: list[tuple] = []
+
+    async def check_missed_change(self, narration, character_summary, apply_update):
+        self.check_missed_change_calls.append((narration, character_summary))
+        if self._correction is None:
+            return False
+        apply_update(self._correction)
+        return True
+
+
 def _missed_change_warnings(received: list[tuple], player_id: str) -> list[tuple]:
     return [
         r for r in received
         if r[0] == "send_to" and r[1] == player_id and r[2] == "system_message"
         and "out of sync" in r[3]["text"]
     ]
+
+
+def _missed_change_corrections(received: list[tuple], player_id: str) -> list[tuple]:
+    return [
+        r for r in received
+        if r[0] == "send_to" and r[1] == player_id and r[2] == "system_message"
+        and "double-checked" in r[3]["text"]
+    ]
+
+
+async def test_missed_change_self_correction_applies_and_notifies_instead_of_warning():
+    # The backend gets a real second chance (NarratorBackend.check_missed_change,
+    # server/narrator.py) rather than the player only ever seeing a passive
+    # warning - a real correction here should both update the sheet through
+    # the normal apply_update path and replace the warning with a positive
+    # confirmation.
+    dm = NarratesThenSelfCorrectsDM(
+        "Your blade finds its mark - the bandit staggers, bleeding, and falls dead.",
+        correction={"target": "bandit", "max_hp": 7, "hp_delta": -7},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+
+    assert dm.check_missed_change_calls, "the backend should have been given a chance to self-correct"
+    assert "bandit" in session.npcs
+    assert session.npcs["bandit"].hp == 0
+
+    assert not _missed_change_warnings(received, player_id), (
+        "a real correction should replace the passive warning, not sit alongside it"
+    )
+    assert _missed_change_corrections(received, player_id)
+
+    npc_updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert npc_updates, "the correction should broadcast the same way a real in-turn tool call would"
+
+
+async def test_missed_change_self_correction_is_not_styled_as_a_warning():
+    # advisory=True renders with a yellow warning-triangle (client/app.py)
+    # - the right treatment for "you might want to double check", wrong
+    # for a real confirmation the sheet's already been fixed.
+    dm = NarratesThenSelfCorrectsDM(
+        "Your blade finds its mark - the bandit staggers, bleeding, and falls dead.",
+        correction={"target": "bandit", "hp_delta": -6},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+
+    correction = _missed_change_corrections(received, player_id)[0]
+    assert not correction[3].get("advisory")
+    assert correction[3]["level"] == "info"
+
+
+async def test_missed_change_self_correction_falls_back_to_warning_when_dm_finds_nothing():
+    # check_missed_change reviewed the narration and genuinely found no
+    # real change to correct - the original passive warning still applies,
+    # the same as if the backend had no self-correction capability at all.
+    dm = NarratesThenSelfCorrectsDM(
+        "Your blade finds its mark - the bandit staggers, bleeding, and falls dead.",
+        correction=None,
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+
+    assert dm.check_missed_change_calls
+    assert _missed_change_warnings(received, player_id)
+    assert not _missed_change_corrections(received, player_id)
+
+
+async def test_missed_change_self_correction_not_attempted_when_a_real_call_already_fired():
+    # check_missed_change should only ever be reached via the same gating
+    # the passive warning already has (not sheet_changed, not npcs_touched) -
+    # a turn that already made a real tool call shouldn't also trigger a
+    # redundant self-correction pass.
+    dm = NarratesThenSelfCorrectsDM(
+        "Your blade finds its mark - the bandit staggers, bleeding, and falls dead.",
+        correction={"target": "bandit", "hp_delta": -1},
+    )
+    dm._update = {"target": "bandit", "max_hp": 7, "hp_delta": -7}
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+
+    assert not dm.check_missed_change_calls
+    assert session.npcs["bandit"].hp == 0  # only the real in-turn call's -7, not also the correction's -1
 
 
 async def test_missed_change_heuristic_warns_when_damage_language_has_no_tool_call():

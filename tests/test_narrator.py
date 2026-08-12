@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from server.narrator import AnthropicNarrator
+from server.narrator import UPDATE_CHARACTER_TOOL, AnthropicNarrator
 from server.rules import RulesIndex
 
 
@@ -52,6 +52,15 @@ class FakeMessagesAPI:
         self.calls.append(kwargs)
         chunks, final_message = self._responses.pop(0)
         return FakeStreamContext(FakeStream(chunks, final_message))
+
+    async def create(self, **kwargs):
+        # check_missed_change (server/narrator.py) uses the real
+        # non-streaming create() call, not stream() - reuses the same
+        # (chunks, final_message) response queue as stream() above, just
+        # ignoring chunks (a bare create() response has none).
+        self.calls.append(kwargs)
+        _, final_message = self._responses.pop(0)
+        return final_message
 
 
 class FakeClient:
@@ -298,3 +307,56 @@ async def test_narrate_stops_after_max_tool_rounds_without_hanging():
 
     assert chunks == []
     assert len(narrator._client.messages.calls) == 4
+
+
+async def test_check_missed_change_applies_a_real_correction():
+    narrator = make_narrator()
+    tool_call = FakeToolUseBlock(id="tu_c", name="update_character", input={"target": "bandit", "hp_delta": -6})
+    final = FakeMessage(stop_reason="tool_use", content=[tool_call])
+    narrator._client = FakeClient([(None, final)])
+
+    received_updates = []
+
+    def apply_update(update: dict) -> str:
+        received_updates.append(update)
+        return "Applied."
+
+    corrected = await narrator.check_missed_change(
+        "Your blade cuts deep into the bandit.", "{}", apply_update
+    )
+
+    assert corrected is True
+    assert received_updates == [{"target": "bandit", "hp_delta": -6}]
+    # A real, separate call - not part of narrate()'s own stream() calls.
+    assert len(narrator._client.messages.calls) == 1
+    call = narrator._client.messages.calls[0]
+    assert call["tools"] == [UPDATE_CHARACTER_TOOL]
+
+
+async def test_check_missed_change_returns_false_when_the_dm_declines_to_correct():
+    narrator = make_narrator()
+    final = FakeMessage(stop_reason="end_turn", content=[])
+    narrator._client = FakeClient([(None, final)])
+
+    def unexpected_apply_update(update: dict) -> str:
+        raise AssertionError("should never be called - the DM found nothing to correct")
+
+    corrected = await narrator.check_missed_change(
+        "You walk into the empty room.", "{}", unexpected_apply_update
+    )
+
+    assert corrected is False
+
+
+async def test_check_missed_change_only_applies_real_update_character_tool_calls():
+    narrator = make_narrator()
+    other_tool_call = FakeToolUseBlock(id="tu_d", name="lookup_rule", input={"category": "monster", "name": "x"})
+    final = FakeMessage(stop_reason="tool_use", content=[other_tool_call])
+    narrator._client = FakeClient([(None, final)])
+
+    def unexpected_apply_update(update: dict) -> str:
+        raise AssertionError("should never be called for a non-update_character tool")
+
+    corrected = await narrator.check_missed_change("Something happened.", "{}", unexpected_apply_update)
+
+    assert corrected is False
