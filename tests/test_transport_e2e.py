@@ -713,7 +713,7 @@ async def test_character_edit_notes_and_inventory_over_a_real_session():
             # A real, direct check on server state - notes never render
             # client-side, so the sheet panel alone can't confirm this half.
             assert session.characters[player_id].notes == "the old man owes me a favor"
-            assert "a shiny rock" in session.characters[player_id].inventory
+            assert session.characters[player_id].find_item("a shiny rock") is not None
     finally:
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -1053,7 +1053,7 @@ async def test_character_import_over_a_real_session_wins_over_typed_name_and_cla
     export_path.write_text(json.dumps({
         "player_id": "stale-id-from-a-previous-session",
         "name": "Torvin Ironheart", "hp": 9, "max_hp": 14, "character_class": "Cleric",
-        "inventory": ["Mace", "Holy Symbol"], "xp": 450, "level": 3,
+        "inventory": [{"name": "Mace"}, {"name": "Holy Symbol"}], "xp": 450, "level": 3,
     }))
 
     session = Session(session_id="e2e-session-6")

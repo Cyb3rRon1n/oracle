@@ -19,7 +19,15 @@ from .lore import (
 from .narrator import NarratorBackend
 from .persistence import SessionStore
 from .rules import RulesIndex, slug
-from .state import ABILITY_KEYS, SKILL_ABILITIES, SPELLCASTING_ABILITY, CharacterSheet, Session, ability_modifier
+from .state import (
+    ABILITY_KEYS,
+    SKILL_ABILITIES,
+    SPELLCASTING_ABILITY,
+    CharacterSheet,
+    InventoryItem,
+    Session,
+    ability_modifier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +412,12 @@ def _parse_armor_ac(ac_text: str) -> tuple[int, int | None, bool]:
 
 
 def _compute_ac(
-    equipped_armor: str | None, dex_modifier: int, rules: RulesIndex, equipped_shield: str | None = None
+    equipped_armor: str | None,
+    dex_modifier: int,
+    rules: RulesIndex,
+    equipped_shield: str | None = None,
+    armor_magic_bonus: int = 0,
+    shield_magic_bonus: int = 0,
 ) -> int:
     """Real 5e's own formula: 10 (unarmored) + DEX modifier, or the
     specific equipped armor's own base AC + a real DEX contribution that
@@ -417,7 +430,15 @@ def _compute_ac(
     actually has equipped affects AC, not everything they're carrying.
     Unrecognized/blank equipped_armor/equipped_shield falls back to no
     contribution, the same graceful-miss convention every other
-    name-based SRD lookup here already follows."""
+    name-based SRD lookup here already follows.
+
+    armor_magic_bonus/shield_magic_bonus are each equipped item's own
+    real InventoryItem.magic_bonus (server/state.py, the structured-items
+    feature) - callers resolve these from the acting character's own
+    inventory (CharacterSheet.find_item) before calling, since this
+    function only ever sees names, not the character. Additive on top of
+    the SRD base stats the same way a shield's ac_bonus already is - a
+    +1 suit of armor is still whatever armor it is, plus 1."""
     base = 10
     dex_cap: int | None = None
     heavy = False
@@ -437,11 +458,11 @@ def _compute_ac(
         shield_entry = rules.get_entry("equipment", equipped_shield)
         if shield_entry is not None:
             shield_bonus = shield_entry.get("ac_bonus") or 0
-    return base + effective_dex + shield_bonus
+    return base + effective_dex + armor_magic_bonus + shield_bonus + shield_magic_bonus
 
 
 def _auto_equip_starting_gear(
-    inventory: list[str], rules: RulesIndex
+    inventory: list[InventoryItem], rules: RulesIndex
 ) -> tuple[str | None, str | None, str | None]:
     """Picks the first weapon-like, armor-like, and shield-like item out of
     a fresh character's starting inventory (CLASS_STARTING_EQUIPMENT) to
@@ -459,15 +480,15 @@ def _auto_equip_starting_gear(
     armor: str | None = None
     shield: str | None = None
     for item in inventory:
-        entry = rules.get_entry("equipment", item)
+        entry = rules.get_entry("equipment", item.name)
         if entry is None:
             continue
         if weapon is None and entry.get("damage"):
-            weapon = item
+            weapon = item.name
         elif armor is None and entry.get("ac"):
-            armor = item
+            armor = item.name
         elif shield is None and entry.get("ac_bonus"):
-            shield = item
+            shield = item.name
     return weapon, armor, shield
 
 
@@ -644,7 +665,10 @@ def build_starting_character(
     # CON score) - the CON-modifier half of the "no ability-score/CON
     # system yet" gap this file used to flag is closed by this line.
     max_hp = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod)
-    inventory = list(CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), []))
+    inventory = [
+        InventoryItem(name=item_name)
+        for item_name in CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), [])
+    ]
     dex_mod = ability_modifier(stats["dex"]) if stats else 0
     known_spells = list(CLASS_KNOWN_SPELLS.get(character_class.strip().lower(), []))
     spell_slots = rules.spell_slots_by_level(1) if known_spells else {}
@@ -1271,11 +1295,24 @@ class GameEngine:
             # other name-based lookup in this file already follows.
             weapon = update.get("weapon")
             damage_type = None
+            weapon_magic_bonus = 0
             if weapon:
                 equipment_entry = self._rules.get_entry("equipment", weapon)
                 weapon_damage = equipment_entry.get("damage") if equipment_entry else None
                 if weapon_damage:
                     notation, _, damage_type = weapon_damage.partition(" ")
+                # The acting character's own carried instance of this
+                # weapon, if any - a magic weapon (InventoryItem.magic_bonus,
+                # server/state.py, set via update_character's own add_item +
+                # magic_bonus) adds to its damage roll, real 5e's own rule.
+                # Only the damage roll, not also the to-hit roll - `weapon`
+                # only ever means "resolve this weapon's real damage die"
+                # (this closure's own comment above), and a to-hit roll
+                # never names a weapon at all today - a real, named gap for
+                # a later pass, not silently promised here.
+                owned_weapon = character.find_item(weapon)
+                if owned_weapon:
+                    weapon_magic_bonus = owned_weapon.magic_bonus
 
             # spell, when given (e.g. "fire_bolt"), resolves a real
             # attack-roll-shaped cantrip/spell the same way weapon resolves
@@ -1403,7 +1440,9 @@ class GameEngine:
 
             try:
                 total, rolls, sides = dice.roll(
-                    notation, extra_modifier=(ability_mod or 0) + proficiency_bonus, disadvantage=disadvantage
+                    notation,
+                    extra_modifier=(ability_mod or 0) + proficiency_bonus + weapon_magic_bonus,
+                    disadvantage=disadvantage,
                 )
             except dice.InvalidDiceNotation as exc:
                 return f"Invalid dice notation: {exc}"
@@ -1436,10 +1475,12 @@ class GameEngine:
                     "spell": spell_entry["name"] if spell_entry and spell_entry.get("attack") else None,
                     "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
                     "critical": critical,
+                    "weapon_magic_bonus": weapon_magic_bonus or None,
                 }
             )
 
             damage_label = f" ({damage_type})" if damage_type else ""
+            weapon_magic_label = f" +{weapon_magic_bonus} magic" if weapon_magic_bonus else ""
             ability_label = f" +{ability_mod} {ability.upper()}" if ability_mod is not None else ""
             skill_label = ""
             if skill:
@@ -1458,7 +1499,10 @@ class GameEngine:
                 roll_kind_label = f" ({roll_kind})" if roll_kind else ""
             disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage else ""
             critical_label = " CRITICAL HIT!" if critical else ""
-            label = damage_label + ability_label + skill_label + spell_label + roll_kind_label + disadvantage_label
+            label = (
+                damage_label + weapon_magic_label + ability_label + skill_label + spell_label
+                + roll_kind_label + disadvantage_label
+            )
             if dc is None:
                 return f"Rolled {notation}{label}: {total} {rolls}.{critical_label}"
             return (
@@ -1800,30 +1844,37 @@ class GameEngine:
         if field == "notes":
             character.notes = str(value)
         elif field == "add_item":
-            character.inventory.append(str(value))
+            # No magic_bonus here - that's the DM tool's own optional field
+            # (apply_update, server/state.py), never player-settable, the
+            # same "engine/DM decides mechanical state" boundary this
+            # handler's own docstring already draws.
+            character.add_item(str(value))
         elif field == "remove_item":
             item = str(value)
-            if item not in character.inventory:
+            if not character.remove_item(item):
                 await self._send_to(
                     player_id, self._system_envelope(f"You don't have '{item}' to remove.", level="warning")
                 )
                 return
-            character.inventory.remove(item)
             # Removing an equipped item unequips it too - a dangling
             # equipped_weapon/equipped_armor/equipped_shield pointing at
             # something no longer owned would be a real, confusing
-            # inconsistency.
-            if character.equipped_weapon == item:
-                character.equipped_weapon = None
-            if character.equipped_armor == item:
-                character.equipped_armor = None
-                ac_changed = True
-            if character.equipped_shield == item:
-                character.equipped_shield = None
-                ac_changed = True
+            # inconsistency. Stack-aware now: only when no more of that
+            # name are left (character.find_item returns None) - removing
+            # one potion from a stack of three shouldn't unequip anything,
+            # but removing your only equipped weapon should.
+            if character.find_item(item) is None:
+                if character.equipped_weapon == item:
+                    character.equipped_weapon = None
+                if character.equipped_armor == item:
+                    character.equipped_armor = None
+                    ac_changed = True
+                if character.equipped_shield == item:
+                    character.equipped_shield = None
+                    ac_changed = True
         elif field == "equip":
             item = str(value)
-            if item not in character.inventory:
+            if character.find_item(item) is None:
                 await self._send_to(
                     player_id, self._system_envelope(f"You don't have '{item}' to equip.", level="warning")
                 )
@@ -1860,9 +1911,13 @@ class GameEngine:
                 return
 
         if ac_changed:
+            armor_item = character.find_item(character.equipped_armor)
+            shield_item = character.find_item(character.equipped_shield)
             character.ac = _compute_ac(
                 character.equipped_armor, character.stat_modifiers.get("dex", 0), self._rules,
                 character.equipped_shield,
+                armor_magic_bonus=armor_item.magic_bonus if armor_item else 0,
+                shield_magic_bonus=shield_item.magic_bonus if shield_item else 0,
             )
 
         # notes/inventory/equipped_weapon/equipped_armor stay private, the
@@ -1995,6 +2050,8 @@ class GameEngine:
         ability_label = f" +{ability_mod} {roll['ability'].upper()}" if ability_mod is not None else ""
         damage_type = roll.get("damage_type")
         damage_label = f" ({damage_type})" if damage_type else ""
+        weapon_magic_bonus = roll.get("weapon_magic_bonus")
+        weapon_magic_label = f" +{weapon_magic_bonus} magic" if weapon_magic_bonus else ""
         skill = roll.get("skill")
         skill_label = ""
         if skill:
@@ -2008,8 +2065,8 @@ class GameEngine:
         disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
         label = f" ({roll['reason']})" if roll["reason"] else ""
         text = (
-            f"{name} rolls {roll['dice']}{damage_label}{ability_label}{skill_label}{spell_label}{roll_kind_label}"
-            f"{disadvantage_label}{label}: {roll['total']} {roll['rolls']}"
+            f"{name} rolls {roll['dice']}{damage_label}{weapon_magic_label}{ability_label}{skill_label}"
+            f"{spell_label}{roll_kind_label}{disadvantage_label}{label}: {roll['total']} {roll['rolls']}"
         )
         if roll["dc"] is not None:
             text += f" vs DC {roll['dc']}"
@@ -2058,6 +2115,8 @@ class GameEngine:
             payload["disadvantage_reasons"] = roll["disadvantage_reasons"]
         if roll.get("critical"):
             payload["critical"] = True
+        if roll.get("weapon_magic_bonus"):
+            payload["weapon_magic_bonus"] = roll["weapon_magic_bonus"]
         return Envelope(
             type="dice_result", session_id=self._session.session_id, sender_id="server", payload=payload
         )

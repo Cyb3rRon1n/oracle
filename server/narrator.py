@@ -164,6 +164,15 @@ UPDATE_CHARACTER_TOOL = {
                 ),
             },
             "add_item": {"type": "string", "description": "Item name to add to inventory."},
+            "magic_bonus": {
+                "type": "integer",
+                "description": (
+                    "Only meaningful together with add_item, for a real magic weapon/armor/"
+                    "shield you're narrating the character finding or receiving (e.g. a +1 "
+                    "longsword). The flat bonus it grants - added to that item's real attack/"
+                    "damage or AC automatically. Omit for an ordinary, non-magical item."
+                ),
+            },
             "remove_item": {
                 "type": "string",
                 "description": "Item name to remove from inventory, if present.",
