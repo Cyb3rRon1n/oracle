@@ -703,11 +703,16 @@ def build_starting_character(
 
     race_entry = rules.get_entry("race", race) if race else None
     race_name = race_entry["name"] if race_entry else ""
+    # Independent of character_class, same as race_name above - a blank/
+    # unrecognized class still gets a real race-derived speed (or the
+    # CharacterSheet field's own "30 ft." default for a blank/unrecognized
+    # race), not just the blank/unrecognized-class fallback sheet below.
+    speed = race_entry["speed"] if race_entry else CharacterSheet.model_fields["speed"].default
 
     class_entry = rules.get_entry("class", character_class) if character_class else None
     if class_entry is None:
         return CharacterSheet(
-            player_id=player_id, name=name, hp=10, max_hp=10, background=background, race=race_name
+            player_id=player_id, name=name, hp=10, max_hp=10, background=background, race=race_name, speed=speed
         )
 
     stats = _apply_race_bonus(_generate_stats(character_class, stat_priority), race_entry)
@@ -732,6 +737,7 @@ def build_starting_character(
         max_hp=max_hp,
         character_class=class_entry["name"],
         race=race_name,
+        speed=speed,
         stats=stats,
         inventory=inventory,
         equipped_weapon=equipped_weapon,
