@@ -1290,6 +1290,54 @@ async def test_owner_character_view_includes_class_features_and_skill_proficienc
     assert view["skill_proficiencies"] == ["arcana", "investigation"]
 
 
+async def test_owner_character_view_includes_all_18_skill_modifiers():
+    # Closes the "what am I actually rolling" gap - skill_proficiencies
+    # above only ever names which skills are proficient, never any
+    # skill's real bonus (proficient or not). Reuses the character's own
+    # already-computed stat_modifiers/proficiency_bonus, not a second
+    # formula - values derived from the sheet itself here (not hardcoded)
+    # so this test doesn't silently drift if Standard Array assignment
+    # priority ever changes.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Elowen", "character_class": "wizard"},
+    ))
+    sheet = session.characters[player_id]
+
+    view = _owner_character_view(sheet, engine._rules)
+    skill_modifiers = view["skill_modifiers"]
+    assert len(skill_modifiers) == 18  # every real 5e skill, not just the proficient subset
+
+    # arcana: proficient, INT-governed - full modifier + proficiency bonus.
+    assert skill_modifiers["arcana"] == {
+        "ability": "int",
+        "modifier": sheet.stat_modifiers["int"] + sheet.proficiency_bonus,
+        "proficient": True,
+    }
+    # athletics: not proficient for a wizard, STR-governed - bare modifier only.
+    assert skill_modifiers["athletics"] == {
+        "ability": "str",
+        "modifier": sheet.stat_modifiers["str"],
+        "proficient": False,
+    }
+
+
+async def test_owner_character_view_skill_modifiers_all_zero_for_a_blank_class():
+    # No stats at all for a blank/unrecognized class - every skill falls
+    # back to a modifier of 0 and proficient=False, the same graceful
+    # "not present isn't an error" convention class_features/
+    # skill_proficiencies already have for this same case.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert len(view["skill_modifiers"]) == 18
+    assert all(entry["modifier"] == 0 and entry["proficient"] is False for entry in view["skill_modifiers"].values())
+
+
 async def test_owner_character_view_still_includes_everything_model_dump_has():
     # A thin wrapper, not a replacement - the owner's own state_sync/
     # character_update payloads shouldn't lose any existing field (hp,
