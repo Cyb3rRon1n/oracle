@@ -1211,6 +1211,51 @@ async def test_overview_shows_race_alongside_class():
             assert "Thrain[/b] (Dwarf Fighter)" in rendered
 
 
+async def test_overview_shows_initiative_and_speed():
+    # Completes the AC/Initiative/Speed/HP "core combat-stat block" the
+    # character-sheet design pass named as its target - AC/HP are already
+    # covered by test_overview_shows_race_alongside_class's own sibling
+    # tests, this covers the two new fields.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12,
+                    "stat_modifiers": {"str": 2, "dex": 3, "con": 2, "int": -1, "wis": 1, "cha": 0},
+                    "speed": "25 ft.",
+                },
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
+            assert "Initiative +3" in rendered
+            assert "Speed 25 ft." in rendered
+
+
+async def test_overview_initiative_and_speed_fall_back_on_a_bare_sheet():
+    # A character with no stats/speed synced yet (a genuinely bare/legacy
+    # payload, same class of case _hp_line's own ac_label handles) still
+    # renders a real default rather than a blank or a crash - matches
+    # this line's neighbor above, which already always shows a default
+    # HP/AC for a blank sheet.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {"player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12},
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
+            assert "Initiative +0" in rendered
+            assert "Speed 30 ft." in rendered
+
+
 async def test_sheet_panel_renders_own_ability_scores_with_modifiers():
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)

@@ -315,6 +315,50 @@ def test_build_starting_character_records_race_independent_of_class():
     assert sheet.stats == {}
 
 
+@pytest.mark.parametrize(
+    ("race", "expected_speed"),
+    [
+        ("dwarf", "25 ft."),  # real 5e's slower-than-baseline dwarf/halfling speed
+        ("hill_dwarf", "25 ft."),  # a subrace's speed matches its base race, same as dwarf
+        ("wood_elf", "35 ft."),  # Fleet of Foot's own real bonus, baked into srd.json directly
+        ("elf", "30 ft."),  # the real 5e baseline, not Wood Elf's own subrace bonus
+    ],
+)
+def test_build_starting_character_applies_real_race_speed(race, expected_speed):
+    # speed (server/state.py) is populated once at creation from
+    # srd.json's races table, the same "flat authored value" mechanism
+    # ac's own comment describes - not derived from a formula, since real
+    # 5e speed is a fixed per-race number, not something stats compute.
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules, race=race)
+
+    assert sheet.speed == expected_speed
+
+
+@pytest.mark.parametrize("race", ["", "gnome", "not-a-real-race"])
+def test_build_starting_character_falls_back_on_blank_or_unknown_race_speed(race):
+    # Same graceful-miss convention the ability-bonus/traits fallback
+    # above already has - a blank/unrecognized race gets the
+    # CharacterSheet field's own real default ("30 ft."), never a blank
+    # string or a crash.
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules, race=race)
+
+    assert sheet.speed == "30 ft."
+
+
+def test_build_starting_character_records_race_speed_independent_of_class():
+    # Mirrors test_build_starting_character_records_race_independent_of_class
+    # above - a classless character (blank/unrecognized class) still gets
+    # a real race-derived speed, not just the CharacterSheet field's own
+    # bare default, since race and class are genuinely independent choices.
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "", rules, race="dwarf")
+
+    assert sheet.character_class == ""
+    assert sheet.speed == "25 ft."
+
+
 def test_rules_index_spell_slots_by_level_real_progression():
     rules = RulesIndex.load_default()
     assert rules.spell_slots_by_level(1) == {"1": 2}

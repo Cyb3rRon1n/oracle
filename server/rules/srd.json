@@ -419,6 +419,7 @@
     "human": {
       "name": "Human",
       "ability_score_increase": {"str": 1, "dex": 1, "con": 1, "int": 1, "wis": 1, "cha": 1},
+      "speed": "30 ft.",
       "traits": [
         "Versatile: humans have no single defining trait - just a well-rounded aptitude across every ability."
       ]
@@ -426,6 +427,7 @@
     "elf": {
       "name": "Elf",
       "ability_score_increase": {"dex": 2},
+      "speed": "30 ft.",
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Keen Senses: you have proficiency in the Perception skill.",
@@ -436,6 +438,7 @@
     "dwarf": {
       "name": "Dwarf",
       "ability_score_increase": {"con": 2},
+      "speed": "25 ft.",
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Dwarven Resilience: you have advantage on saving throws against poison, and resistance against poison damage.",
@@ -445,6 +448,7 @@
     "halfling": {
       "name": "Halfling",
       "ability_score_increase": {"dex": 2},
+      "speed": "25 ft.",
       "traits": [
         "Lucky: when you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
         "Brave: you have advantage on saving throws against being frightened.",
@@ -454,6 +458,7 @@
     "high_elf": {
       "name": "High Elf",
       "ability_score_increase": {"dex": 2, "int": 1},
+      "speed": "30 ft.",
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Keen Senses: you have proficiency in the Perception skill.",
@@ -467,6 +472,7 @@
     "wood_elf": {
       "name": "Wood Elf",
       "ability_score_increase": {"dex": 2, "wis": 1},
+      "speed": "35 ft.",
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Keen Senses: you have proficiency in the Perception skill.",
@@ -480,6 +486,7 @@
     "hill_dwarf": {
       "name": "Hill Dwarf",
       "ability_score_increase": {"con": 2, "wis": 1},
+      "speed": "25 ft.",
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Dwarven Resilience: you have advantage on saving throws against poison, and resistance against poison damage.",
@@ -490,6 +497,7 @@
     "mountain_dwarf": {
       "name": "Mountain Dwarf",
       "ability_score_increase": {"con": 2, "str": 2},
+      "speed": "25 ft.",
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Dwarven Resilience: you have advantage on saving throws against poison, and resistance against poison damage.",
@@ -500,6 +508,7 @@
     "lightfoot_halfling": {
       "name": "Lightfoot Halfling",
       "ability_score_increase": {"dex": 2, "cha": 1},
+      "speed": "25 ft.",
       "traits": [
         "Lucky: when you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
         "Brave: you have advantage on saving throws against being frightened.",
@@ -510,6 +519,7 @@
     "stout_halfling": {
       "name": "Stout Halfling",
       "ability_score_increase": {"dex": 2, "con": 1},
+      "speed": "25 ft.",
       "traits": [
         "Lucky: when you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
         "Brave: you have advantage on saving throws against being frightened.",

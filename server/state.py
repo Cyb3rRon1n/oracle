@@ -99,6 +99,19 @@ class CharacterSheet(BaseModel):
     # Explicitly deferred when the tabbed character sheet shipped
     # (ROADMAP.md item 7) until a real race system existed to back it.
     race: str = ""
+    # Real 5e's own per-race base walking speed (server/rules/srd.json's
+    # races table, e.g. dwarf/halfling "25 ft.", Wood Elf's own Fleet of
+    # Foot trait already baked in as "35 ft." rather than modeled as a
+    # generic bonus - the same "flat authored value" precedent ac's own
+    # comment describes for a monster's stat block). Populated once at
+    # creation (server/engine.py's build_starting_character) and never
+    # recomputed - Oracle has no movement/terrain system that would ever
+    # change it mid-session, unlike ac, which genuinely does change on
+    # equip/unequip. Blank race or a race predating this field falls back
+    # to "30 ft.", the real 5e human/elf/halfling-adjacent baseline and
+    # the same graceful-miss convention race's own blank default already
+    # establishes - never an empty string on a real character sheet.
+    speed: str = "30 ft."
     stats: dict[str, int] = Field(default_factory=dict)
     # A list of InventoryItem stacks, not plain name strings - closes the
     # "structured item objects with real special properties" gap named

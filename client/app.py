@@ -336,6 +336,7 @@ class CharacterSheetPanel(Vertical):
                 character.get("hp"), character.get("max_hp"), character.get("ac"),
                 dying=character.get("dying", False), dead=character.get("dead", False),
             ),
+            self._vitals_line(character),
         ]
         # xp is only ever present on the owner's own full sheet (never on
         # an "others"/party entry - server/engine.py's _public_character_view
@@ -620,6 +621,29 @@ class CharacterSheetPanel(Vertical):
         ac_label = f"  AC {ac}" if ac is not None else ""
         status_label = cls._death_status_label(hp, dying, dead)
         return f"HP {hp or 0}/{max_hp or 0}  {cls._hp_bar(hp, max_hp)}{ac_label}{status_label}"
+
+    @staticmethod
+    def _vitals_line(character: dict) -> str:
+        """Initiative and Speed, completing the AC/Initiative/Speed/HP
+        "core combat-stat block" the character-sheet design pass
+        (ROADMAP.md) explicitly named as the target and flagged
+        Initiative/Speed as still-missing at the time - AC/HP already
+        render on the line above via _hp_line. Initiative is just the
+        character's own DEX modifier (server/state.py's stat_modifiers, a
+        real, precomputed @computed_field already synced on every
+        state_sync/character_update) - real 5e's own formula, no new
+        server-side computation needed. speed is the new CharacterSheet
+        field (server/state.py), populated once at creation from the
+        character's own race and never recomputed. Both fall back to a
+        blank sheet's own real defaults (dex_mod 0, "30 ft.") rather than
+        omitting the line - matches this line's neighbor above, which
+        already always shows a default HP/AC rather than hiding for a
+        blank sheet, a different convention from the Abilities tab's own
+        "hide the whole section if stats is empty" rule."""
+        dex_mod = (character.get("stat_modifiers") or {}).get("dex", 0)
+        initiative = f"{'+' if dex_mod >= 0 else ''}{dex_mod}"
+        speed = character.get("speed") or "30 ft."
+        return f"Initiative {initiative}  Speed {speed}"
 
     @classmethod
     def _other_player_line(cls, other: dict) -> str:
