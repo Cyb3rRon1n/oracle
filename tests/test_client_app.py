@@ -1233,6 +1233,33 @@ async def test_sheet_panel_renders_own_ability_scores_with_modifiers():
             assert "CHA 10 (+0)" in rendered
 
 
+async def test_sheet_panel_renders_own_saving_throw_proficiencies_with_bonus():
+    # saving_throw_proficiencies is owner-only, added by server/engine.py's
+    # _owner_character_view the same way skill_proficiencies already was -
+    # shows the real total bonus (ability modifier + proficiency_bonus),
+    # not just the proficient ability's name.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Thrain", "hp": 12, "max_hp": 12,
+                    "stat_modifiers": {"str": 2, "dex": 1, "con": 2, "int": -1, "wis": 1, "cha": 0},
+                    "proficiency_bonus": 2,
+                    "saving_throw_proficiencies": ["str", "con"],
+                },
+            }))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
+            assert "Saving Throws" in rendered
+            assert "STR +4" in rendered  # +2 ability modifier, +2 proficiency
+            assert "CON +4" in rendered
+            assert "DEX" not in rendered  # not a proficient save, and no stats given to list it under Ability Scores either
+
+
 async def test_party_view_never_shows_ability_scores():
     # stats/stat_modifiers are owner-only (server/engine.py's
     # _public_character_view deliberately excludes them) - a party

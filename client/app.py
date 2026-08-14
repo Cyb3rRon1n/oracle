@@ -371,16 +371,18 @@ class CharacterSheetPanel(Vertical):
     def _abilities_text(self) -> str:
         character = self._character
         stats = character.get("stats") or {}
+        # stat_modifiers is a server-side @computed_field (real
+        # precomputed modifiers, server/state.py) - present whenever
+        # stats is, so this never recomputes floor((score-10)/2)
+        # client-side. Read once here (not just inside the Ability Scores
+        # block below) since Saving Throws also needs it, further down.
+        modifiers = character.get("stat_modifiers") or {}
         lines: list[str] = []
         if stats:
-            # stat_modifiers is a server-side @computed_field (real
-            # precomputed modifiers, server/state.py) - present whenever
-            # stats is, so this never recomputes floor((score-10)/2)
-            # client-side. A fixed str/dex/con/int/wis/cha order, not dict
-            # iteration order - stats is keyed the same way SRD monster
-            # blocks already are, but a client shouldn't assume any
-            # particular dict insertion order survived JSON round-tripping.
-            modifiers = character.get("stat_modifiers") or {}
+            # A fixed str/dex/con/int/wis/cha order, not dict iteration
+            # order - stats is keyed the same way SRD monster blocks
+            # already are, but a client shouldn't assume any particular
+            # dict insertion order survived JSON round-tripping.
             lines.append("[b]Ability Scores[/b]")
             lines.extend(
                 f"{key.upper()} {stats[key]} ({'+' if modifiers.get(key, 0) >= 0 else ''}{modifiers.get(key, 0)})"
@@ -397,6 +399,27 @@ class CharacterSheetPanel(Vertical):
                 lines.append("")
             lines.append("[b]Skill Proficiencies[/b]")
             lines.extend(f"- {skill.replace('_', ' ').title()}" for skill in skill_proficiencies)
+        # saving_throw_proficiencies is owner-only too, added the same way
+        # and for the same reason skill_proficiencies was - already
+        # applied to every real roll_kind: "save" roll's bonus
+        # server-side, previously only ever visible transiently in that
+        # roll's own label text. Shows the real total bonus (ability
+        # modifier + proficiency_bonus, both already on the payload),
+        # matching Ability Scores' own "STR 15 (+2)" style rather than
+        # inventing a new format - proficiency_bonus is flat across every
+        # proficient save, real 5e's own rule, not per-ability.
+        saving_throw_proficiencies = character.get("saving_throw_proficiencies") or []
+        if saving_throw_proficiencies:
+            if lines:
+                lines.append("")
+            lines.append("[b]Saving Throws[/b]")
+            proficiency_bonus = character.get("proficiency_bonus", 0)
+            lines.extend(
+                f"- {ability.upper()} "
+                f"{'+' if (modifiers.get(ability, 0) + proficiency_bonus) >= 0 else ''}"
+                f"{modifiers.get(ability, 0) + proficiency_bonus}"
+                for ability in saving_throw_proficiencies
+            )
         return "\n".join(lines).rstrip()
 
     def _inventory_text(self) -> str:

@@ -535,17 +535,21 @@ def _public_character_view(character: CharacterSheet) -> dict:
 
 def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     """The owner's own full sheet - everything model_dump() already has,
-    plus two fields that exist but were never actually sent: real class
+    plus fields that exist but were never actually sent: real class
     features (server/rules/srd.json's own level_1_features, e.g. a
     wizard's "Arcane Recovery" - SRD data that's been in this dataset all
-    along, just never surfaced past lookup_rule) and a persistent skill-
+    along, just never surfaced past lookup_rule), a persistent skill-
     proficiency list (CLASS_SKILL_PROFICIENCIES, which already drives real
     roll bonuses but previously only ever showed up transiently in a
     roll's own label text, never as something a player could just look
-    at). Built for the tabbed character sheet UI (ROADMAP.md item 7) -
-    backs both _state_sync_envelope's and _character_update_envelope's
-    owner-only payloads, the same "one place defines the shape" reasoning
-    _public_character_view already follows for the public side."""
+    at), and, the same way, a persistent saving-throw-proficiency list
+    (CLASS_SAVING_THROW_PROFICIENCIES - already applied to every real
+    `roll_kind: "save"` roll's bonus, same transient-label-only gap
+    skill_proficiencies had before this). Built for the tabbed character
+    sheet UI (ROADMAP.md item 7) - backs both _state_sync_envelope's and
+    _character_update_envelope's owner-only payloads, the same "one place
+    defines the shape" reasoning _public_character_view already follows
+    for the public side."""
     class_entry = rules.get_entry("class", character.character_class)
     race_entry = rules.get_entry("race", character.race) if character.race else None
     return {
@@ -554,6 +558,9 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
         "racial_traits": list((race_entry or {}).get("traits", [])),
         "skill_proficiencies": list(
             CLASS_SKILL_PROFICIENCIES.get(character.character_class.strip().lower(), ())
+        ),
+        "saving_throw_proficiencies": list(
+            CLASS_SAVING_THROW_PROFICIENCIES.get(character.character_class.strip().lower(), ())
         ),
     }
 

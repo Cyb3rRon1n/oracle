@@ -1290,6 +1290,24 @@ async def test_owner_character_view_includes_class_features_and_skill_proficienc
     assert view["skill_proficiencies"] == ["arcana", "investigation"]
 
 
+async def test_owner_character_view_includes_saving_throw_proficiencies():
+    # The same real gap skill_proficiencies closed above, for saving
+    # throws: CLASS_SAVING_THROW_PROFICIENCIES already determines every
+    # real roll_kind: "save" roll's bonus, but the list itself was never
+    # part of any payload a client actually receives - only ever visible
+    # transiently in a save roll's own dice_result label, the moment it
+    # happened.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Elowen", "character_class": "wizard"},
+    ))
+
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["saving_throw_proficiencies"] == ["int", "wis"]
+
+
 async def test_owner_character_view_still_includes_everything_model_dump_has():
     # A thin wrapper, not a replacement - the owner's own state_sync/
     # character_update payloads shouldn't lose any existing field (hp,
@@ -1315,6 +1333,7 @@ async def test_owner_character_view_handles_a_blank_or_unrecognized_class():
     view = _owner_character_view(session.characters[player_id], engine._rules)
     assert view["class_features"] == []
     assert view["skill_proficiencies"] == []
+    assert view["saving_throw_proficiencies"] == []
 
 
 async def test_owner_character_view_includes_racial_traits():
