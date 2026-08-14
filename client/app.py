@@ -10,6 +10,7 @@ from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import (
     Button,
+    DataTable,
     Footer,
     Header,
     Input,
@@ -257,12 +258,31 @@ class CharacterSheetPanel(Vertical):
                 yield Static(id="tab-map-content")
             with TabPane("Abilities", id="tab-abilities"), VerticalScroll():
                 yield Static(id="tab-abilities-content")
+                # A real DataTable, not another line-per-row Static -
+                # closes the "what am I actually rolling" gap: the
+                # Skill Proficiencies list above only ever named *which*
+                # skills you're proficient in, never any skill's real
+                # bonus (proficient or not) without waiting to roll it.
+                # Columns fixed once here (on_mount, below) - only rows
+                # are rebuilt on every refresh, never the columns
+                # themselves, since re-adding columns on each update
+                # would duplicate them.
+                yield DataTable(id="tab-abilities-skills", cursor_type="row")
             with TabPane("Inventory", id="tab-inventory"), VerticalScroll():
                 yield Static(id="tab-inventory-content")
             with TabPane("Spells", id="tab-spells"), VerticalScroll():
                 yield Static(id="tab-spells-content")
             with TabPane("Features & Notes", id="tab-features"), VerticalScroll():
                 yield Static(id="tab-features-content")
+
+    def on_mount(self) -> None:
+        # Columns set up exactly once here, not in _refresh_display - a
+        # DataTable's add_columns() call is additive, so calling it again
+        # on every refresh would duplicate columns. Only rows are cleared
+        # and rebuilt per refresh (see _refresh_display).
+        self.query_one("#tab-abilities-skills", DataTable).add_columns(
+            "Skill", "Ability", "Mod", "Proficient"
+        )
 
     def action_previous_tab(self) -> None:
         self._cycle_tab(-1)
@@ -387,16 +407,13 @@ class CharacterSheetPanel(Vertical):
                 for key in ("str", "dex", "con", "int", "wis", "cha")
                 if key in stats
             )
-        # skill_proficiencies is owner-only, added by server/engine.py's
-        # _owner_character_view (ROADMAP.md item 7) - previously this was
-        # only ever visible transiently in a roll's own label text after
-        # the fact, never as something a player could just look at.
-        skill_proficiencies = character.get("skill_proficiencies") or []
-        if skill_proficiencies:
-            if lines:
-                lines.append("")
-            lines.append("[b]Skill Proficiencies[/b]")
-            lines.extend(f"- {skill.replace('_', ' ').title()}" for skill in skill_proficiencies)
+        # Skill proficiencies used to render here as a bare proficient-
+        # names-only list - superseded by the real 18-skill DataTable
+        # (see _refresh_skills_table), which shows every skill's real
+        # bonus, proficient or not, not just which ones are proficient.
+        # skill_proficiencies itself is still sent and still used
+        # elsewhere (server/engine.py's roll-bonus computation), just no
+        # longer duplicated as a second, less-detailed text rendering here.
         return "\n".join(lines).rstrip()
 
     def _inventory_text(self) -> str:
@@ -558,6 +575,7 @@ class CharacterSheetPanel(Vertical):
             self.query_one("#tab-overview-content", Static).update(self._overview_text())
             self.query_one("#tab-map-content", Static).update(self._map_text())
             self.query_one("#tab-abilities-content", Static).update(self._abilities_text())
+            self._refresh_skills_table()
             self.query_one("#tab-inventory-content", Static).update(self._inventory_text())
             self.query_one("#tab-spells-content", Static).update(self._spells_text())
             self.query_one("#tab-features-content", Static).update(self._features_text())
@@ -574,6 +592,32 @@ class CharacterSheetPanel(Vertical):
                 tabs.show_tab(tab_id)
             else:
                 tabs.hide_tab(tab_id)
+
+    def _refresh_skills_table(self) -> None:
+        # skill_modifiers is owner-only (server/engine.py's
+        # _owner_character_view), each entry already carrying its own
+        # governing ability/modifier/proficient - the client never
+        # recomputes any of it, same "server does the arithmetic" rule
+        # stat_modifiers/proficiency_bonus already established. rows are
+        # cleared and rebuilt every refresh (columns=False - the columns
+        # themselves are set up once in on_mount, never re-added here).
+        # A row's key is the skill name itself, not an auto index - not
+        # currently read back anywhere, but a stable key is cheap and
+        # avoids relying on DataTable's own default auto-increment
+        # ordering surviving a clear-and-rebuild.
+        table = self.query_one("#tab-abilities-skills", DataTable)
+        table.clear(columns=False)
+        skill_modifiers = self._character.get("skill_modifiers") or {}
+        for skill, entry in skill_modifiers.items():
+            modifier = entry.get("modifier", 0)
+            mod_label = f"{'+' if modifier >= 0 else ''}{modifier}"
+            table.add_row(
+                skill.replace("_", " ").title(),
+                entry.get("ability", "").upper(),
+                mod_label,
+                "✓" if entry.get("proficient") else "",
+                key=skill,
+            )
 
     _DIVIDER = "[dim]" + "─" * 24 + "[/dim]"
 

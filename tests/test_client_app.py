@@ -19,6 +19,7 @@ from client.app import (
 )
 from shared.protocol import Envelope
 from textual.css.query import NoMatches
+from textual.widgets import DataTable
 
 
 class FakeTransport:
@@ -1360,11 +1361,10 @@ async def test_party_view_shows_ac_since_it_is_public():
             assert "AC 13" in rendered
 
 
-async def test_sheet_panel_renders_class_features_and_skill_proficiencies():
-    # class_features/skill_proficiencies are new owner-only fields
-    # (server/engine.py's _owner_character_view, ROADMAP.md item 7) - real
-    # SRD/CLASS_SKILL_PROFICIENCIES data that previously had nowhere to
-    # render at all.
+async def test_sheet_panel_renders_class_features():
+    # class_features is a new owner-only field (server/engine.py's
+    # _owner_character_view, ROADMAP.md item 7) - real SRD data that
+    # previously had nowhere to render at all.
     with patch("client.app.ClientTransport", FakeTransport):
         app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
         async with app.run_test() as pilot:
@@ -1374,15 +1374,75 @@ async def test_sheet_panel_renders_class_features_and_skill_proficiencies():
                 "p1": {
                     "player_id": "p1", "name": "Elowen", "hp": 6, "max_hp": 6,
                     "class_features": ["Arcane Recovery: recover expended spell slots."],
-                    "skill_proficiencies": ["arcana", "investigation"],
                 },
             }))
             await pilot.pause()
 
             sheet = app.screen.query_one("#sheet", CharacterSheetPanel)
             assert "Arcane Recovery" in sheet._features_text()
-            assert "Arcana" in sheet._abilities_text()
-            assert "Investigation" in sheet._abilities_text()
+
+
+async def test_sheet_panel_renders_the_full_skills_table():
+    # skill_modifiers (server/engine.py's _owner_character_view) is the
+    # real 18-skill grid superseding the old proficient-names-only list -
+    # every skill shows up, not just the ones a character is proficient
+    # in, each with its own real total bonus.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Elowen", "hp": 6, "max_hp": 6,
+                    "skill_modifiers": {
+                        "arcana": {"ability": "int", "modifier": 4, "proficient": True},
+                        "athletics": {"ability": "str", "modifier": -1, "proficient": False},
+                    },
+                },
+            }))
+            await pilot.pause()
+
+            table = app.screen.query_one("#tab-abilities-skills", DataTable)
+            assert table.row_count == 2
+            arcana_row = table.get_row("arcana")
+            assert arcana_row == ["Arcana", "INT", "+4", "✓"]
+            athletics_row = table.get_row("athletics")
+            assert athletics_row == ["Athletics", "STR", "-1", ""]
+
+
+async def test_sheet_panel_skills_table_clears_between_characters_not_just_appends():
+    # A real regression this shape of bug is easy to introduce: clear()
+    # must run every refresh (see _refresh_skills_table), or switching to
+    # a character with fewer tracked skills would leave stale rows from
+    # the previous one behind instead of a clean rebuild.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Elowen", "hp": 6, "max_hp": 6,
+                    "skill_modifiers": {
+                        "arcana": {"ability": "int", "modifier": 4, "proficient": True},
+                        "athletics": {"ability": "str", "modifier": -1, "proficient": False},
+                    },
+                },
+            }))
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=False, characters={
+                "p1": {
+                    "player_id": "p1", "name": "Elowen", "hp": 6, "max_hp": 6,
+                    "skill_modifiers": {
+                        "stealth": {"ability": "dex", "modifier": 2, "proficient": True},
+                    },
+                },
+            }))
+            await pilot.pause()
+
+            table = app.screen.query_one("#tab-abilities-skills", DataTable)
+            assert table.row_count == 1
 
 
 async def test_sheet_panel_renders_racial_traits():
