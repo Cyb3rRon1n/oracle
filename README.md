@@ -186,6 +186,17 @@ A couple of special commands, typed into that same input bar:
 
 To quit, close the client terminal (`Ctrl+C` works) — the server can stay running for next time, or you can stop it the same way.
 
+### Optional: access the client from a browser
+
+The client is a normal terminal app (`python -m client.main`), but you don't have to run it in a local terminal — [`textual-serve`](https://github.com/Textualize/textual-serve) (Textualize's own official tool for this) can serve it over a browser instead, with no changes to how Oracle itself works. Install the extra and run it alongside the server, in place of a local `python -m client.main`:
+
+```bash
+pip install -e ".[web]"
+python -m client.serve_web
+```
+
+Then visit `http://localhost:8000` (configurable via `WEB_HOST`/`WEB_PORT` env vars) in a browser — each tab that connects gets its own real `client.main` process, the same as opening a new terminal would. `WEB_PUBLIC_URL` is only needed if you're putting this behind a reverse proxy on a real domain. The server (`python -m server.main`) still runs exactly as described above; this only changes how you reach the *client*.
+
 ### Stopping and picking back up later
 
 Game state (characters, world, turn order, log) is saved to `sessions/<Session ID>.json` after every join and every resolved action, so stopping and restarting the server resumes where you left off. One running server can host any number of these side by side — each is created the first time a client actually joins that Session ID and lives independently of the others, so a second, unrelated game on the same server never sees the first one's players or story. The client remembers its own player ID in a local `.player_id` file, so restarting the client reconnects you to the same character rather than creating a new one — delete that file to start as a fresh character. Delete a session's JSON file under `sessions/` to reset that world.

@@ -14,6 +14,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
 ollama = ["ollama>=0.6"]
+web = ["textual-serve>=1.1"]
+
+[project.scripts]
+oracle-serve-web = "client.serve_web:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["shared", "server", "client"]
