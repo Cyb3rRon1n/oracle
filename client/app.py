@@ -690,6 +690,68 @@ def _npc_status_line(name: str, npc: dict) -> str:
     return line + "[/dim]"
 
 
+class LoginScreen(Screen):
+    """The client's true root screen now (App.on_mount pushes this
+    instead of WelcomeScreen for real usage) - real server-owned identity
+    (ROADMAP.md, 2026-08-13), replacing the old client-local .player_id
+    file that let a client just assert whatever player_id it wanted. A
+    login is also, deliberately, a first-time registration: there is no
+    separate signup step - the first successful login for a username
+    creates the account (server/accounts.py), matching the "simplest real
+    auth flow for a small self-hosted game" call already written into
+    ROADMAP.md, not something invented here. Pushes WelcomeScreen once a
+    real login_result confirms it (DungeonMasterApp._handle)."""
+
+    CSS = """
+    LoginScreen { align: center middle; }
+    #login-box { width: 50; height: auto; border: solid $accent; padding: 0 2; }
+    #login-box Input { margin-bottom: 1; }
+    #login-error { color: $error; height: 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with VerticalScroll(id="login-box"):
+            yield Static("[b]Oracle[/b] - an AI Dungeon Master")
+            yield Static("[dim]Log in, or pick a new username to create one.[/dim]")
+            yield Input(placeholder="Username", id="username-input")
+            yield Input(placeholder="Password", password=True, id="password-input")
+            yield Static("", id="login-error")
+            yield Button("Log In", id="login", variant="primary")
+        yield Footer()
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "login":
+            await self._login()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        await self._login()
+
+    async def _login(self) -> None:
+        login_button = self.query_one("#login", Button)
+        if login_button.disabled:
+            return  # a real Enter-then-click double-submit shouldn't send login twice
+        username = self.query_one("#username-input", Input).value.strip()
+        password = self.query_one("#password-input", Input).value
+        if not username or not password:
+            self.query_one("#login-error", Static).update("[red]Username and password are both required.[/red]")
+            return
+        login_button.disabled = True
+        try:
+            await self.app.login(username, password)
+        except OSError as exc:
+            login_button.disabled = False
+            self.query_one("#login-error", Static).update(f"[red]Couldn't connect: {exc}[/red]")
+
+    def show_error(self, message: str) -> None:
+        # Called by DungeonMasterApp._handle() on a failed login_result -
+        # re-enables the button so a mistyped password can be retried
+        # immediately, the same re-enable-on-failure pattern WelcomeScreen's
+        # own _join() already establishes for a failed connection/import.
+        self.query_one("#login", Button).disabled = False
+        self.query_one("#login-error", Static).update(f"[red]{message}[/red]")
+
+
 class WelcomeScreen(Screen):
     """The client's very first screen - collects identity (name, session
     ID, and, for a genuinely new local player, class) and joins. Replaces
@@ -1174,9 +1236,18 @@ class DungeonMasterApp(App):
     deliberately left as the base App's no-op: WelcomeScreen owns the
     entire first view, pushed from on_mount()."""
 
-    def __init__(self, uri: str, player_id: str, is_new_character: bool):
+    def __init__(self, uri: str, player_id: str | None = None, is_new_character: bool = False):
         super().__init__()
         self._uri = uri
+        # player_id is no longer known at construction time in real usage
+        # (client/main.py) - real server-owned identity (ROADMAP.md,
+        # 2026-08-13) means it only becomes known once a real login_result
+        # comes back over the wire (see login()/_handle() below). Kept
+        # optional, not required, specifically so every existing
+        # test/call site that already constructs this with a real
+        # player_id (bypassing the login screen entirely to test
+        # downstream screens) keeps working completely unchanged - see
+        # on_mount()'s own branch on this.
         self._player_id = player_id
         self.is_new_character = is_new_character
         self.transport: ClientTransport | None = None
@@ -1187,6 +1258,12 @@ class DungeonMasterApp(App):
         self.log_tail: list[dict] = []
         self.current_turn: str | None = None
         self._listening = False
+        # Set by _handle()'s login_result branch once a real reply
+        # arrives - only ever awaited by connect_and_join's own
+        # backward-compat auto-login (below); the real LoginScreen-driven
+        # path is purely reactive (screen transitions happen from
+        # _handle() itself) and never waits on this.
+        self._login_complete = asyncio.Event()
 
     @property
     def player_id(self) -> str:
@@ -1198,7 +1275,31 @@ class DungeonMasterApp(App):
         return self._player_id
 
     async def on_mount(self) -> None:
-        self.push_screen(WelcomeScreen())
+        # player_id already known (the backward-compat constructor path
+        # every existing test/call site that isn't exercising the login
+        # flow itself uses) skips straight to WelcomeScreen, exactly as
+        # before - real usage (client/main.py) constructs with no
+        # player_id at all, so this lands on LoginScreen instead.
+        if self._player_id is None:
+            self.push_screen(LoginScreen())
+        else:
+            self.push_screen(WelcomeScreen())
+
+    async def login(self, username: str, password: str) -> None:
+        # Opens the one connection this client ever uses (connect_and_join
+        # below reuses it, rather than opening a second one once
+        # session_id is also known) and sends a real login as the first
+        # thing over it - server-owned identity (ROADMAP.md, 2026-08-13),
+        # replacing the old client-local .player_id file. The resulting
+        # login_result is handled in _handle() below, same as every other
+        # server->client envelope - this method only ever sends, it
+        # doesn't wait for or interpret the reply itself.
+        self.transport = ClientTransport(self._uri)
+        await self.transport.connect()
+        if not self._listening:
+            self._listening = True
+            asyncio.create_task(self._listen())
+        await self.transport.send("login", {"username": username, "password": password})
 
     async def connect_and_join(
         self,
@@ -1209,8 +1310,20 @@ class DungeonMasterApp(App):
         stat_priority: list[str] | None = None,
         race: str = "",
     ) -> None:
-        self.transport = ClientTransport(self._uri, session_id, self._player_id)
-        await self.transport.connect()
+        # Reuses the already-connected, already-authenticated transport
+        # from login() when one exists (real usage, always, and any real
+        # test driving this against a real server via test_transport_
+        # e2e.py - see that file's own _login_and_wait helper) - only
+        # creates a fresh one when it doesn't. That "doesn't" case only
+        # actually happens for test_client_app.py's FakeTransport-based
+        # tests, which construct this app with a player_id directly and
+        # never call login() at all (there's no real server there to
+        # authenticate against in the first place).
+        if self.transport is None:
+            self.transport = ClientTransport(self._uri)
+            await self.transport.connect()
+        self.transport.session_id = session_id
+        self.transport.player_id = self._player_id
         if not self._listening:
             self._listening = True
             asyncio.create_task(self._listen())
@@ -1438,6 +1551,23 @@ class DungeonMasterApp(App):
         # after state_sync in _on_join_session) could already be dispatched
         # and try to query a widget (e.g. #lobby-status) that doesn't exist
         # in the DOM yet, crashing with NoMatches.
+        if envelope.type == "login_result":
+            payload = envelope.payload
+            if payload.get("success"):
+                self._player_id = payload.get("player_id")
+                self.is_new_character = bool(payload.get("is_new_account"))
+                if isinstance(self.screen, LoginScreen):
+                    # switch_screen, not push_screen - once authenticated
+                    # there's nothing to go "back" to on LoginScreen (a
+                    # fresh login would be a new server round trip
+                    # anyway, not a simple pop), so replacing it outright
+                    # is the correct model, not just an optimization.
+                    await self.switch_screen(WelcomeScreen())
+            elif isinstance(self.screen, LoginScreen):
+                self.screen.show_error(payload.get("error") or "Login failed.")
+            self._login_complete.set()
+            return
+
         if envelope.type == "state_sync":
             payload = envelope.payload
             characters = payload.get("characters", {})

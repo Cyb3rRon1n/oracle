@@ -10,6 +10,7 @@ from client.app import (
     CharacterSheetPanel,
     DungeonMasterApp,
     LobbyScreen,
+    LoginScreen,
     SessionScreen,
     WelcomeScreen,
     _format_item_label,
@@ -19,6 +20,7 @@ from client.app import (
 )
 from shared.protocol import Envelope
 from textual.css.query import NoMatches
+from textual.widgets import Button
 
 
 class FakeTransport:
@@ -29,11 +31,16 @@ class FakeTransport:
 
     def __init__(self, *args, **kwargs) -> None:
         self.sent: list[tuple[str, dict]] = []
-        # ClientTransport(uri, session_id, player_id) - captured positionally
-        # since that's the real signature (client/transport.py), needed by
-        # WelcomeScreen's Solo-mode tests to confirm what session_id it
-        # actually chose without reaching into a real websocket.
-        self.session_id = args[1] if len(args) > 1 else kwargs.get("session_id")
+        # session_id/player_id are plain mutable attributes on the real
+        # ClientTransport now (client/transport.py, ROADMAP.md 2026-08-13)
+        # - DungeonMasterApp sets them directly after construction, which
+        # this fake object (any plain Python object) just stores like any
+        # other attribute, no special capturing needed. WelcomeScreen's
+        # Solo-mode tests read app.transport.session_id back afterward to
+        # confirm what it actually chose, without reaching into a real
+        # websocket.
+        self.session_id = ""
+        self.player_id = ""
 
     async def connect(self) -> None:
         pass
@@ -76,6 +83,98 @@ def _log_has_styled_segment(rich_log, color: str) -> bool:
         for strip in rich_log.lines
         for seg in strip._segments
     )
+
+
+async def test_login_screen_is_the_first_screen_when_no_player_id_is_given():
+    # Real usage (client/main.py) never passes player_id anymore - real
+    # server-owned identity (ROADMAP.md, 2026-08-13) means it's unknown
+    # until a real login_result comes back. The backward-compat
+    # constructor path (every WelcomeScreen/Lobby/Session test in this
+    # file) still lands directly on WelcomeScreen, unaffected.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test():
+            assert isinstance(app.screen, LoginScreen)
+
+
+async def test_welcome_screen_is_still_the_first_screen_when_player_id_is_given():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test():
+            assert isinstance(app.screen, WelcomeScreen)
+
+
+async def test_login_screen_blank_fields_show_a_local_error_without_sending_anything():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await pilot.click("#login")
+            await pilot.pause()
+
+            assert isinstance(app.screen, LoginScreen)
+            assert "required" in app.screen.query_one("#login-error")._Static__content.lower()
+            assert app.transport is None  # never even tried to connect
+
+
+async def test_login_screen_submitting_credentials_sends_a_real_login_envelope():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await pilot.click("#username-input")
+            await pilot.press(*"rowan")
+            await pilot.click("#password-input")
+            await pilot.press(*"correct horse battery staple")
+            await pilot.click("#login")
+            await pilot.pause()
+
+            assert app.transport.sent == [
+                ("login", {"username": "rowan", "password": "correct horse battery staple"})
+            ]
+            assert app.screen.query_one("#login", Button).disabled  # can't double-submit while awaiting a reply
+
+
+async def test_successful_login_result_reveals_the_real_player_id_and_pushes_welcome_screen():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await pilot.click("#username-input")
+            await pilot.press(*"rowan")
+            await pilot.click("#password-input")
+            await pilot.press(*"correct horse battery staple")
+            await pilot.click("#login")
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="login_result", session_id="", sender_id="server",
+                payload={"success": True, "player_id": "real-server-id", "is_new_account": True, "error": None},
+            ))
+            await pilot.pause()
+
+            assert app.player_id == "real-server-id"
+            assert app.is_new_character is True
+            assert isinstance(app.screen, WelcomeScreen)
+
+
+async def test_failed_login_result_shows_the_real_error_and_re_enables_the_button():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await pilot.click("#username-input")
+            await pilot.press(*"rowan")
+            await pilot.click("#password-input")
+            await pilot.press(*"wrong password")
+            await pilot.click("#login")
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="login_result", session_id="", sender_id="server",
+                payload={"success": False, "player_id": None, "is_new_account": False, "error": "Incorrect password."},
+            ))
+            await pilot.pause()
+
+            assert isinstance(app.screen, LoginScreen)  # never advanced
+            assert "Incorrect password" in app.screen.query_one("#login-error")._Static__content
+            assert not app.screen.query_one("#login", Button).disabled  # can retry immediately
 
 
 async def test_welcome_screen_is_the_first_screen_and_prompts_for_class_when_new():

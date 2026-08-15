@@ -7,6 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .accounts import AccountStore
 from .engine import Broadcast, GameEngine, SendTo
 from .narrator import create_narrator
 from .persistence import JSONFileSessionStore, SessionStoreUnwritable
@@ -45,7 +46,14 @@ def main() -> None:
         session = store.load(session_id) or Session(session_id=session_id)
         return GameEngine(session, dm, broadcast, send_to, store=store)
 
-    transport = Transport(engine_factory)
+    # Real server-owned identity (ROADMAP.md, 2026-08-13) - a real,
+    # persistent AccountStore, not the ephemeral in-memory default
+    # Transport falls back to when none is given (that default exists
+    # purely so tests never risk writing a stray real accounts file).
+    accounts_path = Path(os.environ.get("ACCOUNTS_FILE", "accounts.json"))
+    accounts = AccountStore(accounts_path)
+
+    transport = Transport(engine_factory, accounts=accounts)
     host = os.environ.get("SERVER_HOST", "localhost")
     port = int(os.environ.get("SERVER_PORT", "8765"))
     asyncio.run(transport.serve(host=host, port=port))
