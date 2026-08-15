@@ -97,3 +97,51 @@ def test_in_memory_store_never_touches_disk(tmp_path, monkeypatch):
     store.authenticate("rowan", "correct horse battery staple")
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_new_account_starts_with_no_recent_sessions():
+    store = AccountStore()
+    result = store.authenticate("rowan", "correct horse battery staple")
+
+    assert result.recent_sessions == []
+
+
+def test_record_session_joined_shows_up_on_a_later_login():
+    store = AccountStore()
+    first = store.authenticate("rowan", "correct horse battery staple")
+
+    store.record_session_joined(first.player_id, "the-tavern-of-doom")
+
+    second = store.authenticate("rowan", "correct horse battery staple")
+    assert second.recent_sessions == ["the-tavern-of-doom"]
+
+
+def test_record_session_joined_moves_a_repeated_session_to_the_front_not_duplicating_it():
+    store = AccountStore()
+    result = store.authenticate("rowan", "correct horse battery staple")
+    player_id = result.player_id
+
+    store.record_session_joined(player_id, "session-a")
+    store.record_session_joined(player_id, "session-b")
+    store.record_session_joined(player_id, "session-a")  # rejoining an earlier one
+
+    reloaded = store.authenticate("rowan", "correct horse battery staple")
+    assert reloaded.recent_sessions == ["session-a", "session-b"]
+
+
+def test_record_session_joined_caps_at_ten_most_recent():
+    store = AccountStore()
+    result = store.authenticate("rowan", "correct horse battery staple")
+    player_id = result.player_id
+
+    for i in range(12):
+        store.record_session_joined(player_id, f"session-{i}")
+
+    reloaded = store.authenticate("rowan", "correct horse battery staple")
+    assert len(reloaded.recent_sessions) == 10
+    assert reloaded.recent_sessions[0] == "session-11"  # most recent first
+
+
+def test_record_session_joined_for_an_unknown_player_id_is_a_silent_no_op():
+    store = AccountStore()
+    store.record_session_joined("not-a-real-player-id", "some-session")  # should not raise

@@ -5,7 +5,7 @@ import hmac
 import json
 import secrets
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -24,11 +24,28 @@ def _hash_password(password: str, salt: bytes) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS).hex()
 
 
+# Capped, most-recent-first - the Main Menu hub (ROADMAP.md, 2026-08-15)
+# only ever needs "the last few tables you were at" to offer a real
+# Continue list, not a full unbounded history; capping keeps the account
+# record itself small regardless of how many sessions a player has ever
+# joined.
+_MAX_RECENT_SESSIONS = 10
+
+
 class Account(BaseModel):
     username: str
     player_id: str
     password_hash: str
     salt: str  # hex-encoded, not raw bytes - JSON has no bytes type
+    # Which session_ids this player_id has actually joined, most-recent-
+    # first - the real, server-owned answer to "what tables can I
+    # continue," replacing the old client-local-file-only reconnect
+    # story (ROADMAP.md, 2026-08-15's Main Menu hub). A session_id
+    # appearing here is not the character itself (that still lives on
+    # the session's own Session.characters[player_id], server/state.py)
+    # - just a pointer to where a real one might already exist, so the
+    # Main Menu can offer it without inventing a second character store.
+    recent_sessions: list[str] = []
 
 
 @dataclass
@@ -41,6 +58,7 @@ class AuthResult:
     player_id: str | None = None
     is_new_account: bool = False
     error: str | None = None
+    recent_sessions: list[str] = field(default_factory=list)
 
 
 class AccountStore:
@@ -114,4 +132,30 @@ class AccountStore:
         # characters of the real hash it got right.
         if not hmac.compare_digest(candidate_hash, existing.password_hash):
             return AuthResult(success=False, error="Incorrect password.")
-        return AuthResult(success=True, player_id=existing.player_id, is_new_account=False)
+        return AuthResult(
+            success=True, player_id=existing.player_id, is_new_account=False,
+            recent_sessions=list(existing.recent_sessions),
+        )
+
+    def record_session_joined(self, player_id: str, session_id: str) -> None:
+        """Called once a real join_session actually succeeds for this
+        player_id (server/transport.py) - moves session_id to the front
+        of that account's recent_sessions, deduplicating and capping at
+        _MAX_RECENT_SESSIONS. A linear scan for the matching player_id,
+        not a second player_id->username index - account counts on a
+        small self-hosted game are tiny, the same "don't build a second
+        data structure until a real case forces it" reasoning this
+        project already applies elsewhere. Silently a no-op if no
+        account matches (shouldn't happen in practice - player_id only
+        ever comes from a real prior login - but this is bookkeeping,
+        not a security boundary, so it fails soft rather than raising
+        into the connection's own message loop)."""
+        accounts = self._load_all()
+        for username, account in accounts.items():
+            if account.player_id != player_id:
+                continue
+            recent = [sid for sid in account.recent_sessions if sid != session_id]
+            recent.insert(0, session_id)
+            accounts[username] = account.model_copy(update={"recent_sessions": recent[:_MAX_RECENT_SESSIONS]})
+            self._save_all(accounts)
+            return

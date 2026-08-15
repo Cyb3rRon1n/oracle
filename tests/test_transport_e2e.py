@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from websockets.asyncio.client import connect
 
-from client.app import CharacterSheetPanel, DungeonMasterApp, LobbyScreen, SessionScreen, WelcomeScreen
+from client.app import CharacterSheetPanel, DungeonMasterApp, LobbyScreen, MainMenuScreen, SessionScreen, WelcomeScreen
 from server.accounts import AccountStore
 from server.engine import GameEngine
 from server.state import Session
@@ -36,6 +36,16 @@ async def _login_over_ws(ws, username: str, password: str = "test-password") -> 
     result = Envelope.from_json(await asyncio.wait_for(ws.recv(), timeout=5))
     assert result.type == "login_result"
     assert result.payload["success"], result.payload.get("error")
+    # A real login_result is immediately followed by a real
+    # tavern_directory push now too (ROADMAP.md, 2026-08-15's Tavern
+    # lobby) - drained here, not left for every caller to know about
+    # and handle individually, so this helper's own contract ("returns
+    # once logged in, nothing else queued") stays simple. Callers that
+    # specifically want to assert on the real tavern_directory content
+    # don't use this helper for that login (see e.g. this file's own
+    # Tavern-specific tests, which read both messages directly).
+    directory = Envelope.from_json(await asyncio.wait_for(ws.recv(), timeout=5))
+    assert directory.type == "tavern_directory"
     return result.payload["player_id"]
 
 
@@ -294,6 +304,23 @@ async def _login_and_wait(app, pilot, username: str, password: str = "test-passw
     should use this returned value for any later server-side assertion
     (e.g. session.characters[player_id]), not a locally invented one."""
     await app.login(username, password)
+
+    def _main_menu_ready() -> bool:
+        if not (app.player_id is not None and isinstance(app.screen, MainMenuScreen)):
+            return False
+        try:
+            app.screen.query_one("#new-character")
+            return True
+        except NoMatches:
+            return False
+
+    await _wait_until(_main_menu_ready)
+    # Real accounts land on MainMenuScreen first now (ROADMAP.md,
+    # 2026-08-15), not WelcomeScreen directly - every existing caller of
+    # this helper expects to land on WelcomeScreen, so click through the
+    # hub's own "New Character" choice rather than touching each of this
+    # file's many call sites individually.
+    await pilot.click("#new-character")
 
     def _welcome_screen_ready() -> bool:
         # Not just isinstance(app.screen, WelcomeScreen) - push_screen()
@@ -1655,11 +1682,7 @@ async def test_join_session_with_a_mismatched_sender_id_after_login_is_refused()
     try:
         ws = await connect("ws://localhost:8822")
         try:
-            await ws.send(Envelope(
-                type="login", session_id="", sender_id="",
-                payload={"username": "rowan", "password": "correct horse battery staple"},
-            ).to_json())
-            await asyncio.wait_for(ws.recv(), timeout=5)  # login_result, not asserted on here
+            await _login_over_ws(ws, "rowan")  # the real player_id is deliberately not used below
 
             await ws.send(Envelope(
                 type="join_session", session_id="e2e-session", sender_id="a-different-player-id-entirely",
@@ -1711,6 +1734,183 @@ async def test_login_with_wrong_password_over_a_real_connection_is_refused():
             assert result.payload["player_id"] is None
         finally:
             await second_ws.close()
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
+async def test_recent_sessions_populate_on_a_later_login_over_real_connections():
+    # Real Main Menu "Continue" support (ROADMAP.md, 2026-08-15) - a
+    # session_id actually joined shows up in a later login's own
+    # recent_sessions, over real connections end to end, not just at
+    # the AccountStore unit level (tests/test_accounts.py).
+    def engine_factory(session_id, broadcast, send_to):
+        return GameEngine(Session(session_id=session_id), StubDM(), broadcast, send_to, enable_opening_scene=False)
+
+    accounts = AccountStore()  # one shared store, reused across the two logins below
+    transport = Transport(engine_factory, accounts=accounts)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8824))
+    await asyncio.sleep(0.3)
+
+    try:
+        first_ws = await connect("ws://localhost:8824")
+        try:
+            player_id = await _login_over_ws(first_ws, "rowan")
+            await first_ws.send(Envelope(
+                type="join_session", session_id="the-tavern-of-doom", sender_id=player_id,
+                payload={"player_name": "Rowan"},
+            ).to_json())
+            await _recv_until(first_ws, "state_sync")
+        finally:
+            await first_ws.close()
+
+        second_ws = await connect("ws://localhost:8824")
+        try:
+            await second_ws.send(Envelope(
+                type="login", session_id="", sender_id="",
+                payload={"username": "rowan", "password": "test-password"},
+            ).to_json())
+            result = Envelope.from_json(await asyncio.wait_for(second_ws.recv(), timeout=5))
+            assert result.payload["recent_sessions"] == ["the-tavern-of-doom"]
+        finally:
+            await second_ws.close()
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
+async def test_login_gets_an_immediate_empty_tavern_directory():
+    def engine_factory(session_id, broadcast, send_to):
+        return GameEngine(Session(session_id=session_id), StubDM(), broadcast, send_to)
+
+    transport = Transport(engine_factory, accounts=AccountStore())
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8825))
+    await asyncio.sleep(0.3)
+
+    try:
+        ws = await connect("ws://localhost:8825")
+        try:
+            await ws.send(Envelope(
+                type="login", session_id="", sender_id="",
+                payload={"username": "rowan", "password": "test-password"},
+            ).to_json())
+            await asyncio.wait_for(ws.recv(), timeout=5)  # login_result
+
+            raw = await asyncio.wait_for(ws.recv(), timeout=5)
+            directory = Envelope.from_json(raw)
+            assert directory.type == "tavern_directory"
+            assert directory.payload["sessions"] == []
+        finally:
+            await ws.close()
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
+async def test_two_logged_in_players_can_chat_in_the_tavern():
+    # Real lobby-wide chat (ROADMAP.md, 2026-08-15) - genuinely separate
+    # from a real session's own chat_message, which needs a session_id;
+    # neither player here has joined a table at all.
+    def engine_factory(session_id, broadcast, send_to):
+        return GameEngine(Session(session_id=session_id), StubDM(), broadcast, send_to)
+
+    transport = Transport(engine_factory, accounts=AccountStore())
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8826))
+    await asyncio.sleep(0.3)
+
+    try:
+        ws1 = await connect("ws://localhost:8826")
+        ws2 = await connect("ws://localhost:8826")
+        try:
+            player1_id = await _login_over_ws(ws1, "rook")
+            await _login_over_ws(ws2, "rowan")
+
+            await ws1.send(Envelope(
+                type="tavern_chat", session_id="", sender_id=player1_id,
+                payload={"text": "anyone up for an adventure?"},
+            ).to_json())
+
+            heard_by_1 = await _recv_until(ws1, "tavern_message")
+            heard_by_2 = await _recv_until(ws2, "tavern_message")
+            for heard in (heard_by_1, heard_by_2):
+                assert heard.payload["name"] == "rook"
+                assert heard.payload["text"] == "anyone up for an adventure?"
+        finally:
+            await ws1.close()
+            await ws2.close()
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
+async def test_tavern_directory_updates_when_a_lobby_player_joins_a_real_table():
+    def engine_factory(session_id, broadcast, send_to):
+        return GameEngine(Session(session_id=session_id), StubDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory, accounts=AccountStore())
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8827))
+    await asyncio.sleep(0.3)
+
+    try:
+        watcher_ws = await connect("ws://localhost:8827")
+        joiner_ws = await connect("ws://localhost:8827")
+        try:
+            await _login_over_ws(watcher_ws, "watcher")
+            joiner_id = await _login_over_ws(joiner_ws, "joiner")
+
+            await joiner_ws.send(Envelope(
+                type="join_session", session_id="the-tavern-of-doom", sender_id=joiner_id,
+                payload={"player_name": "Joiner"},
+            ).to_json())
+
+            # watcher never joined anything - still "in the Tavern" - and
+            # gets a real, updated directory now that joiner is seated.
+            updated = await _recv_until(watcher_ws, "tavern_directory")
+            assert updated.payload["sessions"] == [
+                {"session_id": "the-tavern-of-doom", "player_count": 1, "started": False}
+            ]
+        finally:
+            await watcher_ws.close()
+            await joiner_ws.close()
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
+async def test_tavern_directory_updates_when_a_seated_player_disconnects():
+    def engine_factory(session_id, broadcast, send_to):
+        return GameEngine(Session(session_id=session_id), StubDM(), broadcast, send_to, enable_opening_scene=False)
+
+    transport = Transport(engine_factory, accounts=AccountStore())
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8828))
+    await asyncio.sleep(0.3)
+
+    try:
+        watcher_ws = await connect("ws://localhost:8828")
+        leaver_ws = await connect("ws://localhost:8828")
+        try:
+            await _login_over_ws(watcher_ws, "watcher")
+            leaver_id = await _login_over_ws(leaver_ws, "leaver")
+
+            await leaver_ws.send(Envelope(
+                type="join_session", session_id="the-tavern-of-doom", sender_id=leaver_id,
+                payload={"player_name": "Leaver"},
+            ).to_json())
+            await _recv_until(watcher_ws, "tavern_directory")  # the join's own update, not asserted on here
+
+            await leaver_ws.close()
+
+            emptied = await _recv_until(watcher_ws, "tavern_directory")
+            assert emptied.payload["sessions"] == []
+        finally:
+            await watcher_ws.close()
+            if leaver_ws.close_code is None:
+                await leaver_ws.close()
     finally:
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):

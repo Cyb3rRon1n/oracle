@@ -1020,6 +1020,16 @@ class GameEngine:
         # started rather than getting dropped back into a pre-game lobby.
         return self._session.started or bool(self._session.log)
 
+    @property
+    def is_started(self) -> bool:
+        """Public counterpart to _has_started() - Transport's Tavern
+        directory (ROADMAP.md, 2026-08-15) needs this from outside the
+        engine (whether each active table is still waiting or already
+        underway) without reaching into a private method or
+        Session.started directly, which alone misses the same real-save
+        fallback _has_started() already handles."""
+        return self._has_started()
+
     def _resume_recap(self) -> str:
         """Composes _on_join_session's private "story so far" recap, sent
         to anyone (returning or brand-new) joining an already-started
