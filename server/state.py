@@ -135,6 +135,13 @@ class CharacterSheet(BaseModel):
     # field - real, old sessions/*.json data, not required by
     # model_validate_json's own default.
     background: str = ""
+    # Real 5e background traits: personality, ideals, bonds, and flaws.
+    # These add roleplaying depth and can be used by the DM for
+    # inspiration awards. Optional - not required for mechanics.
+    personality_traits: str = ""
+    ideals: str = ""
+    bonds: str = ""
+    flaws: str = ""
     xp: int = 0
     level: int = 1
     # Real 5e's own unarmored baseline (10 + DEX modifier), or an equipped
@@ -505,6 +512,14 @@ class CharacterSheet(BaseModel):
         if notes and notes != self.notes:
             self.notes = notes
             changes.append("notes updated")
+
+        # Real 5e background traits: optional roleplaying depth fields.
+        # Set by the DM when establishing a character's personality.
+        for trait_field in ("personality_traits", "ideals", "bonds", "flaws"):
+            trait_value = update.get(trait_field)
+            if trait_value and trait_value != getattr(self, trait_field):
+                setattr(self, trait_field, trait_value)
+                changes.append(f"{trait_field} updated")
 
         disposition = update.get("disposition")
         # A real model-input boundary, not decorative: disposition is a

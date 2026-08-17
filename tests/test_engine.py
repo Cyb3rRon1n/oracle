@@ -5918,3 +5918,28 @@ async def test_hit_dice_at_creation():
     await _join_as(engine, player_id, "fighter")
 
     assert session.characters[player_id].hit_dice_remaining == 1
+
+
+# ── Background Traits tests ────────────────────────────────────────
+
+
+async def test_background_traits_can_be_set():
+    """Background traits can be set via apply_update."""
+    engine, session, _ = make_engine(UpdateCharacterDM({
+        "personality_traits": "I always have a plan for what to do when things go wrong.",
+        "ideals": "Freedom. Tyrants must not be allowed to oppress the weak.",
+        "bonds": "I swore my sword to the queen, and I will not break that oath.",
+        "flaws": "I have a weakness for the bottle.",
+    }))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I establish my background"},
+    ))
+
+    assert session.characters[player_id].personality_traits == "I always have a plan for what to do when things go wrong."
+    assert session.characters[player_id].ideals == "Freedom. Tyrants must not be allowed to oppress the weak."
+    assert session.characters[player_id].bonds == "I swore my sword to the queen, and I will not break that oath."
+    assert session.characters[player_id].flaws == "I have a weakness for the bottle."

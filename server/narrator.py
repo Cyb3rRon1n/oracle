@@ -235,6 +235,34 @@ UPDATE_CHARACTER_TOOL = {
                     "character."
                 ),
             },
+            "personality_traits": {
+                "type": "string",
+                "description": (
+                    "A brief personality trait for roleplaying depth (e.g. 'I always have a "
+                    "plan for what to do when things go wrong'). Only meaningful for 'self'."
+                ),
+            },
+            "ideals": {
+                "type": "string",
+                "description": (
+                    "What drives this character (e.g. 'Freedom. Tyrants must not be allowed "
+                    "to oppress the weak'). Only meaningful for 'self'."
+                ),
+            },
+            "bonds": {
+                "type": "string",
+                "description": (
+                    "What ties this character to the world (e.g. 'I swore my sword to the "
+                    "queen, and I will not break that oath'). Only meaningful for 'self'."
+                ),
+            },
+            "flaws": {
+                "type": "string",
+                "description": (
+                    "A character flaw (e.g. 'I have a weakness for the bottle'). "
+                    "Only meaningful for 'self'."
+                ),
+            },
             "drop_concentration": {
                 "type": "boolean",
                 "description": (
