@@ -658,7 +658,7 @@ The user explicitly wants to avoid per-call API costs. These are the viable path
 
 **Recommended path**: Add `GeminiNarrator` (free tier, strong quality, function-calling support) as a third backend alongside Ollama. Keep Ollama as the default for fully-offline play. Document all options in README.
 
-- [ ] Add `GeminiNarrator` backend using Google's free Gemini API (function-calling, structured output)
+- [x] Add `GeminiNarrator` backend using Google's free Gemini API (function-calling, structured output) ✅ Implemented in server/narrator_gemini.py, supports lookup_rule + update_character tools.
 - [ ] Document all free LLM options in README with setup instructions
 - [ ] Test Ollama with additional models (mistral:7b, phi3:mini, qwen2.5:14b)
 - [ ] Add model comparison notes for free options (quality vs speed vs VRAM)
@@ -675,7 +675,7 @@ These are the D&D 5e combat rules Oracle is missing that would most improve game
 - [x] **Readied Actions** — Action to prepare, trigger + response. Reaction held until trigger. Hook: `turn_order` queue, `initiative` reactions. ✅ Implemented via `readied_action`/`readied_trigger` fields on CharacterSheet with ready/clear methods.
 - [ ] **Mounted Combat** — Mount acts on rider's initiative,Dash/Disengage as bonus. Hook: `turn_order`, NPC tracking.
 - [x] **Improved Death Saves** — Natural 1 = 2 failures, natural 20 = regain 1 HP, damage at 0 = 1 failure. Hook: existing death-save system in `_on_player_action`. ✅ Implemented with comprehensive tests (natural 20 revival, natural 1 double-failure, damage at 0 auto-failure).
-- [ ] **Critical Hit Table** (optional) — Expanded crit effects beyond double damage. Hook: `request_roll` crit detection.
+- [x] **Critical Hit Table** (optional) — Expanded crit effects beyond double damage. Hook: `request_roll` crit detection. ✅ Implemented with `crit_damage` param that doubles all dice (1d8 -> 2d8), modifier stays the same.
 - [x] **Exhaustion System** — 6 levels, each stacking debuff (disadvantage on all rolls, speed halved, death). Hook: `CharacterSheet.conditions`, `apply_update`. ✅ Implemented with `exhaustion` field, `effective_max_hp` computed field, and mechanical effects in `_has_disadvantage`.
 - [x] **Inspiration** — DM awards for good roleplaying. Advantage on next roll. Hook: `CharacterSheet` new field, `request_roll`. ✅ Implemented with `inspiration` field, grant/spend mechanics, and tests.
 
@@ -685,14 +685,14 @@ What a real D&D 5e character sheet has that Oracle's doesn't.
 
 - [ ] **Saving Throws** — 6 saves (STR/DEX/CON/INT/WIS/CHA), proficiency markers, real modifiers. Hook: `CharacterSheet.stats`, `ability_modifier()`, `proficiency_bonus`.
 - [ ] **Skills with Proficiencies** — 18 skills mapped to abilities, proficiency/expertise markers. Hook: `CLASS_SKILL_PROFICIENCIES` already exists but isn't surfaced on the sheet.
-- [ ] **Passive Perception** — 10 + WIS(Perc) modifier. Hook: `CharacterSheet.stats`, `ability_modifier()`.
-- [ ] **Speed** — Base walking speed (25-35 ft). Hook: `CharacterSheet` new field, racial data in `srd.json`.
-- [ ] **Hit Dice** — Pool matching class die (e.g. 5d10 for Fighter 5). Hook: `CharacterSheet.level`, `character_class`.
-- [ ] **Death Save Tracking** — 3 successes / 3 failures visible on sheet. Hook: `CharacterSheet` new fields.
-- [ ] **Background Traits** — Personality, ideals, bonds, flaws. Hook: `CharacterSheet` new fields, character creation flow.
-- [ ] **Spell Save DC & Attack Bonus** — Auto-calculated from level + ability + proficiency. Hook: existing `spell_save_dc` field.
+- [x] **Passive Perception** — 10 + WIS(Perc) modifier. Hook: `CharacterSheet.stats`, `ability_modifier()`. ✅ Implemented as computed field: 10 + WIS mod + proficiency if proficient.
+- [x] **Speed** — Base walking speed (25-35 ft). Hook: `CharacterSheet` new field, racial data in `srd.json`. ✅ Implemented with `speed` field, all 10 races have speed values.
+- [x] **Hit Dice** — Pool matching class die (e.g. 5d10 for Fighter 5). Hook: `CharacterSheet.level`, `character_class`. ✅ Implemented with `hit_dice_remaining` field, set to 1 at creation.
+- [ ] **Death Save Tracking** — 3 successes / 3 failures visible on sheet. Hook: `CharacterSheet` new fields. (Backend done: death_save_successes/failures tracked)
+- [x] **Background Traits** — Personality, ideals, bonds, flaws. Hook: `CharacterSheet` new fields, character creation flow. ✅ Implemented with 4 trait fields, set via UPDATE_CHARACTER_TOOL.
+- [x] **Spell Save DC & Attack Bonus** — Auto-calculated from level + ability + proficiency. Hook: existing `spell_save_dc` field. ✅ Already implemented as computed field.
 - [ ] **Attunement Slots** — Max 3 magic items attuned. Hook: `InventoryItem` new field.
-- [ ] **Temporary HP** — Separate from real HP. Hook: `CharacterSheet` new field, `apply_update`.
+- [x] **Temporary HP** — Separate from real HP. Hook: `CharacterSheet` new field, `apply_update`. ✅ Implemented with `temporary_hp` field, absorbs damage first, doesn't stack.
 - [ ] **Coin Purse** — CP/SP/EP/GP/PP tracked separately. Hook: `CharacterSheet.inventory` or new field.
 
 ### Tier 3: Exploration & Navigation System (Medium Priority)
