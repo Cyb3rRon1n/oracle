@@ -158,6 +158,14 @@ UPDATE_CHARACTER_TOOL = {
                 "type": "integer",
                 "description": "Change in hit points. Negative for damage, positive for healing.",
             },
+            "temporary_hp": {
+                "type": "integer",
+                "description": (
+                    "Set temporary hit points (separate from real HP, absorbed first "
+                    "when taking damage). Only set when granting temp HP (e.g. from "
+                    "a spell). Don't combine with hp_delta in the same call."
+                ),
+            },
             "rest": {
                 "type": "string",
                 "enum": ["short", "long"],

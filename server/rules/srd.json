@@ -1177,6 +1177,7 @@
   "races": {
     "human": {
       "name": "Human",
+      "speed": 30,
       "ability_score_increase": {
         "str": 1,
         "dex": 1,
@@ -1191,6 +1192,7 @@
     },
     "elf": {
       "name": "Elf",
+      "speed": 30,
       "ability_score_increase": {
         "dex": 2
       },
@@ -1203,6 +1205,7 @@
     },
     "dwarf": {
       "name": "Dwarf",
+      "speed": 25,
       "ability_score_increase": {
         "con": 2
       },
@@ -1214,6 +1217,7 @@
     },
     "halfling": {
       "name": "Halfling",
+      "speed": 25,
       "ability_score_increase": {
         "dex": 2
       },
@@ -1225,6 +1229,7 @@
     },
     "high_elf": {
       "name": "High Elf",
+      "speed": 30,
       "ability_score_increase": {
         "dex": 2,
         "int": 1
@@ -1241,6 +1246,7 @@
     },
     "wood_elf": {
       "name": "Wood Elf",
+      "speed": 35,
       "ability_score_increase": {
         "dex": 2,
         "wis": 1
@@ -1257,6 +1263,7 @@
     },
     "hill_dwarf": {
       "name": "Hill Dwarf",
+      "speed": 25,
       "ability_score_increase": {
         "con": 2,
         "wis": 1
@@ -1270,6 +1277,7 @@
     },
     "mountain_dwarf": {
       "name": "Mountain Dwarf",
+      "speed": 25,
       "ability_score_increase": {
         "con": 2,
         "str": 2
@@ -1283,6 +1291,7 @@
     },
     "lightfoot_halfling": {
       "name": "Lightfoot Halfling",
+      "speed": 25,
       "ability_score_increase": {
         "dex": 2,
         "cha": 1
@@ -1296,6 +1305,7 @@
     },
     "stout_halfling": {
       "name": "Stout Halfling",
+      "speed": 25,
       "ability_score_increase": {
         "dex": 2,
         "con": 1

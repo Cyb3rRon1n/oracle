@@ -227,6 +227,14 @@ class CharacterSheet(BaseModel):
     # text and the response action text. None when no action is readied.
     readied_action: str | None = None
     readied_trigger: str | None = None
+    # Real 5e speed: base walking speed in feet (typically 25-35 ft).
+    # Modified by race, armor, spells, and exhaustion. Used for movement
+    # tracking and opportunity attacks.
+    speed: int = 30
+    # Real 5e temporary hit points: separate from real HP, absorbed first
+    # when taking damage. Not healed by healing - only by spells that
+    # specifically grant temp HP. Reset on long rest.
+    temporary_hp: int = 0
 
     @computed_field
     @property
@@ -370,6 +378,14 @@ class CharacterSheet(BaseModel):
         if hp_delta:
             prior_hp = self.hp
             prior_dying = self.dying
+            # Real 5e temporary HP: absorbed first when taking damage.
+            # Temporary HP don't stack - new temp HP only replaces if higher.
+            if hp_delta < 0 and self.temporary_hp > 0:
+                temp_absorbed = min(self.temporary_hp, abs(hp_delta))
+                self.temporary_hp -= temp_absorbed
+                hp_delta += temp_absorbed  # reduce damage by temp HP absorbed
+                if temp_absorbed > 0:
+                    changes.append(f"temporary HP absorbed {temp_absorbed} (now {self.temporary_hp})")
             # Cap at effective_max_hp (accounts for exhaustion level 4)
             self.hp = max(0, min(self.effective_max_hp, self.hp + int(hp_delta)))
             sign = "+" if hp_delta > 0 else ""
@@ -390,6 +406,15 @@ class CharacterSheet(BaseModel):
                 self.death_save_successes = 0
                 self.death_save_failures = 0
                 changes.append(f"{self.name} drops to 0 HP and begins dying - roll a death save")
+
+        # Real 5e temporary HP: set via update_character. Temporary HP
+        # don't stack - new temp HP only replaces if higher than current.
+        temporary_hp = update.get("temporary_hp")
+        if temporary_hp is not None:
+            if temporary_hp > self.temporary_hp:
+                self.temporary_hp = temporary_hp
+                changes.append(f"temporary HP set to {self.temporary_hp}")
+            # If new temp HP is lower or equal, no change (real 5e rule)
 
         # A real recovery mechanic, closing a gap that's existed since HP
         # was first tracked: healing had always meant the DM narrating a

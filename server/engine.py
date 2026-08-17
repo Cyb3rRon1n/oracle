@@ -810,6 +810,8 @@ def build_starting_character(
     known_spells = list(CLASS_KNOWN_SPELLS.get(character_class.strip().lower(), []))
     spell_slots = rules.spell_slots_by_level(1) if known_spells else {}
     equipped_weapon, equipped_armor, equipped_shield = _auto_equip_starting_gear(inventory, rules)
+    # Real 5e speed: from race data, default 30 ft if not specified
+    race_speed = race_entry.get("speed", 30) if race_entry else 30
     return CharacterSheet(
         player_id=player_id,
         name=name,
@@ -827,6 +829,7 @@ def build_starting_character(
         spell_slots=dict(spell_slots),
         max_spell_slots=dict(spell_slots),
         background=background,
+        speed=race_speed,
     )
 
 

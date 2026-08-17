@@ -128,6 +128,13 @@ _OUTCOME_PROPERTIES = {
             "Clamped to 0-6 range. Level 6 = death."
         ),
     },
+    "temporary_hp": {
+        "type": "integer",
+        "description": (
+            "Set temporary hit points (separate from real HP, absorbed first "
+            "when taking damage). Only set when granting temp HP."
+        ),
+    },
 }
 
 STRUCTURED_OUTPUT_SCHEMA = {
@@ -707,6 +714,8 @@ class OllamaNarrator:
                 update["grant_inspiration"] = True
             if data.get("exhaustion_delta"):
                 update["exhaustion_delta"] = data["exhaustion_delta"]
+            if data.get("temporary_hp"):
+                update["temporary_hp"] = data["temporary_hp"]
             apply_update(update)
 
         if self._world_updates and data.get("world_change") and update_world is not None:

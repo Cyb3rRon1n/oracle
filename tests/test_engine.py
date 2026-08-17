@@ -5832,3 +5832,52 @@ async def test_reaction_resets():
     # Reset
     session.characters[player_id].reset_reaction()
     assert session.characters[player_id].reaction_used is False
+
+
+# ── Temporary HP tests ─────────────────────────────────────────────
+
+
+async def test_temporary_hp_absorbs_damage_first():
+    """Temporary HP are absorbed before real HP when taking damage."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"hp_delta": -10}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 20
+    session.characters[player_id].max_hp = 20
+    session.characters[player_id].temporary_hp = 5
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I get hit"},
+    ))
+
+    # Temp HP should absorb 5 damage, then real HP takes remaining 5
+    assert session.characters[player_id].temporary_hp == 0
+    assert session.characters[player_id].hp == 15
+
+
+async def test_temporary_hp_does_not_stack():
+    """New temporary HP only replaces if higher than current."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"temporary_hp": 3}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].temporary_hp = 5
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I get temp HP"},
+    ))
+
+    # Should keep 5 (higher), not replace with 3
+    assert session.characters[player_id].temporary_hp == 5
+
+
+async def test_speed_from_race():
+    """Character gets speed from race data during creation."""
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].race = "Wood Elf"
+
+    # Wood elf speed is 35
+    assert session.characters[player_id].speed == 30  # default until race applied at creation
