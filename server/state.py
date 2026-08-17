@@ -235,6 +235,25 @@ class CharacterSheet(BaseModel):
     # when taking damage. Not healed by healing - only by spells that
     # specifically grant temp HP. Reset on long rest.
     temporary_hp: int = 0
+    # Real 5e hit dice: pool matching class hit die (e.g. 5d10 for
+    # Fighter level 5). Spent on short rests to heal (simplified to
+    # "restore half of missing HP" in this implementation).
+    hit_dice_remaining: int = 0
+
+    @computed_field
+    @property
+    def passive_perception(self) -> int:
+        """Real 5e formula: 10 + WIS modifier. If proficient in Perception,
+        add proficiency bonus too. Computed from tracked stats."""
+        wis_mod = self.stat_modifiers.get("wis", 0)
+        base = 10 + wis_mod
+        # Check if proficient in Perception (CLASS_SKILL_PROFICIENCIES)
+        from .engine import CLASS_SKILL_PROFICIENCIES
+        class_key = self.character_class.strip().lower()
+        proficiencies = CLASS_SKILL_PROFICIENCIES.get(class_key, set())
+        if "perception" in proficiencies:
+            base += self.proficiency_bonus
+        return base
 
     @computed_field
     @property

@@ -830,6 +830,7 @@ def build_starting_character(
         max_spell_slots=dict(spell_slots),
         background=background,
         speed=race_speed,
+        hit_dice_remaining=1,  # Level 1 = 1 hit die
     )
 
 

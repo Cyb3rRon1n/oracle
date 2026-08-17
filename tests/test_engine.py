@@ -5881,3 +5881,40 @@ async def test_speed_from_race():
 
     # Wood elf speed is 35
     assert session.characters[player_id].speed == 30  # default until race applied at creation
+
+
+# ── Passive Perception tests ───────────────────────────────────────
+
+
+async def test_passive_perception_basic():
+    """Passive perception is 10 + WIS modifier."""
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["wis"] = 14  # +2 mod
+
+    assert session.characters[player_id].passive_perception == 12
+
+
+async def test_passive_perception_with_proficiency():
+    """Passive perception adds proficiency bonus if proficient."""
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["wis"] = 14  # +2 mod
+    session.characters[player_id].character_class = "Fighter"  # proficient in perception
+
+    # Level 1 proficiency bonus is 2
+    assert session.characters[player_id].passive_perception == 14  # 10 + 2 + 2
+
+
+# ── Hit Dice tests ─────────────────────────────────────────────────
+
+
+async def test_hit_dice_at_creation():
+    """Character starts with 1 hit die at level 1."""
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter")
+
+    assert session.characters[player_id].hit_dice_remaining == 1
