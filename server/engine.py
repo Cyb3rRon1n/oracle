@@ -1785,6 +1785,20 @@ class GameEngine:
                 if not character.consume_reaction():
                     return f"{character.name} cannot make an opportunity attack - reaction already used this round."
 
+            # Real 5e critical hit damage: when crit_damage is True,
+            # double all damage dice (e.g. 1d8 -> 2d8). Only for damage
+            # rolls after a critical hit, not for the attack roll itself.
+            # The modifier stays the same (e.g. 2d8+3, not 2d8+6).
+            crit_damage = update.get("crit_damage")
+            if crit_damage and notation:
+                import re as _re
+                match = _re.match(r"(\d+)d(\d+)(.*)", notation)
+                if match:
+                    num_dice = int(match.group(1))
+                    die_size = match.group(2)
+                    rest = match.group(3)
+                    notation = f"{num_dice * 2}d{die_size}{rest}"
+
             try:
                 total, rolls, sides = dice.roll(
                     notation,

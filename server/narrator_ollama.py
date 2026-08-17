@@ -247,6 +247,14 @@ STRUCTURED_OUTPUT_ROLL_SCHEMA = {
                 "Omit when there's no clear single target."
             ),
         },
+        "roll_crit_damage": {
+            "type": "boolean",
+            "description": (
+                "Only when roll_requested is true and this is a damage roll after a "
+                "critical hit: set to true to double all damage dice per real 5e rules "
+                "(e.g. 1d8 becomes 2d8). Only for damage rolls, not attack rolls."
+            ),
+        },
     },
     "required": ["narration", "mechanical_change", "roll_requested"],
 }
@@ -678,6 +686,8 @@ class OllamaNarrator:
                 roll_update["roll_kind"] = data["roll_kind"]
             if data.get("roll_target"):
                 roll_update["target"] = data["roll_target"]
+            if data.get("roll_crit_damage"):
+                roll_update["crit_damage"] = True
             roll_result_text = request_roll(roll_update)
 
             followup_prompt = f"Character:\n{character_summary}\n\n"

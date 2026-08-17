@@ -536,6 +536,14 @@ REQUEST_ROLL_TOOL = {
                     "(NPC attacks player), narrate it yourself."
                 ),
             },
+            "crit_damage": {
+                "type": "boolean",
+                "description": (
+                    "True if this damage roll is for a critical hit (natural 20 on the "
+                    "attack roll). Doubles all damage dice per real 5e rules. Only for "
+                    "damage rolls after a critical hit, not for the attack roll itself."
+                ),
+            },
         },
         "required": ["dice"],
     },

@@ -5943,3 +5943,46 @@ async def test_background_traits_can_be_set():
     assert session.characters[player_id].ideals == "Freedom. Tyrants must not be allowed to oppress the weak."
     assert session.characters[player_id].bonds == "I swore my sword to the queen, and I will not break that oath."
     assert session.characters[player_id].flaws == "I have a weakness for the bottle."
+
+
+# ── Critical Hit Damage tests ──────────────────────────────────────
+
+
+async def test_crit_damage_doubles_dice():
+    """crit_damage doubles all dice in notation (1d8 -> 2d8)."""
+    dm = RequestRollDM({"dice": "1d8", "crit_damage": True, "reason": "critical damage"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack for crit damage"},
+    ))
+
+    # Check dice_result events for the doubled roll
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    # 1d8 doubled to 2d8: max total is 16
+    assert payload["result"] <= 16
+    # The dice notation should show 2d8
+    assert "2d8" in payload["dice"]
+
+
+async def test_crit_damage_without_flag():
+    """Without crit_damage, dice are not doubled."""
+    dm = RequestRollDM({"dice": "1d8", "reason": "normal damage"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack for normal damage"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    # Normal 1d8: max total is 8
+    assert payload["result"] <= 8
+    assert "1d8" in payload["dice"]
