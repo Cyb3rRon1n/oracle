@@ -1915,3 +1915,40 @@ async def test_tavern_directory_updates_when_a_seated_player_disconnects():
         server_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await server_task
+
+
+async def test_leave_session_moves_player_back_to_lobby():
+    session = Session(session_id="leave-e2e")
+
+    def engine_factory(session_id, broadcast, send_to):
+        return GameEngine(session, StubDM(), broadcast, send_to)
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8829))
+    await asyncio.sleep(0.3)
+
+    try:
+        ws = await connect("ws://localhost:8829")
+        try:
+            player_id = await _login_over_ws(ws, "leaver")
+            await ws.send(Envelope(
+                type="join_session", session_id="leave-e2e", sender_id=player_id,
+                payload={"player_name": "Leaver"},
+            ).to_json())
+            state = await _recv_until(ws, "state_sync")
+            assert "Leaver" in str(state.payload.get("characters", {}))
+
+            await ws.send(Envelope(
+                type="leave_session", session_id="leave-e2e", sender_id=player_id,
+            ).to_json())
+            left = await _recv_until(ws, "left_session")
+            assert left.payload["player_id"] == player_id
+
+            directory = await _recv_until(ws, "tavern_directory")
+            assert directory.payload["sessions"] == []
+        finally:
+            await ws.close()
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task

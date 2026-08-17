@@ -1168,6 +1168,10 @@ class LobbyScreen(Screen):
         if not text:
             return
 
+        if text.startswith("/leave"):
+            await self.app.transport.send("leave_session", {})
+            return
+
         if text.startswith("/export"):
             filename = text[len("/export"):].strip() or "character"
             message = await self.app.export_character(filename)
@@ -1306,6 +1310,8 @@ class SessionScreen(Screen):
             await self.app.transport.send(
                 "character_edit", {"field": "unequip", "value": text[len("/unequip "):].strip()}
             )
+        elif text.startswith("/leave"):
+            await self.app.transport.send("leave_session", {})
         elif text.startswith("/export"):
             filename = text[len("/export"):].strip() or "character"
             message = await self.app.export_character(filename)
@@ -1626,6 +1632,10 @@ class DungeonMasterApp(App):
         if disadvantage_reasons:
             notation = f"{notation} (disadvantage: {', '.join(disadvantage_reasons)})"
 
+        advantage_reasons = payload.get("advantage_reasons")
+        if advantage_reasons:
+            notation = f"{notation} (advantage: {', '.join(advantage_reasons)})"
+
         # Highlight a natural max (a "20" on a d20, but generalized to
         # whatever die was actually rolled) or a natural min the same way -
         # exactly the "highlighting a natural 20" example
@@ -1638,6 +1648,8 @@ class DungeonMasterApp(App):
         highlight_rolls = rolls
         if payload.get("disadvantage") and len(rolls) == 2:
             highlight_rolls = [min(rolls)]
+        elif payload.get("advantage") and len(rolls) == 2:
+            highlight_rolls = [max(rolls)]
         rolls_text = str(rolls)
         if sides:
             if any(r == sides for r in highlight_rolls):
@@ -1753,6 +1765,16 @@ class DungeonMasterApp(App):
             pid = envelope.payload.get("player_id")
             if self.others.pop(pid, None) is not None:
                 self.refresh_sheet_widgets()
+            return
+
+        if envelope.type == "left_session":
+            self.my_character = {}
+            self.others = {}
+            self.npcs = {}
+            self.world = {}
+            self.log_tail = []
+            self.current_turn = None
+            await self.switch_screen(MainMenuScreen())
             return
 
         if envelope.type == "session_started":

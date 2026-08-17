@@ -9,7 +9,7 @@ A status snapshot and prioritized next steps — not a promise or a schedule, ju
 - Single-player skeleton: WebSocket server + Textual client, strict turn queue.
 - Persistence: session state survives server restarts; the client remembers its own identity across restarts so it reconnects as the same character.
 - Chat (`/chat <text>`) and dice rolls (`/roll <NdM[+/-K]> [reason]`) wired end-to-end, both exempt from turn order.
-- DM narration behind a swappable `NarratorBackend` (`server/narrator.py`): `AnthropicNarrator` (hosted Claude) and `OllamaNarrator` (`server/narrator_ollama.py`, free local model). Both support tool use: a local SRD lookup tool (`server/rules/`, CC-BY-4.0 dataset) for consistent mechanics, and `update_character` for real HP/inventory/condition changes. Only `AnthropicNarrator` also has `web_search` — that's an Anthropic-hosted server tool with no local equivalent.
+- DM narration behind a swappable `NarratorBackend` (`server/narrator.py`): `AnthropicNarrator` (hosted Claude), `OllamaNarrator` (`server/narrator_ollama.py`, free local model), and `GeminiNarrator` (`server/narrator_gemini.py`, free Gemini API tier). Both support tool use: a local SRD lookup tool (`server/rules/`, CC-BY-4.0 dataset) for consistent mechanics, and `update_character` for real HP/inventory/condition changes. Only `AnthropicNarrator` also has `web_search` — that's an Anthropic-hosted server tool with no local equivalent.
 - **DM memory**: a rolling window of the last 6 turns (`Session.append_turn`, `MAX_HISTORY_MESSAGES` in `server/state.py`) is threaded through as real conversation history on every `narrate()` call, replacing the old single-last-turn-only context. Chosen over full history (unbounded cost growth) and a summary hybrid (more complexity than needed right now) explicitly because of the no-spend stance.
 - **Real consequences**: an `update_character` tool (HP delta, add/remove inventory, add/remove a condition) the DM calls whenever narration should mechanically change the acting character. The engine applies it via `CharacterSheet.apply_update()` and pushes `character_update` to that player only when something actually changed (a no-op call, e.g. `hp_delta: 0`, doesn't spam an update). `CharacterSheet` gained a `conditions` field for this; the client sheet panel now renders it.
 - CI, a 44-test suite, MIT license (with the SRD data separately CC-BY-4.0 attributed), issue/PR templates.
@@ -634,6 +634,204 @@ From the owner's own idea-discussion pass on Oracle's mechanical foundation and 
 - **What a GPU actually unlocks for the reliability work already underway**: CPU-only inference is the reason every experiment this session has taken 5-20+ minutes per model per scenario (30-90s+ per turn, worse for `qwen3:8b`'s thinking mode) — that latency is *why* this project has only ever run one scenario, one time, per model. A GPU makes the kind of statistical rigor the current methodology can't afford practical: repeated runs of the same scenario per model to quantify sampling variance (exactly the "run it again to confirm" request that prompted this note), multiple distinct scenarios instead of one, and testing genuinely large models (`qwen2.5:32b`+, `qwen3:14b`/`32b`) that are impractical to even attempt on CPU. The measured 20-40x per-turn speedup above makes this concretely practical now rather than a future aspiration - re-running item 6's `--repeat` experiments on this machine is the natural next step, not yet done as part of this migration itself.
 - **`--repeat N` harness flag: built (2026-08-07), ahead of GPU migration rather than waiting for it.** `scripts/live_reliability_check.py` now runs the scenario N times against the same model and reports both a mean-of-rates and a pooled rate with the per-run spread (e.g. `run 1/3: 2/7 (29%)`, `run 2/3: 1/7 (14%)`, ... `mean of per-run rates: 21%`), instead of a single-sample point estimate — directly closes the "one true positive isn't proof" gap the `qwen3:8b` result above ran into by hand. `--out` with `--repeat > 1` writes a JSON report shaped `{repeat, aggregate, runs: [[...], [...]]}` rather than the single-run shape, via new `run_stats()`/`aggregate_stats()`/`write_json_repeat()` functions (6 new tests, `tests/test_live_reliability_check.py`, using a fresh `ScriptedNarrator` per simulated run). Built now, while still CPU-only, because the owner's structural-readiness goal ahead of a planned GPU move (see above) is exactly this kind of "have the tooling ready before the hardware makes it cheap to use" work — each repeat still costs as much wall-clock time as a single run today, so using `--repeat` with anything above 2-3 remains impractical until then, but the capability no longer needs to be built later under time pressure.
 - **Image generation, revisited**: local Stable Diffusion (via ComfyUI, InvokeAI, or a bare `diffusers` script) is impractical on this project's current CPU-only dev hardware — text generation alone is already slow at 30-90s/turn; image diffusion on pure CPU is typically far slower per image. An `ImageBackend` protocol (mirroring `NarratorBackend`'s existing swappable-interface pattern) with a local ComfyUI/SD implementation becomes realistic on an 11GB GPU. A hosted alternative (OpenAI, Stability AI, Replicate, etc.) would still be a legitimate separate backend for users without a GPU, same relationship as `AnthropicNarrator`/`OllamaNarrator` today — paid+fast vs. free+hardware-dependent.
+
+## Comprehensive Virtual Tabletop Implementation Checklist
+
+Research-derived roadmap covering what real tabletop RPGs, VTTs (Roll20/Foundry/Fantasy Grounds), and D&D Beyond offer that Oracle doesn't yet. Organized by category, prioritized by gameplay impact. Each item includes what it is, why it matters, and where it hooks into the existing codebase.
+
+### Free LLM Options (No-Cost Narrator Backends)
+
+The user explicitly wants to avoid per-call API costs. These are the viable paths:
+
+| Option | Cost | Quality | Notes |
+|--------|------|---------|-------|
+| **Ollama + qwen2.5:7b/14b** | Free (local GPU) | Good for tool-calling | Already integrated. 7b fits 8GB VRAM. 14b needs ~10GB. GPU gives 20-40x speedup over CPU. |
+| **Ollama + llama3.1:8b** | Free (local GPU) | Decent | Already tested. Less reliable at tool-calling than qwen2.5. |
+| **Ollama + phi3:mini** | Free (local GPU) | Lightweight | Fast, good for simple narration. Fits 4GB VRAM. |
+| **Ollama + mistral:7b** | Free (local GPU) | Strong | Good instruction following. Worth testing. |
+| **Google Gemini API** | Free tier (15 RPM / 1M tokens/day) | Strong | Best free hosted option. Supports function calling. Needs a new `GeminiNarrator` backend. |
+| **Groq API** | Free tier (30 RPM, llama3/mixtral) | Very fast | Ultra-fast inference, limited daily tokens. Good for narration speed. |
+| **Together AI** | Free tier ($5 credit) | Strong | Wide model selection. Credits run out. |
+| **HuggingFace Inference** | Free tier (rate limited) | Variable | Many models, slow cold starts. |
+| **LM Studio** | Free (local GUI) | Similar to Ollama | Desktop app, OpenAI-compatible API. Alternative to Ollama. |
+| **vLLM / llama.cpp server** | Free (local) | Best quality | Manual setup, more control over quantization. For advanced users. |
+
+**Recommended path**: Add `GeminiNarrator` (free tier, strong quality, function-calling support) as a third backend alongside Ollama. Keep Ollama as the default for fully-offline play. Document all options in README.
+
+- [ ] Add `GeminiNarrator` backend using Google's free Gemini API (function-calling, structured output)
+- [ ] Document all free LLM options in README with setup instructions
+- [ ] Test Ollama with additional models (mistral:7b, phi3:mini, qwen2.5:14b)
+- [ ] Add model comparison notes for free options (quality vs speed vs VRAM)
+
+### Tier 1: Core Combat Mechanics (High Priority — Foundational)
+
+These are the D&D 5e combat rules Oracle is missing that would most improve gameplay depth.
+
+- [x] **Opportunity Attacks** — When a creature leaves another's reach, the leaving creature provokes a melee attack (reaction). Major tactical element. Hook: `_on_player_action` movement phase, `Session.combat.initiative` for reaction tracking. ✅ Implemented via `trigger="opportunity_attack"` on request_roll, with `reaction_used` field and consume/reset methods.
+- [x] **Cover System** — Half cover (+2 AC/DEX saves), three-quarters cover (+5), total cover (can't be targeted). Hook: `_compute_ac()` for cover modifier, `request_roll` for cover-aware attacks. ✅ Implemented via `cover` parameter on request_roll (0/2/5), applied to attack rolls and saves only.
+- [ ] **Flanking** (optional rule) — Two allies on opposite sides of an enemy = advantage on melee attacks. Hook: `TARGET_ADVANTAGE_CONDITIONS` / `_has_advantage()`, needs position tracking.
+- [x] **Grappling** — Athletics vs Athletics/Acrobatics contest. Grappled = speed 0. Hook: `request_roll` with contest-type, new `grappled` condition handling. ✅ Implemented via contested request_roll calls + grappled condition in SRD data.
+- [x] **Shoving** — Athletics vs Athletics/Acrobatics. Push 5 ft or knock prone. Hook: same contest system as grappling. ✅ Implemented via contested request_roll calls + prone condition (already exists).
+- [x] **Readied Actions** — Action to prepare, trigger + response. Reaction held until trigger. Hook: `turn_order` queue, `initiative` reactions. ✅ Implemented via `readied_action`/`readied_trigger` fields on CharacterSheet with ready/clear methods.
+- [ ] **Mounted Combat** — Mount acts on rider's initiative,Dash/Disengage as bonus. Hook: `turn_order`, NPC tracking.
+- [x] **Improved Death Saves** — Natural 1 = 2 failures, natural 20 = regain 1 HP, damage at 0 = 1 failure. Hook: existing death-save system in `_on_player_action`. ✅ Implemented with comprehensive tests (natural 20 revival, natural 1 double-failure, damage at 0 auto-failure).
+- [ ] **Critical Hit Table** (optional) — Expanded crit effects beyond double damage. Hook: `request_roll` crit detection.
+- [x] **Exhaustion System** — 6 levels, each stacking debuff (disadvantage on all rolls, speed halved, death). Hook: `CharacterSheet.conditions`, `apply_update`. ✅ Implemented with `exhaustion` field, `effective_max_hp` computed field, and mechanical effects in `_has_disadvantage`.
+- [x] **Inspiration** — DM awards for good roleplaying. Advantage on next roll. Hook: `CharacterSheet` new field, `request_roll`. ✅ Implemented with `inspiration` field, grant/spend mechanics, and tests.
+
+### Tier 2: Character Sheet Completeness (High Priority — UX)
+
+What a real D&D 5e character sheet has that Oracle's doesn't.
+
+- [ ] **Saving Throws** — 6 saves (STR/DEX/CON/INT/WIS/CHA), proficiency markers, real modifiers. Hook: `CharacterSheet.stats`, `ability_modifier()`, `proficiency_bonus`.
+- [ ] **Skills with Proficiencies** — 18 skills mapped to abilities, proficiency/expertise markers. Hook: `CLASS_SKILL_PROFICIENCIES` already exists but isn't surfaced on the sheet.
+- [ ] **Passive Perception** — 10 + WIS(Perc) modifier. Hook: `CharacterSheet.stats`, `ability_modifier()`.
+- [ ] **Speed** — Base walking speed (25-35 ft). Hook: `CharacterSheet` new field, racial data in `srd.json`.
+- [ ] **Hit Dice** — Pool matching class die (e.g. 5d10 for Fighter 5). Hook: `CharacterSheet.level`, `character_class`.
+- [ ] **Death Save Tracking** — 3 successes / 3 failures visible on sheet. Hook: `CharacterSheet` new fields.
+- [ ] **Background Traits** — Personality, ideals, bonds, flaws. Hook: `CharacterSheet` new fields, character creation flow.
+- [ ] **Spell Save DC & Attack Bonus** — Auto-calculated from level + ability + proficiency. Hook: existing `spell_save_dc` field.
+- [ ] **Attunement Slots** — Max 3 magic items attuned. Hook: `InventoryItem` new field.
+- [ ] **Temporary HP** — Separate from real HP. Hook: `CharacterSheet` new field, `apply_update`.
+- [ ] **Coin Purse** — CP/SP/EP/GP/PP tracked separately. Hook: `CharacterSheet.inventory` or new field.
+
+### Tier 3: Exploration & Navigation System (Medium Priority)
+
+Dungeon crawling and wilderness travel mechanics that make exploration meaningful.
+
+- [ ] **Dungeon Crawling Procedure** — Room-by-room exploration loop: describe → search → handle hazards → random encounter check → advance. Hook: narration + `update_world` for location.
+- [ ] **Wilderness Travel** — Travel pace (Fast/Normal/Slow), daily mileage, navigation checks. Hook: `WorldState.location`, new `travel` state.
+- [ ] **Hex/Point Crawl** — Grid-based movement, hex costs by terrain, random encounter checks per hex. Hook: `WorldState` new `map` field.
+- [ ] **Random Encounter Tables** — Terrain-specific encounter lists (forest, desert, urban, etc.) with CR-appropriate creatures. Hook: `server/rules/srd.json` new `encounter_tables` section.
+- [ ] **Trap System** — Detection DC, trigger, effect, disable DC. Hook: `WorldState` new `traps` field, `request_roll` for detection.
+- [ ] **Weather System** — Seasonal weather, effects on gameplay (disadvantage on ranged, exhaustion from extreme conditions). Hook: `WorldState` new `weather` field, `update_world`.
+- [ ] **Navigation** — Survival check to navigate, getting lost mechanics. Hook: `request_roll` with survival skill.
+- [ ] **Foraging** — Finding food/water in wilderness. Hook: `request_roll` with survival skill.
+- [ ] **Marching Order** — Who's in front (perception checks), middle (protected), rear (watch for pursuit). Hook: `Session` new field.
+- [ ] **Light & Visibility** — Bright/dim/darkness, torch/lantern ranges, darkvision. Hook: `WorldState` new `lighting` field.
+- [ ] **Traps & Hazards** — Mechanical traps, magical traps, complex traps with initiative. Hook: `WorldState` new `hazards` field.
+
+### Tier 4: Social & Roleplay Mechanics (Medium Priority)
+
+NPC disposition, reputation, and social encounter resolution.
+
+- [ ] **NPC Disposition System** — 3-stage: initial attitude (Friendly/Indifferent/Hostile) → conversation RP → Charisma check resolution. Hook: `CharacterSheet.notes` for NPC memory, `update_character` for disposition.
+- [ ] **Faction Reputation** — Standing levels (Unknown → Recognized → Trusted → Honored → Revered). Hook: `WorldState` new `factions` dict.
+- [ ] **Social Skill Checks** — Persuasion/Deception/Intimidation vs Insight contested checks. Hook: `request_roll` with social skills.
+- [ ] **NPC Attitude Tables** — DM screen reference for NPC reactions based on roll + attitude. Hook: `server/rules/srd.json` new `social_tables` section.
+- [ ] **Downtime Activities** — Crafting, researching, training, carousing, building trust. Hook: `Session` new `downtime_days` field.
+- [ ] **Conversation Reaction Tables** — DM screen reference for NPC responses. Hook: `server/rules/srd.json`.
+- [ ] **Lifestyle Expenses** — Wretched, squalid, poor, modest, comfortable, wealthy, aristocratic. Hook: `CharacterSheet` new field.
+
+### Tier 5: World Building & DM Tools (Medium Priority)
+
+Random generators, encounter builders, and reference tables.
+
+- [ ] **NPC Generator** — Names, appearance, personality, goals by race/role/location. Hook: `server/rules/srd.json` new `npc_tables` section.
+- [ ] **Treasure Generator** — Coins, gems, art, magic items by CR. Hook: `server/rules/srd.json` new `treasure_tables` section.
+- [ ] **Dungeon Generator** — Rooms, corridors, traps, encounters by level/theme. Hook: `WorldState` new `dungeon` field.
+- [ ] **Encounter Builder** — XP budget system by party size/level, difficulty tiers. Hook: `server/rules/srd.json` new `encounter_budgets` section.
+- [ ] **Tavern Generator** — Name, menu, NPCs, rumors. Hook: `server/rules/srd.json`.
+- [ ] **Quest Hook Generator** — Adventure motivations by location/level. Hook: `server/rules/srd.json`.
+- [ ] **Calendar/Time Tracking** — In-game date, seasons, quest deadlines, downtime days. Hook: `WorldState` new `calendar` field.
+- [ ] **DM Screen Reference Tables** — Actions in combat, conditions, DCs, treasure, all searchable. Hook: new `server/rules/dm_screen.json`.
+- [ ] **Weather Generator** — Daily weather with mechanical effects. Hook: `WorldState` new `weather` field.
+- [ ] **Random Encounter Check** — d20 every hour of travel, terrain-specific tables. Hook: `_on_player_action` for travel turns.
+
+### Tier 6: Visual & Map System (Lower Priority)
+
+Text-based representations of maps and environments.
+
+- [ ] **ASCII/Text Map Panel** — Simple grid map showing party location, nearby rooms/features. Hook: new `MapPanel` in `client/app.py`.
+- [ ] **Location Description Tags** — Structured tags (cave/forest/city/dungeon) for DM narration context. Hook: `WorldState.location` new sub-fields.
+- [ ] **Scene Mood/Atmosphere** — Structured tag (dark/hopeful/tense/peaceful) on WorldState. Hook: `WorldState` new `mood` field.
+- [ ] **Token Representation** — Text-based creature tokens on map (@ for player, G for goblin, etc.). Hook: `MapPanel`.
+- [ ] **Fog of War** (text-based) — Unexplored areas shown as `???`, explored as room descriptions. Hook: `MapPanel`, `WorldState`.
+
+### Tier 7: Immersion & Polish (Lower Priority)
+
+Features that deepen the roleplay and world-building experience.
+
+- [ ] **Background World-Ticks** — NPCs/factions advance goals between turns/sessions. Hook: `WorldState`, `_on_start_session`.
+- [ ] **Relationship Graph** — Who-knows-whom with typed edges. Hook: `WorldState` new `relationships` field.
+- [ ] **Scene Transitions** — "The scene shifts to..." mechanic for location changes. Hook: `update_world` location change.
+- [ ] **NPC Schedules** — NPCs have daily routines, not just static. Hook: `WorldState` new `npc_schedules` field.
+- [ ] **Downtime Between Adventures** — Full downtime system with activities, income, complications. Hook: `Session` new fields.
+- [ ] **Party Cohesion Mechanics** — Group checks, teamwork bonuses. Hook: `request_roll` with party-aware modifiers.
+- [ ] **Moral/Alignment Impact** — Actions affect reputation, world reacts to alignment. Hook: `WorldState` new `alignment` field.
+- [ ] **Image Generation** — Scene/character art triggered off narration. Hook: `ImageBackend` protocol (same pattern as `NarratorBackend`).
+- [ ] **Text-to-Speech** — DM narration audio. Hook: `TTSBackend` protocol.
+
+### Tier 8: SRD Data Expansion (Ongoing)
+
+More content for the existing systems.
+
+- [ ] **Full class progressions beyond level 1** — Spell lists, features, subclass choices for levels 2-20.
+- [ ] **More monsters (CR 3-20)** — Dragons, giants, fiends, celestials, aberrations, constructs.
+- [ ] **More spells (levels 4-9)** — High-level spells for wizard/cleric/druid/sorcerer/warlock/bard/paladin/ranger.
+- [ ] **More equipment** — Magic items, potions, scrolls, wands, rods, staffs, rings, cloaks, boots, goggles.
+- [ ] **Subclass data** — Champion/Battle Master/Eldritch Knight (Fighter), Evocation/Abjuration (Wizard), etc.
+- [ ] **Background data** — Acolyte, Criminal, Folk Hero, Noble, Sage, Soldier, Charlatan, Entertainer, Guild Artisan, Hermit, Outlander, Sailor, Urchin.
+- [ ] **Condition expansions** — Blinded, Charmed, Deafened, Frightened, Incapacitated, Invisible, Paralyzed, Petrified, Poisoned, Prone, Restrained, Stunned, Unconscious (full mechanical text).
+- [ ] **Weapon properties** — Finesse, heavy, light, loading, range, reach, thrown, two-handed, versatile.
+- [ ] **Armor/shield data** — All light/medium/heavy armor with real AC formulas.
+
+
+### Tier 9: TUI/Interface Redesign (Medium Priority — UX)
+
+Reworking the Textual interface to be more immersive and functional, referencing how D&D Beyond, Roll20, and Foundry lay out their UIs.
+
+**Character Sheet Panel (client/app.py)**
+
+- [ ] **D&D 5e standard layout** — Group into sections: Identity (name/class/level/race/background), Combat Stats (AC/Initiative/Speed/HP), Ability Scores (6 in grid), Skills (18 with proficiency markers), Saving Throws, Combat Block (weapons/attacks), Spellcasting (slots/spells), Equipment (carried/equipped/coins), Features & Traits, Notes.
+- [ ] **Ability Score Grid** — 2-column or 3-column grid showing STR/DEX/CON/INT/WIS/CHA with scores and modifiers, visually distinct from other sections.
+- [ ] **Saving Throws Section** — Below ability scores, show each save with proficiency marker and modifier.
+- [ ] **Skills Section** — 18 skills grouped by ability, proficiency markers, rollable modifiers.
+- [ ] **Spellcasting Panel** — Spell slots tracker by level, known/prepared spells list, spell save DC, spell attack bonus.
+- [ ] **Equipment/Inventory Split** — Equipped items (weapon, armor, shield) separate from carried items, with coin purse (CP/SP/EP/GP/PP).
+- [ ] **Features and Traits Tab** — Class features, racial traits, feats, proficiencies and languages.
+- [ ] **Death Save Tracker** — Visual 3-success/3-failure checkboxes when at 0 HP.
+- [ ] **Condition Indicators** — Color-coded or symbol-based display of active conditions.
+- [ ] **Inspiration Toggle** — Visual indicator when inspiration is available.
+
+**Combat Tracker Panel (new)**
+
+- [ ] **Initiative Order List** — Turn order with current turn highlighted, HP bars, conditions.
+- [ ] **Round Counter** — Current round number, combat duration.
+- [ ] **NPC Summary** — Quick view of all NPCs in combat with HP/conditions.
+- [ ] **Combat Actions Reference** — Quick list of available actions (Attack, Cast Spell, Dash, Disengage, Dodge, Help, Hide, Ready, Search, Use Object).
+
+**Map/Exploration Panel (new)**
+
+- [ ] **ASCII Grid Map** — Simple text-based map showing party location, explored areas, nearby features.
+- [ ] **Location Description** — Current location name and brief description.
+- [ ] **Fog of War** — Unexplored areas hidden, explored areas revealed.
+- [ ] **Travel Pace Indicator** — Fast/Normal/Slow with effects displayed.
+- [ ] **Weather Display** — Current weather and effects.
+
+**Party Panel (enhanced)**
+
+- [ ] **HP Bars for All** — Color-coded health bars for every party member.
+- [ ] **Condition Summary** — Active conditions for each party member.
+- [ ] **Spell Slot Overview** — Quick view of party remaining spell slots.
+- [ ] **Party Status** — Who is alive, who is downed, who is stabilized.
+
+**Visual/Theme Improvements**
+
+- [ ] **Parchment/Theme CSS** — Custom Textual theme with RPG-appropriate colors (dark background, warm accent colors, parchment-like text areas).
+- [ ] **Message Type Coloring** — Different colors for narration (white), system messages (yellow), dice rolls (cyan), warnings (red), DM thinking (dim).
+- [ ] **Divider Styling** — RPG-themed dividers instead of plain lines.
+- [ ] **Section Headers** — Styled headers for each sheet section.
+- [ ] **HP Bar Variants** — Full bar (own sheet), compact bar (party view), minimal bar (combat tracker).
+- [ ] **Responsive Layout** — Adapt to terminal width (narrow terminals collapse to single column).
+- [ ] **Input Bar Enhancement** — Command history (up/down arrows), autocomplete for /commands.
+
+**Screen Flow**
+
+- [ ] **Welcome Screen Polish** — Better visual hierarchy, class/race previews with stat previews.
+- [ ] **Lobby Screen Enhancement** — Player avatars (text-based), ready status indicators, chat history.
+- [ ] **Session Screen Layout** — Full-width narration log on top, tabbed character sheet below (Overview/Combat/Spells/Inventory/Features/Map).
+- [ ] **DM Screen Panel** (optional) — Quick reference tables for the DM (conditions, actions, DCs).
 
 ## Explicitly not doing
 

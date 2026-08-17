@@ -107,6 +107,27 @@ _OUTCOME_PROPERTIES = {
         "type": "string",
         "description": "A condition to apply (e.g. 'poisoned'), or an empty string if none.",
     },
+    "drop_concentration": {
+        "type": "boolean",
+        "description": (
+            "True to voluntarily end concentration on the current spell. "
+            "Only meaningful for 'self' when concentrating."
+        ),
+    },
+    "grant_inspiration": {
+        "type": "boolean",
+        "description": (
+            "True to award inspiration for good roleplaying or creative solutions. "
+            "Only meaningful for 'self'."
+        ),
+    },
+    "exhaustion_delta": {
+        "type": "integer",
+        "description": (
+            "Change in exhaustion level (positive = gain, negative = recover). "
+            "Clamped to 0-6 range. Level 6 = death."
+        ),
+    },
 }
 
 STRUCTURED_OUTPUT_SCHEMA = {
@@ -209,6 +230,15 @@ STRUCTURED_OUTPUT_ROLL_SCHEMA = {
             "type": "string",
             "enum": ["attack", "save", "check"],
             "description": "Only when roll_requested is true: what kind of roll this is.",
+        },
+        "roll_target": {
+            "type": "string",
+            "description": (
+                "Only when roll_requested is true and this is an attack roll against a "
+                "specific creature: the target's name. The engine checks the target's "
+                "conditions and applies real 5e effects (e.g. advantage against stunned). "
+                "Omit when there's no clear single target."
+            ),
         },
     },
     "required": ["narration", "mechanical_change", "roll_requested"],
@@ -639,6 +669,8 @@ class OllamaNarrator:
                 roll_update["dc"] = data["roll_dc"]
             if data.get("roll_kind"):
                 roll_update["roll_kind"] = data["roll_kind"]
+            if data.get("roll_target"):
+                roll_update["target"] = data["roll_target"]
             roll_result_text = request_roll(roll_update)
 
             followup_prompt = f"Character:\n{character_summary}\n\n"
@@ -669,6 +701,12 @@ class OllamaNarrator:
                 update["hp_delta"] = data["hp_delta"]
             if data.get("add_condition"):
                 update["add_condition"] = data["add_condition"]
+            if data.get("drop_concentration"):
+                update["drop_concentration"] = True
+            if data.get("grant_inspiration"):
+                update["grant_inspiration"] = True
+            if data.get("exhaustion_delta"):
+                update["exhaustion_delta"] = data["exhaustion_delta"]
             apply_update(update)
 
         if self._world_updates and data.get("world_change") and update_world is not None:

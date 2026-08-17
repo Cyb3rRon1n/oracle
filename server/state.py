@@ -194,6 +194,39 @@ class CharacterSheet(BaseModel):
     known_spells: list[str] = Field(default_factory=list)
     spell_slots: dict[str, int] = Field(default_factory=dict)
     max_spell_slots: dict[str, int] = Field(default_factory=dict)
+    # Real 5e concentration: a character can concentrate on one spell at a
+    # time. Stores the name of the spell currently being concentrated on
+    # (e.g. "bless", "guidance"), or None if not concentrating. Set by
+    # _cast_spell when a concentration spell is cast, cleared when the
+    # spell ends (CON save failure, voluntary drop, incapacitation, or
+    # casting another concentration spell). The DM never tracks this
+    # manually - the engine manages it automatically from real spell data.
+    concentration_spell: str | None = None
+    # Real 5e inspiration: a DM-awarded boolean that grants advantage on
+    # one ability check, attack roll, or saving throw when spent. One at a
+    # time (max 1), awarded for good roleplaying, embodying traits, or
+    # creative solutions. The DM grants via update_character, the player
+    # spends by requesting advantage on a roll.
+    inspiration: bool = False
+    # Real 5e exhaustion: 6 levels, each with stacking mechanical
+    # penalties. Level 6 = death. Applied/removed via update_character.
+    # The engine applies mechanical effects automatically based on level.
+    # Not a condition string (conditions list is for condition flags like
+    # "poisoned" or "stunned"), but a separate numeric tracker because
+    # exhaustion has 6 distinct levels with different mechanical effects
+    # at each, unlike boolean on/off conditions.
+    exhaustion: int = 0
+    # Real 5e reaction: each creature gets 1 reaction per round, reset at
+    # the start of its turn. Used for opportunity attacks,Shield spell, etc.
+    # A boolean because a creature either has its reaction available or
+    # doesn't - not a counter (you can't "save up" reactions).
+    reaction_used: bool = False
+    # Real 5e readied actions: a creature can use its action to ready an
+    # action, specifying a trigger and a response. When the trigger occurs,
+    # the creature takes the response as a reaction. Stores the trigger
+    # text and the response action text. None when no action is readied.
+    readied_action: str | None = None
+    readied_trigger: str | None = None
 
     @computed_field
     @property
@@ -208,6 +241,18 @@ class CharacterSheet(BaseModel):
         if ability is None or ability not in self.stat_modifiers:
             return None
         return 8 + self.proficiency_bonus + self.stat_modifiers[ability]
+
+    @computed_field
+    @property
+    def effective_max_hp(self) -> int:
+        """Real 5e exhaustion level 4: hit point maximum is halved. This
+        computed field returns the effective max HP based on exhaustion
+        level, used for HP capping in apply_update and rest healing.
+        The base max_hp is never modified directly - exhaustion's effect
+        is computed at the point of use."""
+        if self.exhaustion >= 4:
+            return max(1, self.max_hp // 2)
+        return self.max_hp
 
     @computed_field
     @property
@@ -325,9 +370,10 @@ class CharacterSheet(BaseModel):
         if hp_delta:
             prior_hp = self.hp
             prior_dying = self.dying
-            self.hp = max(0, min(self.max_hp, self.hp + int(hp_delta)))
+            # Cap at effective_max_hp (accounts for exhaustion level 4)
+            self.hp = max(0, min(self.effective_max_hp, self.hp + int(hp_delta)))
             sign = "+" if hp_delta > 0 else ""
-            changes.append(f"HP {sign}{hp_delta} (now {self.hp}/{self.max_hp})")
+            changes.append(f"HP {sign}{hp_delta} (now {self.hp}/{self.effective_max_hp})")
 
             if hp_delta < 0 and prior_hp == 0 and prior_dying and not self.dead:
                 # Already down and dying - taking more damage while at 0 HP
@@ -363,14 +409,15 @@ class CharacterSheet(BaseModel):
         # still pair this with an explicit remove_condition in the same
         # call when the fiction actually calls for it.
         rest = update.get("rest")
-        if rest == "long" and self.hp < self.max_hp:
-            self.hp = self.max_hp
-            changes.append(f"long rest: HP restored to {self.hp}/{self.max_hp}")
+        # Use effective_max_hp for healing caps (accounts for exhaustion level 4)
+        if rest == "long" and self.hp < self.effective_max_hp:
+            self.hp = self.effective_max_hp
+            changes.append(f"long rest: HP restored to {self.hp}/{self.effective_max_hp}")
         elif rest == "short":
-            healed = (self.max_hp - self.hp) // 2
+            healed = (self.effective_max_hp - self.hp) // 2
             if healed > 0:
                 self.hp += healed
-                changes.append(f"short rest: HP +{healed} (now {self.hp}/{self.max_hp})")
+                changes.append(f"short rest: HP +{healed} (now {self.hp}/{self.effective_max_hp})")
 
         # Healing above 0 HP - whether from hp_delta or either rest branch
         # above, checked once here rather than duplicated in both - clears
@@ -429,9 +476,83 @@ class CharacterSheet(BaseModel):
             self.disposition = disposition
             changes.append(f"disposition now {disposition}")
 
+        # Real 5e inspiration: DM awards for good roleplaying, embodying
+        # traits, or creative solutions. Grants advantage on one roll when
+        # spent. The DM grants via update_character with inspiration=true,
+        # and the player spends by requesting advantage on a roll (which
+        # auto-clears the flag). One at a time (max 1).
+        grant_inspiration = update.get("grant_inspiration")
+        if grant_inspiration and not self.inspiration:
+            self.inspiration = True
+            changes.append("gained inspiration")
+
+        # Real 5e exhaustion: 6 levels with stacking penalties. Level 6
+        # = death. The DM adjusts via update_character(exhaustion_delta=N).
+        # Clamped to 0-6 range, not a condition string.
+        exhaustion_delta = update.get("exhaustion_delta")
+        if exhaustion_delta:
+            old_level = self.exhaustion
+            self.exhaustion = max(0, min(6, self.exhaustion + exhaustion_delta))
+            if self.exhaustion != old_level:
+                if self.exhaustion == 6:
+                    self.dying = False
+                    self.dead = True
+                    changes.append(f"exhaustion {old_level}→{self.exhaustion} (death)")
+                else:
+                    # Level 4: max HP halved - if current HP exceeds new
+                    # effective max, it's reduced immediately
+                    if old_level < 4 and self.exhaustion >= 4:
+                        if self.hp > self.effective_max_hp:
+                            self.hp = self.effective_max_hp
+                            changes.append(f"exhaustion {old_level}→{self.exhaustion} (max HP halved to {self.effective_max_hp})")
+                        else:
+                            changes.append(f"exhaustion {old_level}→{self.exhaustion}")
+                    else:
+                        changes.append(f"exhaustion {old_level}→{self.exhaustion}")
+
+        # Real 5e readied actions: the DM can set or clear a readied action
+        # via update_character. When set, the creature has a pending action
+        # that triggers on a specified condition.
+        ready_action = update.get("ready_action")
+        ready_trigger = update.get("ready_trigger")
+        if ready_action and ready_trigger:
+            self.ready_action(ready_action, ready_trigger)
+            changes.append(f"readied action: {ready_action} when {ready_trigger}")
+        elif update.get("clear_readied_action"):
+            self.clear_readied_action()
+            changes.append("cleared readied action")
+
         if not changes:
             return "No changes applied (nothing matched, or all deltas were zero)."
         return "Applied: " + "; ".join(changes) + "."
+
+    def consume_reaction(self) -> bool:
+        """Consume this creature's reaction for the round. Returns True if
+        the reaction was available and consumed, False if already used.
+        Real 5e: each creature gets 1 reaction per round, reset at the
+        start of its turn."""
+        if self.reaction_used:
+            return False
+        self.reaction_used = True
+        return True
+
+    def reset_reaction(self) -> None:
+        """Reset this creature's reaction at the start of its turn. Real 5e:
+        reactions refresh at the start of each creature's turn."""
+        self.reaction_used = False
+
+    def ready_action(self, action: str, trigger: str) -> None:
+        """Set a readied action with a trigger. Real 5e: use your action to
+        ready an action, specifying when it triggers. The response executes
+        as a reaction when the trigger occurs."""
+        self.readied_action = action
+        self.readied_trigger = trigger
+
+    def clear_readied_action(self) -> None:
+        """Clear the readied action after it's triggered or when the creature
+        takes a different action."""
+        self.readied_action = None
+        self.readied_trigger = None
 
     def record_death_save(self, *, success: bool, count: int = 1) -> str:
         """Records one or more death-save outcomes and resolves stabilize/

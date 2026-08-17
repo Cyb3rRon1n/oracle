@@ -15,6 +15,7 @@ EventType = Literal[
     "character_edit",
     "dice_roll",
     "death_save",
+    "leave_session",
     "reconnect",
     "start_session",
     "start_combat",
@@ -33,6 +34,7 @@ EventType = Literal[
     "dice_result",
     "player_joined",
     "player_left",
+    "left_session",
     "session_started",
     "system_message",
 ]

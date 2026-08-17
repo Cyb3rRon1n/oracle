@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ollama list *)",
+      "Bash(pip show *)",
+      "Bash(gh repo *)",
+      "Bash(python3 *)",
+      "WebSearch"
+    ]
+  }
+}

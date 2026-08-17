@@ -214,6 +214,32 @@ class Transport:
                     # it back, regardless of which machine/browser that
                     # later login happens from.
                     self._accounts.record_session_joined(player_id, session_id)
+                if envelope.type == "leave_session":
+                    # Deliberate leave (/leave command) vs. implicit
+                    # disconnect - same turn_order/player_left cleanup
+                    # via engine.handle_leave(), but the player's socket
+                    # stays open; they re-enter the Tavern lobby and
+                    # get an updated directory so they can pick a new
+                    # table or just hang out.
+                    leave_player_id = envelope.sender_id
+                    leave_conn = self._connections.get(leave_player_id)
+                    leave_session_id = leave_conn[0] if leave_conn else None
+                    # handle_leave calls _send_to which reads
+                    # _connections, so the player must still be there
+                    # when the engine fires; popped afterward.
+                    leave_engine = self._engines.get(leave_session_id) if leave_session_id else None
+                    if leave_engine is not None:
+                        await leave_engine.handle_leave(leave_player_id)
+                    self._connections.pop(leave_player_id, None)
+                    self._lobby_connections[leave_player_id] = connection
+                    # Keep the name so tavern_chat still works - the
+                    # lobby_names dict may have been cleared when the
+                    # player first joined a session.
+                    if leave_player_id not in self._lobby_names:
+                        self._lobby_names[leave_player_id] = authenticated_player_id or ""
+                    await self._send_tavern_directory(connection)
+                    await self._broadcast_tavern_directory()
+                    continue
                 engine = self._get_or_create_engine(envelope.session_id)
                 await engine.handle(envelope)
                 if envelope.type == "join_session":

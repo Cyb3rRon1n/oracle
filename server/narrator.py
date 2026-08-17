@@ -72,8 +72,14 @@ You have five tools available:
   own known spells (character_summary's known_spells), use `cast_spell` (the spell's
   name) — the engine deducts the real spell slot itself (or tells you if they don't
   know it or have none left of that level); cantrips cost no slot. This only tracks
-  the slot spent — still narrate the spell's actual effect and apply it yourself with
-  this same call's other fields (hp_delta, add_condition, ...) or a request_roll.
+   the slot spent — still narrate the spell's actual effect and apply it yourself with
+   this same call's other fields (hp_delta, add_condition, ...) or a request_roll.
+   Concentration spells (bless, guidance) are tracked automatically: when you cast one,
+   the character begins concentrating on it; casting another concentration spell ends
+   the first. When the character takes damage while concentrating, the engine
+   automatically rolls a CON save (DC = max(10, half damage)) and broadcasts the result
+   — you don't need to call request_roll for this. Being stunned or dropping to 0 HP
+   also ends concentration. Use drop_concentration to voluntarily end it.
 - update_world: call this when something should be remembered for the rest of the
   campaign, not just this scene — a new objective or plot thread emerging, one being
   resolved, the location changing, or a durable fact about the world. This is what a
@@ -219,6 +225,57 @@ UPDATE_CHARACTER_TOOL = {
                     "relationship meaningfully changes (e.g. a fight ends and they surrender, "
                     "or a favor is repaid). Not meaningful for 'self' - omit for the acting "
                     "character."
+                ),
+            },
+            "drop_concentration": {
+                "type": "boolean",
+                "description": (
+                    "Set to true to voluntarily end concentration on the current spell "
+                    "(a free action in real 5e). Only meaningful for 'self' when the "
+                    "character is actively concentrating on a spell (character_summary's "
+                    "concentration_spell). The engine clears concentration automatically; "
+                    "this field is just the DM's way of choosing to drop it. Omit for "
+                    "anything else."
+                ),
+            },
+            "grant_inspiration": {
+                "type": "boolean",
+                "description": (
+                    "Award inspiration for good roleplaying, embodying character traits, "
+                    "or creative solutions. Grants advantage on the next roll when spent "
+                    "(auto-consumed by the engine). One at a time (max 1). Only meaningful "
+                    "for 'self' - omit for NPCs."
+                ),
+            },
+            "exhaustion_delta": {
+                "type": "integer",
+                "description": (
+                    "Change exhaustion level (positive = gain, negative = recover). "
+                    "Real 5e: 6 levels with stacking penalties (1=disadvantage on "
+                    "ability checks, 2=speed halved, 3=disadvantage on attacks/saves, "
+                    "4=max HP halved, 5=speed 0, 6=death). Clamped to 0-6 range."
+                ),
+            },
+            "ready_action": {
+                "type": "string",
+                "description": (
+                    "The action to ready (e.g. 'attack the nearest enemy', 'cast "
+                    "fire bolt'). Must be paired with ready_trigger. Real 5e: use "
+                    "your action to prepare a response to a trigger."
+                ),
+            },
+            "ready_trigger": {
+                "type": "string",
+                "description": (
+                    "The trigger for a readied action (e.g. 'the goblin moves', "
+                    "'an enemy enters the room'). Must be paired with ready_action."
+                ),
+            },
+            "clear_readied_action": {
+                "type": "boolean",
+                "description": (
+                    "Set to true to clear a readied action without triggering it "
+                    "(e.g. the creature takes a different action instead)."
                 ),
             },
         },
@@ -408,6 +465,39 @@ REQUEST_ROLL_TOOL = {
                     "attack rolls) - the engine applies that automatically when this is "
                     "given. Omit for a roll this doesn't cleanly apply to, e.g. a damage "
                     "roll after a hit already landed."
+                ),
+            },
+            "target": {
+                "type": "string",
+                "description": (
+                    "For an attack roll against a specific creature: the target's name "
+                    "(e.g. 'bandit', 'goblin'). The engine checks the target's tracked "
+                    "conditions and applies real 5e effects automatically - e.g. a "
+                    "stunned target grants advantage on attack rolls against it. Omit "
+                    "when there's no clear single target (a skill check, a saving throw "
+                    "against a trap, a damage roll)."
+                ),
+            },
+            "cover": {
+                "type": "integer",
+                "enum": [0, 2, 5],
+                "description": (
+                    "Cover bonus to AC (for attack rolls) or DEX saves. Real 5e: "
+                    "half cover = +2, three-quarters cover = +5. Apply to the target's "
+                    "AC when making an attack roll, or to your own DEX save when you "
+                    "have cover. Total cover (can't be targeted) isn't modeled here - "
+                    "just narrate it. Omit for no cover."
+                ),
+            },
+            "trigger": {
+                "type": "string",
+                "enum": ["opportunity_attack"],
+                "description": (
+                    "Special trigger for this roll: 'opportunity_attack' means a creature "
+                    "is leaving another's reach (real 5e opportunity attack). Consumes "
+                    "the acting character's reaction (one per round). Only for player "
+                    "characters attacking NPCs that leave their reach - for the reverse "
+                    "(NPC attacks player), narrate it yourself."
                 ),
             },
         },
@@ -630,4 +720,8 @@ def create_narrator(backend: str | None = None) -> NarratorBackend:
         from .narrator_ollama import create_ollama_narrator  # optional dependency
 
         return create_ollama_narrator()
-    raise ValueError(f"Unknown DM_BACKEND {backend!r}. Valid backends: 'anthropic', 'ollama'.")
+    if backend == "gemini":
+        from .narrator_gemini import create_gemini_narrator  # optional dependency
+
+        return create_gemini_narrator()
+    raise ValueError(f"Unknown DM_BACKEND {backend!r}. Valid backends: 'anthropic', 'ollama', 'gemini'.")
