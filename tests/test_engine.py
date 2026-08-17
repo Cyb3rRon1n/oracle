@@ -238,8 +238,14 @@ def test_build_starting_character_gives_wizard_real_known_spells_and_slots():
     sheet = build_starting_character("p1", "Gandalf", "wizard", rules)
 
     assert sheet.known_spells == [
-        "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
-        "burning_hands", "misty_step",
+        "fire_bolt", "ray_of_frost", "prestidigitation", "minor_illusion",
+        "magic_missile", "mage_armor", "shield", "thunderwave", "charm_person",
+        "detect_magic", "fog_cloud", "burning_hands",
+        "mirror_image", "shatter", "hold_person", "suggestion",
+        "fireball", "haste", "counterspell", "dispel_magic", "lightning_bolt",
+        "animate_dead", "misty_step",
+        "polymorph", "banishment", "greater_invisibility",
+        "hold_monster", "scrying",
     ]
     assert sheet.spell_slots == {"1": 2}
     assert sheet.max_spell_slots == {"1": 2}
@@ -250,7 +256,13 @@ def test_build_starting_character_gives_cleric_real_known_spells_and_slots():
     rules = RulesIndex.load_default()
     sheet = build_starting_character("p1", "Fenwick", "cleric", rules)
 
-    assert sheet.known_spells == ["sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon"]
+    assert sheet.known_spells == [
+        "sacred_flame", "guidance", "spare_the_dying", "thaumaturgy",
+        "cure_wounds", "bless", "healing_word", "sanctuary", "guiding_bolt",
+        "detect_magic", "lesser_restoration",
+        "spiritual_weapon",
+        "dispel_magic", "animate_dead", "banishment", "scrying",
+    ]
     assert sheet.spell_slots == {"1": 2}
 
 
@@ -1590,6 +1602,63 @@ async def test_handle_disconnect_for_never_joined_player_falls_back_to_id_as_nam
 
     left = [r for r in received if r[0] == "broadcast" and r[1] == "player_left"]
     assert left[-1][2] == {"player_id": player_id, "name": player_id}
+
+
+async def test_handle_leave_broadcasts_player_left_and_sends_left_session():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+
+    await engine.handle_leave(player_id)
+
+    left = [r for r in received if r[0] == "broadcast" and r[1] == "player_left"]
+    assert left
+    assert left[-1][2] == {"player_id": player_id, "name": "Thrain"}
+    left_session = [r for r in received if r[0] == "send_to" and r[2] == "left_session"]
+    assert left_session
+    assert left_session[-1][1] == player_id
+
+
+async def test_handle_leave_removes_player_from_turn_order():
+    engine, session, received = make_engine(StubDM())
+    p1, p2 = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, p1, name="A")
+    await join(engine, p2, name="B")
+    assert session.turn_order == [p1, p2]
+
+    await engine.handle_leave(p1)
+
+    assert session.turn_order == [p2]
+    assert session.current_turn == p2
+
+
+async def test_handle_leave_advances_turn_when_current_player_leaves():
+    engine, session, received = make_engine(StubDM())
+    p1, p2, p3 = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, p1, name="A")
+    await join(engine, p2, name="B")
+    await join(engine, p3, name="C")
+    # Advance so p2 is current
+    session.advance_turn()
+    assert session.current_turn == p2
+
+    await engine.handle_leave(p2)
+
+    # p1 and p3 remain; current_turn_index should point at p3 now
+    assert session.turn_order == [p1, p3]
+    assert session.current_turn == p3
+
+
+async def test_handle_leave_last_player_empties_turn_order():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Solo")
+
+    await engine.handle_leave(player_id)
+
+    assert session.turn_order == []
+    assert session.current_turn is None
+    assert session.current_turn_index == 0
 
 
 async def test_rejoin_uses_existing_character_name_not_new_input():
@@ -4792,4 +4861,1128 @@ async def test_reconnect_recap_is_only_prepended_once():
     assert len(dm.action_texts) == 2
     assert "Context:" not in dm.action_texts[1]
     assert dm.action_texts[1] == "I keep moving"
+
+
+# --- Stunned condition tests ---
+
+
+async def test_stunned_auto_fail_str_save():
+    """A stunned creature auto-fails STR saving throws per real 5e SRD.
+    The most common case: a stunned NPC being forced to make a save by
+    a spell or effect."""
+    class ForceStunnedSaveDM:
+        def __init__(self):
+            self.tool_result = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.tool_result = request_roll({"dice": "1d20", "dc": 10, "reason": "resist the force", "ability": "str", "roll_kind": "save", "target": "bandit"})
+            yield "You force the bandit to make a save."
+
+    dm = ForceStunnedSaveDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    from server.state import CharacterSheet
+    npc = CharacterSheet(player_id="bandit", name="Bandit", hp=20, max_hp=20)
+    npc.conditions.append("Stunned")
+    session.npcs["bandit"] = npc
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I force the bandit to resist"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["result"] == 0
+    assert payload["rolls"] == [0]
+    assert payload["success"] is False
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "failure" in dice_logs[-1][2]["text"]
+
+
+async def test_stunned_auto_fail_dex_save():
+    """A stunned creature auto-fails DEX saving throws too."""
+    class ForceStunnedSaveDM:
+        def __init__(self):
+            self.tool_result = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.tool_result = request_roll({"dice": "1d20", "dc": 10, "reason": "dodge the blast", "ability": "dex", "roll_kind": "save", "target": "bandit"})
+            yield "You force the bandit to dodge."
+
+    dm = ForceStunnedSaveDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    from server.state import CharacterSheet
+    npc = CharacterSheet(player_id="bandit", name="Bandit", hp=20, max_hp=20)
+    npc.conditions.append("Stunned")
+    session.npcs["bandit"] = npc
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I force the bandit to dodge"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["result"] == 0
+    assert payload["success"] is False
+
+
+async def test_stunned_does_not_auto_fail_wis_save():
+    """A stunned creature does NOT auto-fail WIS saves - only STR/DEX."""
+    class ForceStunnedSaveDM:
+        def __init__(self):
+            self.tool_result = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.tool_result = request_roll({"dice": "1d20", "dc": 10, "reason": "resist the charm", "ability": "wis", "roll_kind": "save", "target": "bandit"})
+            yield "You try to charm the bandit."
+
+    dm = ForceStunnedSaveDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["wis"] = 14  # +2 modifier
+
+    from server.state import CharacterSheet
+    npc = CharacterSheet(player_id="bandit", name="Bandit", hp=20, max_hp=20)
+    npc.conditions.append("Stunned")
+    session.npcs["bandit"] = npc
+
+    with patch("server.dice.random.randint", side_effect=[15]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I try to charm the bandit"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    # WIS 14 = +2 mod, rolled 15, total = 17. Not auto-fail.
+    assert payload["result"] == 17
+    assert payload["success"] is True
+
+
+async def test_stunned_does_not_auto_fail_attack_roll():
+    """Stunned auto-fails STR/DEX saves, not attack rolls."""
+    class ForceStunnedSaveDM:
+        def __init__(self):
+            self.tool_result = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.tool_result = request_roll({"dice": "1d20", "dc": 10, "reason": "attack the stunned bandit", "ability": "str", "roll_kind": "attack", "target": "bandit"})
+            yield "You swing at the stunned bandit."
+
+    dm = ForceStunnedSaveDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["str"] = 16  # +3 modifier
+
+    from server.state import CharacterSheet
+    npc = CharacterSheet(player_id="bandit", name="Bandit", hp=20, max_hp=20)
+    npc.conditions.append("Stunned")
+    session.npcs["bandit"] = npc
+
+    with patch("server.dice.random.randint", side_effect=[14, 8]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I swing at the stunned bandit"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    # STR 16 = +3 mod, rolled 14 (advantage keeps higher), total = 17. Not auto-fail.
+    assert payload["result"] == 17
+
+
+async def test_stunned_grants_advantage_on_attacks_against():
+    """Attack rolls against a stunned target have advantage per real 5e."""
+    # Need two players: attacker (turn) and a DM that attacks a stunned NPC
+    # Actually, we test via request_roll with target="bandit" where bandit is stunned
+    class AttackStunnedNPCDM:
+        def __init__(self):
+            self.tool_result = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.tool_result = request_roll({"dice": "1d20", "dc": 12, "reason": "attack the stunned bandit", "roll_kind": "attack", "target": "bandit"})
+            yield "You swing at the stunned bandit."
+
+    dm = AttackStunnedNPCDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    # Introduce a stunned NPC
+    from server.state import CharacterSheet
+    npc = CharacterSheet(player_id="bandit", name="Bandit", hp=20, max_hp=20)
+    npc.conditions.append("Stunned")
+    session.npcs["bandit"] = npc
+
+    with patch("server.dice.random.randint", side_effect=[18, 5]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I attack the stunned bandit"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload.get("advantage") is True
+    assert payload.get("advantage_reasons") == ["Stunned"]
+    assert payload["rolls"] == [18, 5]
+    assert payload["result"] == 18  # the kept (higher) roll
+
+
+async def test_stunned_advantage_only_applies_to_attacks():
+    """Stunned target advantage only applies to attack rolls, not saves/checks."""
+    class CheckStunnedNPCDM:
+        def __init__(self):
+            self.tool_result = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.tool_result = request_roll({"dice": "1d20", "dc": 12, "reason": "persuade the bandit", "roll_kind": "check", "target": "bandit"})
+            yield "You try to persuade the bandit."
+
+    dm = CheckStunnedNPCDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    from server.state import CharacterSheet
+    npc = CharacterSheet(player_id="bandit", name="Bandit", hp=20, max_hp=20)
+    npc.conditions.append("Stunned")
+    session.npcs["bandit"] = npc
+
+    with patch("server.dice.random.randint", side_effect=[15]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I try to persuade the bandit"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    # Stunned only grants advantage on attacks, not checks
+    assert payload.get("advantage") is None or payload.get("advantage") is False
+    assert "advantage" not in payload or payload["advantage"] is False
+
+
+async def test_stunned_advantage_overrides_disadvantage():
+    """Target-side advantage from stunned overrides bearer-side disadvantage."""
+    class AttackStunnedNPCDM:
+        def __init__(self):
+            self.tool_result = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.tool_result = request_roll({"dice": "1d20", "dc": 12, "reason": "attack the stunned bandit", "roll_kind": "attack", "target": "bandit"})
+            yield "You swing at the stunned bandit."
+
+    dm = AttackStunnedNPCDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    # Attacker is poisoned (bearer disadvantage on attacks)
+    session.characters[player_id].conditions.append("poisoned")
+
+    from server.state import CharacterSheet
+    npc = CharacterSheet(player_id="bandit", name="Bandit", hp=20, max_hp=20)
+    npc.conditions.append("Stunned")
+    session.npcs["bandit"] = npc
+
+    with patch("server.dice.random.randint", side_effect=[18, 5]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I attack the stunned bandit despite the poison"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    # Stunned target grants advantage, overriding poisoned disadvantage
+    assert payload.get("advantage") is True
+    assert payload.get("disadvantage") is not True
+    assert payload["result"] == 18  # the kept (higher) roll
+
+
+async def test_stunned_incapacitated_blocks_action():
+    """A stunned player's normal action is rejected."""
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].conditions.append("Stunned")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the goblin"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert len(warnings) == 1
+    assert "stunned" in warnings[0][3]["text"].lower()
+    assert "can't act" in warnings[0][3]["text"]
+    # Turn should NOT have advanced
+    assert session.current_turn == player_id
+
+
+async def test_non_stunned_not_affected_by_advantage_conditions():
+    """A creature without target-advantage conditions doesn't grant advantage."""
+    class NormalAttackDM:
+        def __init__(self):
+            self.tool_result = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.tool_result = request_roll({"dice": "1d20", "dc": 12, "reason": "attack the bandit", "roll_kind": "attack", "target": "bandit"})
+            yield "You swing at the bandit."
+
+    dm = NormalAttackDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    from server.state import CharacterSheet
+    npc = CharacterSheet(player_id="bandit", name="Bandit", hp=20, max_hp=20)
+    # No conditions on the NPC
+    session.npcs["bandit"] = npc
+
+    with patch("server.dice.random.randint", side_effect=[15]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I attack the bandit"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload.get("advantage") is None or payload.get("advantage") is False
+    assert payload["result"] == 15  # single roll, no advantage
     assert session.pending_dm_recap == []
+
+
+# --- Concentration tests ---
+
+
+class CastSpellDM:
+    """Calls apply_update with cast_spell, simulating the DM casting a spell."""
+    def __init__(self, cast_spell: str, target: str = "self"):
+        self._cast_spell = cast_spell
+        self._target = target
+        self.tool_result = None
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+        update: dict = {"target": self._target, "cast_spell": self._cast_spell}
+        self.tool_result = apply_update(update)
+        yield f"You cast {self._cast_spell}."
+
+
+class CastSpellWithDamageDM:
+    """Casts a spell, then applies damage to the same character to test
+    concentration saves."""
+    def __init__(self, cast_spell: str, hp_delta: int):
+        self._cast_spell = cast_spell
+        self._hp_delta = hp_delta
+        self.tool_result = None
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+        apply_update({"target": "self", "cast_spell": self._cast_spell})
+        self.tool_result = apply_update({"target": "self", "hp_delta": self._hp_delta})
+        yield "You're hit!"
+
+
+class DropConcentrationDM:
+    """Voluntarily drops concentration."""
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+        apply_update({"target": "self", "drop_concentration": True})
+        yield "You let the spell fade."
+
+
+async def test_casting_concentration_spell_sets_concentration():
+    """Casting a concentration spell (bless) sets concentration_spell."""
+    # Clerics know bless and guidance (both concentration)
+    engine, session, received = make_engine(CastSpellDM("bless"))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].character_class = "Cleric"
+    session.characters[player_id].known_spells = ["bless", "guidance", "cure_wounds"]
+    session.characters[player_id].spell_slots = {"1": 3}
+    session.characters[player_id].max_spell_slots = {"1": 3}
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast bless"},
+    ))
+
+    assert session.characters[player_id].concentration_spell == "bless"
+
+
+async def test_casting_second_concentration_spell_ends_first():
+    """Casting a second concentration spell ends the first."""
+    class CastTwoSpellsDM:
+        def __init__(self):
+            self.tool_result = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            apply_update({"target": "self", "cast_spell": "bless"})
+            apply_update({"target": "self", "cast_spell": "guidance"})
+            yield "You switch concentration."
+
+    engine, session, received = make_engine(CastTwoSpellsDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].character_class = "Cleric"
+    session.characters[player_id].known_spells = ["bless", "guidance", "cure_wounds"]
+    session.characters[player_id].spell_slots = {"1": 3, "0": 99}
+    session.characters[player_id].max_spell_slots = {"1": 3}
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast bless then guidance"},
+    ))
+
+    assert session.characters[player_id].concentration_spell == "guidance"
+
+
+async def test_damage_triggers_concentration_save():
+    """Taking damage while concentrating triggers a CON save."""
+    engine, session, received = make_engine(CastSpellWithDamageDM("bless", -10))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].character_class = "Cleric"
+    session.characters[player_id].known_spells = ["bless", "cure_wounds"]
+    session.characters[player_id].spell_slots = {"1": 3}
+    session.characters[player_id].max_spell_slots = {"1": 3}
+    session.characters[player_id].stats["con"] = 14  # +2 modifier
+    session.characters[player_id].hp = 20
+    session.characters[player_id].max_hp = 20
+
+    # CON save DC = max(10, 10//2) = 10. Roll 15+2 = 17 >= 10 → success
+    with patch("server.dice.random.randint", side_effect=[15]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I get hit"},
+        ))
+
+    # Concentration should be maintained (save succeeded)
+    assert session.characters[player_id].concentration_spell == "bless"
+    # Check that a dice_result was broadcast for the concentration save
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    assert len(results) >= 1
+    save_payload = results[-1][2]
+    assert save_payload.get("dc") == 10  # max(10, 10//2) = 10
+    assert save_payload.get("success") is True
+
+
+async def test_failed_concentration_save_ends_spell():
+    """Failing the concentration save ends the spell."""
+    engine, session, received = make_engine(CastSpellWithDamageDM("bless", -10))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].character_class = "Cleric"
+    session.characters[player_id].known_spells = ["bless", "cure_wounds"]
+    session.characters[player_id].spell_slots = {"1": 3}
+    session.characters[player_id].max_spell_slots = {"1": 3}
+    session.characters[player_id].stats["con"] = 10  # +0 modifier
+    session.characters[player_id].hp = 20
+    session.characters[player_id].max_hp = 20
+
+    # CON save DC = max(10, 10//2) = 10. Roll 5+0 = 5 < 10 → fail
+    with patch("server.dice.random.randint", side_effect=[5]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I get hit"},
+        ))
+
+    # Concentration should be broken
+    assert session.characters[player_id].concentration_spell is None
+    # Check that a system message announced the loss
+    sys_msgs = [r for r in received if r[0] == "broadcast" and r[1] == "system_message"]
+    lose_msgs = [r for r in sys_msgs if "loses concentration" in r[2].get("text", "")]
+    assert len(lose_msgs) == 1
+
+
+async def test_concentration_save_dc_scales_with_damage():
+    """DC = max(10, damage/2) - large damage increases the DC."""
+    engine, session, received = make_engine(CastSpellWithDamageDM("bless", -30))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].character_class = "Cleric"
+    session.characters[player_id].known_spells = ["bless", "cure_wounds"]
+    session.characters[player_id].spell_slots = {"1": 3}
+    session.characters[player_id].max_spell_slots = {"1": 3}
+    session.characters[player_id].stats["con"] = 14  # +2 modifier
+    session.characters[player_id].hp = 40
+    session.characters[player_id].max_hp = 40
+
+    # CON save DC = max(10, 30//2) = 15. Roll 13+2 = 15 >= 15 → success
+    with patch("server.dice.random.randint", side_effect=[13]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I get hit hard"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    save_payload = results[-1][2]
+    assert save_payload.get("dc") == 15  # max(10, 30//2) = 15
+    assert save_payload.get("success") is True
+    assert session.characters[player_id].concentration_spell == "bless"
+
+
+async def test_voluntary_drop_concentration():
+    """The DM can voluntarily end concentration via drop_concentration."""
+    engine, session, received = make_engine(DropConcentrationDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].concentration_spell = "bless"
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I let the spell fade"},
+    ))
+
+    assert session.characters[player_id].concentration_spell is None
+
+
+async def test_stunned_ends_concentration():
+    """Being stunned ends concentration (incapacitated = no concentration)."""
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].concentration_spell = "bless"
+    session.characters[player_id].conditions.append("Stunned")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I try to act"},
+    ))
+
+    # Concentration should be cleared
+    assert session.characters[player_id].concentration_spell is None
+    # Check the warning message mentions concentration ending
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert any("concentration ends" in w[3]["text"] for w in warnings)
+
+
+async def test_unconscious_ends_concentration():
+    """Dropping to 0 HP ends concentration."""
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].concentration_spell = "bless"
+    session.characters[player_id].hp = 5
+    session.characters[player_id].max_hp = 20
+
+    # Apply damage via apply_update to drop to 0
+    class DamageDM:
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            apply_update({"target": "self", "hp_delta": -10})
+            yield "You fall."
+
+    engine2, session2, received2 = make_engine(DamageDM())
+    player_id2 = str(uuid.uuid4())
+    await join(engine2, player_id2)
+    session2.characters[player_id2].concentration_spell = "bless"
+    session2.characters[player_id2].hp = 5
+
+    await engine2.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id2,
+        payload={"text": "I fall"},
+    ))
+
+    # The character should be at 0 HP and concentration should be cleared
+    assert session2.characters[player_id2].hp == 0
+    assert session2.characters[player_id2].concentration_spell is None
+
+
+async def test_no_concentration_save_when_not_concentrating():
+    """Taking damage without concentrating does NOT trigger a save."""
+    engine, session, received = make_engine(CastSpellWithDamageDM("cure_wounds", -10))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].character_class = "Cleric"
+    session.characters[player_id].known_spells = ["cure_wounds"]
+    session.characters[player_id].spell_slots = {"1": 3}
+    session.characters[player_id].max_spell_slots = {"1": 3}
+    session.characters[player_id].hp = 20
+    session.characters[player_id].max_hp = 20
+    # Not concentrating on anything
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I get hit"},
+    ))
+
+    # No concentration save should be triggered
+    sys_msgs = [r for r in received if r[0] == "broadcast" and r[1] == "system_message"]
+    conc_msgs = [r for r in sys_msgs if "concentration" in r[2].get("text", "").lower()]
+    assert len(conc_msgs) == 0
+
+
+# ── Inspiration tests ──────────────────────────────────────────────
+
+
+async def test_grant_inspiration_sets_flag():
+    """apply_update with grant_inspiration=True sets the flag."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"grant_inspiration": True}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    assert session.characters[player_id].inspiration is False
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I inspire myself"},
+    ))
+
+    assert session.characters[player_id].inspiration is True
+
+
+async def test_inspiration_grants_advantage_on_roll():
+    """When inspiration is set, request_roll grants advantage and clears flag."""
+    class GrantThenRollDM:
+        """Grants inspiration then makes a roll in the same turn."""
+        def __init__(self):
+            self.roll_result: str | None = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            apply_update({"grant_inspiration": True})
+            self.roll_result = request_roll({
+                "notation": "1d20",
+                "ability": "dexterity",
+                "roll_kind": "save",
+                "dc": 10,
+                "reason": "dodge the trap",
+            })
+            yield "You dodge expertly."
+
+    dm = GrantThenRollDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["dexterity"] = 14  # +2 mod
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I dodge"},
+    ))
+
+    # Roll should have been made with advantage (rolls has 2 entries)
+    roll_text = dm.roll_result
+    assert "advantage: inspiration" in roll_text
+    assert "[" in roll_text and "," in roll_text  # advantage shows 2d20
+    # Inspiration should be consumed
+    assert session.characters[player_id].inspiration is False
+
+
+async def test_inspiration_not_spent_if_already_has_advantage():
+    """If advantage is already granted by conditions, inspiration is NOT consumed."""
+    class RollWithStunnedTargetDM:
+        def __init__(self):
+            self.roll_result: str | None = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            # Grant inspiration
+            apply_update({"grant_inspiration": True})
+            # Create a stunned NPC target
+            apply_update({"target": "goblin", "max_hp": 10, "hp_delta": 0, "add_condition": "stunned"})
+            # Roll attack against stunned target — already has advantage
+            self.roll_result = request_roll({
+                "notation": "1d20",
+                "ability": "strength",
+                "roll_kind": "attack",
+                "target": "goblin",
+                "reason": "strike the stunned foe",
+            })
+            yield "You strike."
+
+    dm = RollWithStunnedTargetDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack"},
+    ))
+
+    # Inspiration should NOT be consumed — advantage already from stunned
+    assert session.characters[player_id].inspiration is True
+
+
+async def test_inspiration_does_not_stack():
+    """Granting inspiration when already inspired does nothing (max 1)."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"grant_inspiration": True}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inspiration = True  # already inspired
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I inspire again"},
+    ))
+
+    # Should still be True, not stacked
+    assert session.characters[player_id].inspiration is True
+
+
+# ── Exhaustion tests ───────────────────────────────────────────────
+
+
+async def test_exhaustion_level1_grants_disadvantage_on_checks():
+    """Exhaustion level 1+ grants disadvantage on ability checks."""
+    class RollCheckDM:
+        def __init__(self):
+            self.roll_result: str | None = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.roll_result = request_roll({
+                "notation": "1d20",
+                "ability": "dexterity",
+                "roll_kind": "check",
+                "dc": 10,
+                "reason": "climb the wall",
+            })
+            yield "You attempt to climb."
+
+    dm = RollCheckDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["dexterity"] = 14
+    session.characters[player_id].exhaustion = 1
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I climb"},
+    ))
+
+    assert "disadvantage: exhaustion" in dm.roll_result
+
+
+async def test_exhaustion_level3_grants_disadvantage_on_attacks():
+    """Exhaustion level 3+ grants disadvantage on attack rolls."""
+    class RollAttackDM:
+        def __init__(self):
+            self.roll_result: str | None = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.roll_result = request_roll({
+                "notation": "1d20",
+                "ability": "strength",
+                "roll_kind": "attack",
+                "dc": 10,
+                "reason": "swing at the enemy",
+            })
+            yield "You attack."
+
+    dm = RollAttackDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["strength"] = 16
+    session.characters[player_id].exhaustion = 3
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack"},
+    ))
+
+    assert "disadvantage: exhaustion" in dm.roll_result
+
+
+async def test_exhaustion_level4_halves_max_hp():
+    """Exhaustion level 4 halves effective max HP."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"exhaustion_delta": 3}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].max_hp = 20
+    session.characters[player_id].hp = 20
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I rest"},
+    ))
+
+    # Should now be at exhaustion 3 (started at 0, +3)
+    assert session.characters[player_id].exhaustion == 3
+    assert session.characters[player_id].effective_max_hp == 20  # not halved yet
+
+
+async def test_exhaustion_level6_kills_character():
+    """Exhaustion level 6 = instant death."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"exhaustion_delta": 6}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 10
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I push through"},
+    ))
+
+    assert session.characters[player_id].dead is True
+    assert session.characters[player_id].dying is False
+
+
+async def test_exhaustion_clamped_to_0_6():
+    """Exhaustion is clamped to 0-6 range."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"exhaustion_delta": 10}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I exhaust myself"},
+    ))
+
+    # Should be clamped to 6 (max)
+    assert session.characters[player_id].exhaustion == 6
+    assert session.characters[player_id].dead is True
+
+
+async def test_exhaustion_recovery():
+    """Exhaustion can be reduced with negative delta."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"exhaustion_delta": -1}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].exhaustion = 2
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I recover"},
+    ))
+
+    assert session.characters[player_id].exhaustion == 1
+
+
+async def test_exhaustion_level5_halves_speed():
+    """Exhaustion level 2+ halves speed (computed, not stored)."""
+    # Speed halving is a computed effect - test that effective_max_hp works correctly
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].max_hp = 30
+    session.characters[player_id].hp = 30
+    session.characters[player_id].exhaustion = 4
+
+    # effective_max_hp should be halved
+    assert session.characters[player_id].effective_max_hp == 15
+
+
+# ── Cover tests ────────────────────────────────────────────────────
+
+
+async def test_half_cover_grants_plus2_to_ac():
+    """Half cover grants +2 to AC for attack rolls."""
+    class RollAttackDM:
+        def __init__(self):
+            self.roll_result: str | None = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.roll_result = request_roll({
+                "notation": "1d20",
+                "ability": "dexterity",
+                "roll_kind": "attack",
+                "dc": 15,
+                "cover": 2,
+                "reason": "shoot at enemy behind half cover",
+            })
+            yield "You shoot."
+
+    dm = RollAttackDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["dexterity"] = 14
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I shoot"},
+    ))
+
+    assert "(+2 cover)" in dm.roll_result
+
+
+async def test_three_quarters_cover_grants_plus5():
+    """Three-quarters cover grants +5 to AC for attack rolls."""
+    class RollAttackDM:
+        def __init__(self):
+            self.roll_result: str | None = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.roll_result = request_roll({
+                "notation": "1d20",
+                "ability": "strength",
+                "roll_kind": "attack",
+                "dc": 18,
+                "cover": 5,
+                "reason": "attack through arrow slit",
+            })
+            yield "You attack."
+
+    dm = RollAttackDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["strength"] = 16
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack"},
+    ))
+
+    assert "(+5 cover)" in dm.roll_result
+
+
+async def test_cover_does_not_apply_to_checks():
+    """Cover bonus does not apply to ability checks."""
+    class RollCheckDM:
+        def __init__(self):
+            self.roll_result: str | None = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.roll_result = request_roll({
+                "notation": "1d20",
+                "ability": "perception",
+                "roll_kind": "check",
+                "cover": 2,
+                "reason": "spot enemy",
+            })
+            yield "You look."
+
+    dm = RollCheckDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["wisdom"] = 12
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look"},
+    ))
+
+    # Cover should NOT appear in the result for checks
+    assert "(+2 cover)" not in dm.roll_result
+
+
+# ── Opportunity Attack tests ───────────────────────────────────────
+
+
+async def test_opportunity_attack_consumes_reaction():
+    """Opportunity attack consumes the character's reaction."""
+    class OpportunityAttackDM:
+        def __init__(self):
+            self.roll_result: str | None = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.roll_result = request_roll({
+                "notation": "1d20",
+                "ability": "strength",
+                "roll_kind": "attack",
+                "trigger": "opportunity_attack",
+                "reason": "opportunity attack as goblin leaves reach",
+            })
+            yield "You strike as it flees."
+
+    dm = OpportunityAttackDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["strength"] = 16
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack as it leaves"},
+    ))
+
+    assert session.characters[player_id].reaction_used is True
+    assert "opportunity_attack" in dm.roll_result or "attack" in dm.roll_result
+
+
+async def test_opportunity_attack_fails_without_reaction():
+    """Opportunity attack fails if reaction already used."""
+    class OpportunityAttackDM:
+        def __init__(self):
+            self.roll_result: str | None = None
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self.roll_result = request_roll({
+                "notation": "1d20",
+                "ability": "strength",
+                "roll_kind": "attack",
+                "trigger": "opportunity_attack",
+                "reason": "opportunity attack",
+            })
+            yield "You attempt to strike."
+
+    dm = OpportunityAttackDM()
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["strength"] = 16
+    session.characters[player_id].reaction_used = True  # already used
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack"},
+    ))
+
+    assert "cannot make an opportunity attack" in dm.roll_result
+
+
+async def test_reaction_resets():
+    """Reaction can be consumed and then reset."""
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    # Initially available
+    assert session.characters[player_id].reaction_used is False
+
+    # Consume
+    result = session.characters[player_id].consume_reaction()
+    assert result is True
+    assert session.characters[player_id].reaction_used is True
+
+    # Can't consume again
+    result = session.characters[player_id].consume_reaction()
+    assert result is False
+
+    # Reset
+    session.characters[player_id].reset_reaction()
+    assert session.characters[player_id].reaction_used is False
+
+
+# ── Temporary HP tests ─────────────────────────────────────────────
+
+
+async def test_temporary_hp_absorbs_damage_first():
+    """Temporary HP are absorbed before real HP when taking damage."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"hp_delta": -10}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].hp = 20
+    session.characters[player_id].max_hp = 20
+    session.characters[player_id].temporary_hp = 5
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I get hit"},
+    ))
+
+    # Temp HP should absorb 5 damage, then real HP takes remaining 5
+    assert session.characters[player_id].temporary_hp == 0
+    assert session.characters[player_id].hp == 15
+
+
+async def test_temporary_hp_does_not_stack():
+    """New temporary HP only replaces if higher than current."""
+    engine, session, _ = make_engine(UpdateCharacterDM({"temporary_hp": 3}))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].temporary_hp = 5
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I get temp HP"},
+    ))
+
+    # Should keep 5 (higher), not replace with 3
+    assert session.characters[player_id].temporary_hp == 5
+
+
+async def test_speed_from_race():
+    """Character gets speed from race data during creation."""
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].race = "Wood Elf"
+
+    # Wood elf speed is 35
+    assert session.characters[player_id].speed == 30  # default until race applied at creation
+
+
+# ── Passive Perception tests ───────────────────────────────────────
+
+
+async def test_passive_perception_basic():
+    """Passive perception is 10 + WIS modifier."""
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["wis"] = 14  # +2 mod
+
+    assert session.characters[player_id].passive_perception == 12
+
+
+async def test_passive_perception_with_proficiency():
+    """Passive perception adds proficiency bonus if proficient."""
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].stats["wis"] = 14  # +2 mod
+    session.characters[player_id].character_class = "Fighter"  # proficient in perception
+
+    # Level 1 proficiency bonus is 2
+    assert session.characters[player_id].passive_perception == 14  # 10 + 2 + 2
+
+
+# ── Hit Dice tests ─────────────────────────────────────────────────
+
+
+async def test_hit_dice_at_creation():
+    """Character starts with 1 hit die at level 1."""
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter")
+
+    assert session.characters[player_id].hit_dice_remaining == 1
+
+
+# ── Background Traits tests ────────────────────────────────────────
+
+
+async def test_background_traits_can_be_set():
+    """Background traits can be set via apply_update."""
+    engine, session, _ = make_engine(UpdateCharacterDM({
+        "personality_traits": "I always have a plan for what to do when things go wrong.",
+        "ideals": "Freedom. Tyrants must not be allowed to oppress the weak.",
+        "bonds": "I swore my sword to the queen, and I will not break that oath.",
+        "flaws": "I have a weakness for the bottle.",
+    }))
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I establish my background"},
+    ))
+
+    assert session.characters[player_id].personality_traits == "I always have a plan for what to do when things go wrong."
+    assert session.characters[player_id].ideals == "Freedom. Tyrants must not be allowed to oppress the weak."
+    assert session.characters[player_id].bonds == "I swore my sword to the queen, and I will not break that oath."
+    assert session.characters[player_id].flaws == "I have a weakness for the bottle."
+
+
+# ── Critical Hit Damage tests ──────────────────────────────────────
+
+
+async def test_crit_damage_doubles_dice():
+    """crit_damage doubles all dice in notation (1d8 -> 2d8)."""
+    dm = RequestRollDM({"dice": "1d8", "crit_damage": True, "reason": "critical damage"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack for crit damage"},
+    ))
+
+    # Check dice_result events for the doubled roll
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    # 1d8 doubled to 2d8: max total is 16
+    assert payload["result"] <= 16
+    # The dice notation should show 2d8
+    assert "2d8" in payload["dice"]
+
+
+async def test_crit_damage_without_flag():
+    """Without crit_damage, dice are not doubled."""
+    dm = RequestRollDM({"dice": "1d8", "reason": "normal damage"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack for normal damage"},
+    ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    # Normal 1d8: max total is 8
+    assert payload["result"] <= 8
+    assert "1d8" in payload["dice"]

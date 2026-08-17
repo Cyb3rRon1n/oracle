@@ -690,6 +690,172 @@ def _npc_status_line(name: str, npc: dict) -> str:
     return line + "[/dim]"
 
 
+class LoginScreen(Screen):
+    """The client's true root screen now (App.on_mount pushes this
+    instead of WelcomeScreen for real usage) - real server-owned identity
+    (ROADMAP.md, 2026-08-13), replacing the old client-local .player_id
+    file that let a client just assert whatever player_id it wanted. A
+    login is also, deliberately, a first-time registration: there is no
+    separate signup step - the first successful login for a username
+    creates the account (server/accounts.py), matching the "simplest real
+    auth flow for a small self-hosted game" call already written into
+    ROADMAP.md, not something invented here. Pushes WelcomeScreen once a
+    real login_result confirms it (DungeonMasterApp._handle)."""
+
+    CSS = """
+    LoginScreen { align: center middle; }
+    #login-box { width: 50; height: auto; border: solid $accent; padding: 0 2; }
+    #login-box Input { margin-bottom: 1; }
+    #login-error { color: $error; height: 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with VerticalScroll(id="login-box"):
+            yield Static("[b]Oracle[/b] - an AI Dungeon Master")
+            yield Static("[dim]Log in, or pick a new username to create one.[/dim]")
+            yield Input(placeholder="Username", id="username-input")
+            yield Input(placeholder="Password", password=True, id="password-input")
+            yield Static("", id="login-error")
+            yield Button("Log In", id="login", variant="primary")
+        yield Footer()
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "login":
+            await self._login()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        await self._login()
+
+    async def _login(self) -> None:
+        login_button = self.query_one("#login", Button)
+        if login_button.disabled:
+            return  # a real Enter-then-click double-submit shouldn't send login twice
+        username = self.query_one("#username-input", Input).value.strip()
+        password = self.query_one("#password-input", Input).value
+        if not username or not password:
+            self.query_one("#login-error", Static).update("[red]Username and password are both required.[/red]")
+            return
+        login_button.disabled = True
+        try:
+            await self.app.login(username, password)
+        except OSError as exc:
+            login_button.disabled = False
+            self.query_one("#login-error", Static).update(f"[red]Couldn't connect: {exc}[/red]")
+
+    def show_error(self, message: str) -> None:
+        # Called by DungeonMasterApp._handle() on a failed login_result -
+        # re-enables the button so a mistyped password can be retried
+        # immediately, the same re-enable-on-failure pattern WelcomeScreen's
+        # own _join() already establishes for a failed connection/import.
+        self.query_one("#login", Button).disabled = False
+        self.query_one("#login-error", Static).update(f"[red]{message}[/red]")
+
+
+class MainMenuScreen(Screen):
+    """The real pre-game hub, and the Tavern lobby itself (ROADMAP.md,
+    2026-08-15) - New Character vs. Continue an existing table, plus a
+    live directory of currently-active tables and lobby-wide chat with
+    anyone else who's logged in but hasn't sat down at one yet. Real
+    accounts (LoginScreen) give the server something real to remember
+    "your tables" against, rather than the old client-local .player_id
+    file this replaced. Reached via switch_screen from LoginScreen once
+    a real login_result confirms a real account (DungeonMasterApp.
+    _handle). New Character still routes through WelcomeScreen's
+    existing name/class/race/import form, unchanged. Continue, shown
+    only when the account has any real recent_sessions, skips straight
+    into one of them with placeholder name/class - join_session already
+    ignores both on a genuine reconnect (docs/protocol.md), so there's
+    nothing meaningful to re-ask. Deliberately no third "View Character
+    Sheet" choice here - there is no pre-session character store to view
+    a snapshot of (a session's own Session.characters[player_id],
+    server/state.py, is the only place a real sheet lives) - viewing
+    happens naturally once inside a session, the same live sheet this
+    screen would otherwise just be showing a stale copy of."""
+
+    CSS = """
+    MainMenuScreen { align: center middle; }
+    #menu-box { width: 60; height: auto; max-height: 100%; border: solid $accent; padding: 0 2; }
+    #menu-box Button { width: 100%; margin-bottom: 1; }
+    #menu-error { color: $error; height: 1; }
+    #tavern-directory { height: auto; max-height: 6; border: solid $accent; margin-bottom: 1; }
+    #tavern-chat-log { height: 8; border: solid $accent; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with VerticalScroll(id="menu-box"):
+            yield Static("[b]Oracle[/b] - Main Menu")
+            yield Button("New Character", id="new-character", variant="primary")
+            if self.app.recent_sessions:
+                yield Static("[dim]Continue a table you've already joined:[/dim]")
+                with RadioSet(id="recent-sessions"):
+                    for index, session_id in enumerate(self.app.recent_sessions):
+                        yield RadioButton(session_id, id=f"recent-{index}")
+                yield Button("Continue", id="continue-session")
+            yield Static("", id="menu-error")
+            yield Static("[b]The Tavern[/b] - who's around right now")
+            yield Static("[dim]Nobody's at a table yet.[/dim]", id="tavern-directory")
+            yield RichLog(id="tavern-chat-log", markup=True, wrap=True)
+            yield Input(placeholder="Say something in the Tavern...", id="tavern-chat-input")
+        yield Footer()
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "new-character":
+            await self.app.push_screen(WelcomeScreen())
+        elif event.button.id == "continue-session":
+            await self._continue_selected_session()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "tavern-chat-input":
+            text = event.input.value.strip()
+            if text:
+                await self.app.send_tavern_chat(text)
+                event.input.value = ""
+
+    async def _continue_selected_session(self) -> None:
+        continue_button = self.query_one("#continue-session", Button)
+        if continue_button.disabled:
+            return  # a real Enter-then-click double-submit shouldn't join twice
+        pressed = self.query_one("#recent-sessions", RadioSet).pressed_button
+        if pressed is None or pressed.id is None:
+            self.query_one("#menu-error", Static).update("[red]Pick a table first.[/red]")
+            return
+        index = int(pressed.id.rsplit("-", 1)[-1])
+        session_id = self.app.recent_sessions[index]
+
+        continue_button.disabled = True
+        try:
+            # Placeholder name/class - genuinely inert on a real
+            # reconnect (join_session ignores both, docs/protocol.md),
+            # the same way WelcomeScreen's own Solo mode already never
+            # asks for a class on a returning character either.
+            await self.app.connect_and_join("Adventurer", session_id, "", None, None, "")
+        except OSError as exc:
+            continue_button.disabled = False
+            self.query_one("#menu-error", Static).update(f"[red]Couldn't connect: {exc}[/red]")
+
+    def render_tavern_directory(self, sessions: list[dict]) -> None:
+        # Called by DungeonMasterApp._handle() on every real
+        # tavern_directory push - a plain text list, the same "small
+        # footprint for a first pass" convention this project's other
+        # first-pass UI additions (the NPC status log line, the
+        # Objectives section) already established, not a DataTable.
+        directory = self.query_one("#tavern-directory", Static)
+        if not sessions:
+            directory.update("[dim]Nobody's at a table yet.[/dim]")
+            return
+        lines = []
+        for entry in sessions:
+            status = "in progress" if entry.get("started") else "waiting for players"
+            count = entry.get("player_count", 0)
+            lines.append(f"- {entry.get('session_id')} ({count} player{'s' if count != 1 else ''}, {status})")
+        directory.update("\n".join(lines))
+
+    def write_tavern_message(self, name: str, text: str) -> None:
+        self.query_one("#tavern-chat-log", RichLog).write(f"[b]{name}[/b]: {text}")
+
+
 class WelcomeScreen(Screen):
     """The client's very first screen - collects identity (name, session
     ID, and, for a genuinely new local player, class) and joins. Replaces
@@ -1002,6 +1168,10 @@ class LobbyScreen(Screen):
         if not text:
             return
 
+        if text.startswith("/leave"):
+            await self.app.transport.send("leave_session", {})
+            return
+
         if text.startswith("/export"):
             filename = text[len("/export"):].strip() or "character"
             message = await self.app.export_character(filename)
@@ -1140,6 +1310,8 @@ class SessionScreen(Screen):
             await self.app.transport.send(
                 "character_edit", {"field": "unequip", "value": text[len("/unequip "):].strip()}
             )
+        elif text.startswith("/leave"):
+            await self.app.transport.send("leave_session", {})
         elif text.startswith("/export"):
             filename = text[len("/export"):].strip() or "character"
             message = await self.app.export_character(filename)
@@ -1174,11 +1346,27 @@ class DungeonMasterApp(App):
     deliberately left as the base App's no-op: WelcomeScreen owns the
     entire first view, pushed from on_mount()."""
 
-    def __init__(self, uri: str, player_id: str, is_new_character: bool):
+    def __init__(self, uri: str, player_id: str | None = None, is_new_character: bool = False):
         super().__init__()
         self._uri = uri
+        # player_id is no longer known at construction time in real usage
+        # (client/main.py) - real server-owned identity (ROADMAP.md,
+        # 2026-08-13) means it only becomes known once a real login_result
+        # comes back over the wire (see login()/_handle() below). Kept
+        # optional, not required, specifically so every existing
+        # test/call site that already constructs this with a real
+        # player_id (bypassing the login screen entirely to test
+        # downstream screens) keeps working completely unchanged - see
+        # on_mount()'s own branch on this.
         self._player_id = player_id
         self.is_new_character = is_new_character
+        # Real Main Menu hub support (ROADMAP.md, 2026-08-15) - which
+        # session_ids this account has actually joined before, most-
+        # recent-first, set from a real login_result's own field (see
+        # _handle() below). Empty for the backward-compat constructor
+        # path (tests that skip login entirely) - MainMenuScreen is
+        # never reached there anyway, only real logins populate this.
+        self.recent_sessions: list[str] = []
         self.transport: ClientTransport | None = None
         self.my_character: dict = {}
         self.others: dict[str, dict] = {}  # player_id -> public view, keyed the same way the server sends it
@@ -1187,6 +1375,12 @@ class DungeonMasterApp(App):
         self.log_tail: list[dict] = []
         self.current_turn: str | None = None
         self._listening = False
+        # Set by _handle()'s login_result branch once a real reply
+        # arrives - only ever awaited by connect_and_join's own
+        # backward-compat auto-login (below); the real LoginScreen-driven
+        # path is purely reactive (screen transitions happen from
+        # _handle() itself) and never waits on this.
+        self._login_complete = asyncio.Event()
 
     @property
     def player_id(self) -> str:
@@ -1198,7 +1392,40 @@ class DungeonMasterApp(App):
         return self._player_id
 
     async def on_mount(self) -> None:
-        self.push_screen(WelcomeScreen())
+        # player_id already known (the backward-compat constructor path
+        # every existing test/call site that isn't exercising the login
+        # flow itself uses) skips straight to WelcomeScreen, exactly as
+        # before - real usage (client/main.py) constructs with no
+        # player_id at all, so this lands on LoginScreen instead.
+        if self._player_id is None:
+            self.push_screen(LoginScreen())
+        else:
+            self.push_screen(WelcomeScreen())
+
+    async def login(self, username: str, password: str) -> None:
+        # Opens the one connection this client ever uses (connect_and_join
+        # below reuses it, rather than opening a second one once
+        # session_id is also known) and sends a real login as the first
+        # thing over it - server-owned identity (ROADMAP.md, 2026-08-13),
+        # replacing the old client-local .player_id file. The resulting
+        # login_result is handled in _handle() below, same as every other
+        # server->client envelope - this method only ever sends, it
+        # doesn't wait for or interpret the reply itself.
+        self.transport = ClientTransport(self._uri)
+        await self.transport.connect()
+        if not self._listening:
+            self._listening = True
+            asyncio.create_task(self._listen())
+        await self.transport.send("login", {"username": username, "password": password})
+
+    async def send_tavern_chat(self, text: str) -> None:
+        # The Tavern lobby (ROADMAP.md, 2026-08-15) - genuinely separate
+        # from a real session's own /chat, which connect_and_join's
+        # session_id-scoped transport handles; this always sends with
+        # session_id="" by the same convention login/tavern_message
+        # already use, since tavern_chat has no session to scope to.
+        self.transport.session_id = ""
+        await self.transport.send("tavern_chat", {"text": text})
 
     async def connect_and_join(
         self,
@@ -1209,8 +1436,20 @@ class DungeonMasterApp(App):
         stat_priority: list[str] | None = None,
         race: str = "",
     ) -> None:
-        self.transport = ClientTransport(self._uri, session_id, self._player_id)
-        await self.transport.connect()
+        # Reuses the already-connected, already-authenticated transport
+        # from login() when one exists (real usage, always, and any real
+        # test driving this against a real server via test_transport_
+        # e2e.py - see that file's own _login_and_wait helper) - only
+        # creates a fresh one when it doesn't. That "doesn't" case only
+        # actually happens for test_client_app.py's FakeTransport-based
+        # tests, which construct this app with a player_id directly and
+        # never call login() at all (there's no real server there to
+        # authenticate against in the first place).
+        if self.transport is None:
+            self.transport = ClientTransport(self._uri)
+            await self.transport.connect()
+        self.transport.session_id = session_id
+        self.transport.player_id = self._player_id
         if not self._listening:
             self._listening = True
             asyncio.create_task(self._listen())
@@ -1393,6 +1632,10 @@ class DungeonMasterApp(App):
         if disadvantage_reasons:
             notation = f"{notation} (disadvantage: {', '.join(disadvantage_reasons)})"
 
+        advantage_reasons = payload.get("advantage_reasons")
+        if advantage_reasons:
+            notation = f"{notation} (advantage: {', '.join(advantage_reasons)})"
+
         # Highlight a natural max (a "20" on a d20, but generalized to
         # whatever die was actually rolled) or a natural min the same way -
         # exactly the "highlighting a natural 20" example
@@ -1405,6 +1648,8 @@ class DungeonMasterApp(App):
         highlight_rolls = rolls
         if payload.get("disadvantage") and len(rolls) == 2:
             highlight_rolls = [min(rolls)]
+        elif payload.get("advantage") and len(rolls) == 2:
+            highlight_rolls = [max(rolls)]
         rolls_text = str(rolls)
         if sides:
             if any(r == sides for r in highlight_rolls):
@@ -1438,6 +1683,43 @@ class DungeonMasterApp(App):
         # after state_sync in _on_join_session) could already be dispatched
         # and try to query a widget (e.g. #lobby-status) that doesn't exist
         # in the DOM yet, crashing with NoMatches.
+        if envelope.type == "login_result":
+            payload = envelope.payload
+            if payload.get("success"):
+                self._player_id = payload.get("player_id")
+                self.is_new_character = bool(payload.get("is_new_account"))
+                self.recent_sessions = list(payload.get("recent_sessions") or [])
+                if isinstance(self.screen, LoginScreen):
+                    # switch_screen, not push_screen - once authenticated
+                    # there's nothing to go "back" to on LoginScreen (a
+                    # fresh login would be a new server round trip
+                    # anyway, not a simple pop), so replacing it outright
+                    # is the correct model, not just an optimization.
+                    # MainMenuScreen, not WelcomeScreen directly - the
+                    # real Main Menu hub (ROADMAP.md, 2026-08-15): New
+                    # Character still goes through WelcomeScreen exactly
+                    # as before, but a returning account with real
+                    # recent_sessions now gets a Continue choice first,
+                    # skipping WelcomeScreen's name/class prompts
+                    # entirely for a table it's already in.
+                    await self.switch_screen(MainMenuScreen())
+            elif isinstance(self.screen, LoginScreen):
+                self.screen.show_error(payload.get("error") or "Login failed.")
+            self._login_complete.set()
+            return
+
+        if envelope.type == "tavern_directory":
+            if isinstance(self.screen, MainMenuScreen):
+                self.screen.render_tavern_directory(envelope.payload.get("sessions", []))
+            return
+
+        if envelope.type == "tavern_message":
+            if isinstance(self.screen, MainMenuScreen):
+                self.screen.write_tavern_message(
+                    envelope.payload.get("name", "?"), envelope.payload.get("text", "")
+                )
+            return
+
         if envelope.type == "state_sync":
             payload = envelope.payload
             characters = payload.get("characters", {})
@@ -1448,7 +1730,11 @@ class DungeonMasterApp(App):
             self.log_tail = payload.get("log_tail", [])
             self.current_turn = payload.get("current_turn")
 
-            if isinstance(self.screen, WelcomeScreen):
+            if isinstance(self.screen, (WelcomeScreen, MainMenuScreen)):
+                # MainMenuScreen too, not just WelcomeScreen - the Main
+                # Menu hub's own Continue button (ROADMAP.md, 2026-08-15)
+                # calls connect_and_join directly, bypassing WelcomeScreen
+                # entirely for a table the account's already in.
                 # started: whether the adventure has already begun (see
                 # GameEngine._has_started()) - a fresh join lands in the
                 # lobby, a reconnect into an already-started game skips
@@ -1479,6 +1765,16 @@ class DungeonMasterApp(App):
             pid = envelope.payload.get("player_id")
             if self.others.pop(pid, None) is not None:
                 self.refresh_sheet_widgets()
+            return
+
+        if envelope.type == "left_session":
+            self.my_character = {}
+            self.others = {}
+            self.npcs = {}
+            self.world = {}
+            self.log_tail = []
+            self.current_turn = None
+            await self.switch_screen(MainMenuScreen())
             return
 
         if envelope.type == "session_started":

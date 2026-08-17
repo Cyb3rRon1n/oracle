@@ -20,4 +20,4 @@ build/
 
 # Runtime state (not source)
 sessions/
-.player_id
+accounts.json

@@ -107,6 +107,34 @@ _OUTCOME_PROPERTIES = {
         "type": "string",
         "description": "A condition to apply (e.g. 'poisoned'), or an empty string if none.",
     },
+    "drop_concentration": {
+        "type": "boolean",
+        "description": (
+            "True to voluntarily end concentration on the current spell. "
+            "Only meaningful for 'self' when concentrating."
+        ),
+    },
+    "grant_inspiration": {
+        "type": "boolean",
+        "description": (
+            "True to award inspiration for good roleplaying or creative solutions. "
+            "Only meaningful for 'self'."
+        ),
+    },
+    "exhaustion_delta": {
+        "type": "integer",
+        "description": (
+            "Change in exhaustion level (positive = gain, negative = recover). "
+            "Clamped to 0-6 range. Level 6 = death."
+        ),
+    },
+    "temporary_hp": {
+        "type": "integer",
+        "description": (
+            "Set temporary hit points (separate from real HP, absorbed first "
+            "when taking damage). Only set when granting temp HP."
+        ),
+    },
 }
 
 STRUCTURED_OUTPUT_SCHEMA = {
@@ -209,6 +237,23 @@ STRUCTURED_OUTPUT_ROLL_SCHEMA = {
             "type": "string",
             "enum": ["attack", "save", "check"],
             "description": "Only when roll_requested is true: what kind of roll this is.",
+        },
+        "roll_target": {
+            "type": "string",
+            "description": (
+                "Only when roll_requested is true and this is an attack roll against a "
+                "specific creature: the target's name. The engine checks the target's "
+                "conditions and applies real 5e effects (e.g. advantage against stunned). "
+                "Omit when there's no clear single target."
+            ),
+        },
+        "roll_crit_damage": {
+            "type": "boolean",
+            "description": (
+                "Only when roll_requested is true and this is a damage roll after a "
+                "critical hit: set to true to double all damage dice per real 5e rules "
+                "(e.g. 1d8 becomes 2d8). Only for damage rolls, not attack rolls."
+            ),
         },
     },
     "required": ["narration", "mechanical_change", "roll_requested"],
@@ -639,6 +684,10 @@ class OllamaNarrator:
                 roll_update["dc"] = data["roll_dc"]
             if data.get("roll_kind"):
                 roll_update["roll_kind"] = data["roll_kind"]
+            if data.get("roll_target"):
+                roll_update["target"] = data["roll_target"]
+            if data.get("roll_crit_damage"):
+                roll_update["crit_damage"] = True
             roll_result_text = request_roll(roll_update)
 
             followup_prompt = f"Character:\n{character_summary}\n\n"
@@ -669,6 +718,14 @@ class OllamaNarrator:
                 update["hp_delta"] = data["hp_delta"]
             if data.get("add_condition"):
                 update["add_condition"] = data["add_condition"]
+            if data.get("drop_concentration"):
+                update["drop_concentration"] = True
+            if data.get("grant_inspiration"):
+                update["grant_inspiration"] = True
+            if data.get("exhaustion_delta"):
+                update["exhaustion_delta"] = data["exhaustion_delta"]
+            if data.get("temporary_hp"):
+                update["temporary_hp"] = data["temporary_hp"]
             apply_update(update)
 
         if self._world_updates and data.get("world_change") and update_world is not None:

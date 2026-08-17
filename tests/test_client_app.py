@@ -10,6 +10,8 @@ from client.app import (
     CharacterSheetPanel,
     DungeonMasterApp,
     LobbyScreen,
+    LoginScreen,
+    MainMenuScreen,
     SessionScreen,
     WelcomeScreen,
     _format_item_label,
@@ -19,6 +21,7 @@ from client.app import (
 )
 from shared.protocol import Envelope
 from textual.css.query import NoMatches
+from textual.widgets import Button
 
 
 class FakeTransport:
@@ -29,11 +32,16 @@ class FakeTransport:
 
     def __init__(self, *args, **kwargs) -> None:
         self.sent: list[tuple[str, dict]] = []
-        # ClientTransport(uri, session_id, player_id) - captured positionally
-        # since that's the real signature (client/transport.py), needed by
-        # WelcomeScreen's Solo-mode tests to confirm what session_id it
-        # actually chose without reaching into a real websocket.
-        self.session_id = args[1] if len(args) > 1 else kwargs.get("session_id")
+        # session_id/player_id are plain mutable attributes on the real
+        # ClientTransport now (client/transport.py, ROADMAP.md 2026-08-13)
+        # - DungeonMasterApp sets them directly after construction, which
+        # this fake object (any plain Python object) just stores like any
+        # other attribute, no special capturing needed. WelcomeScreen's
+        # Solo-mode tests read app.transport.session_id back afterward to
+        # confirm what it actually chose, without reaching into a real
+        # websocket.
+        self.session_id = ""
+        self.player_id = ""
 
     async def connect(self) -> None:
         pass
@@ -76,6 +84,255 @@ def _log_has_styled_segment(rich_log, color: str) -> bool:
         for strip in rich_log.lines
         for seg in strip._segments
     )
+
+
+async def test_login_screen_is_the_first_screen_when_no_player_id_is_given():
+    # Real usage (client/main.py) never passes player_id anymore - real
+    # server-owned identity (ROADMAP.md, 2026-08-13) means it's unknown
+    # until a real login_result comes back. The backward-compat
+    # constructor path (every WelcomeScreen/Lobby/Session test in this
+    # file) still lands directly on WelcomeScreen, unaffected.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test():
+            assert isinstance(app.screen, LoginScreen)
+
+
+async def test_welcome_screen_is_still_the_first_screen_when_player_id_is_given():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test():
+            assert isinstance(app.screen, WelcomeScreen)
+
+
+async def test_login_screen_blank_fields_show_a_local_error_without_sending_anything():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await pilot.click("#login")
+            await pilot.pause()
+
+            assert isinstance(app.screen, LoginScreen)
+            assert "required" in app.screen.query_one("#login-error")._Static__content.lower()
+            assert app.transport is None  # never even tried to connect
+
+
+async def test_login_screen_submitting_credentials_sends_a_real_login_envelope():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await pilot.click("#username-input")
+            await pilot.press(*"rowan")
+            await pilot.click("#password-input")
+            await pilot.press(*"correct horse battery staple")
+            await pilot.click("#login")
+            await pilot.pause()
+
+            assert app.transport.sent == [
+                ("login", {"username": "rowan", "password": "correct horse battery staple"})
+            ]
+            assert app.screen.query_one("#login", Button).disabled  # can't double-submit while awaiting a reply
+
+
+async def test_successful_login_result_reveals_the_real_player_id_and_switches_to_main_menu():
+    # MainMenuScreen, not WelcomeScreen directly - the real Main Menu hub
+    # (ROADMAP.md, 2026-08-15); New Character from there still reaches
+    # WelcomeScreen, covered separately below.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await pilot.click("#username-input")
+            await pilot.press(*"rowan")
+            await pilot.click("#password-input")
+            await pilot.press(*"correct horse battery staple")
+            await pilot.click("#login")
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="login_result", session_id="", sender_id="server",
+                payload={
+                    "success": True, "player_id": "real-server-id", "is_new_account": True,
+                    "error": None, "recent_sessions": ["the-tavern-of-doom"],
+                },
+            ))
+            await pilot.pause()
+
+            assert app.player_id == "real-server-id"
+            assert app.is_new_character is True
+            assert app.recent_sessions == ["the-tavern-of-doom"]
+            assert isinstance(app.screen, MainMenuScreen)
+
+
+async def test_failed_login_result_shows_the_real_error_and_re_enables_the_button():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await pilot.click("#username-input")
+            await pilot.press(*"rowan")
+            await pilot.click("#password-input")
+            await pilot.press(*"wrong password")
+            await pilot.click("#login")
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="login_result", session_id="", sender_id="server",
+                payload={"success": False, "player_id": None, "is_new_account": False, "error": "Incorrect password."},
+            ))
+            await pilot.pause()
+
+            assert isinstance(app.screen, LoginScreen)  # never advanced
+            assert "Incorrect password" in app.screen.query_one("#login-error")._Static__content
+            assert not app.screen.query_one("#login", Button).disabled  # can retry immediately
+
+
+async def _login_to_main_menu(pilot, recent_sessions=None) -> DungeonMasterApp:
+    """Shared setup for MainMenuScreen tests below - drives a real login
+    (via the widget flow, not app.login() directly) through to a
+    successful login_result, landing on MainMenuScreen."""
+    app = pilot.app
+    await pilot.click("#username-input")
+    await pilot.press(*"rowan")
+    await pilot.click("#password-input")
+    await pilot.press(*"correct horse battery staple")
+    await pilot.click("#login")
+    await pilot.pause()
+
+    await app._handle(Envelope(
+        type="login_result", session_id="", sender_id="server",
+        payload={
+            "success": True, "player_id": "real-server-id", "is_new_account": False,
+            "error": None, "recent_sessions": recent_sessions or [],
+        },
+    ))
+    await pilot.pause()
+    return app
+
+
+async def test_main_menu_shows_no_continue_section_for_a_brand_new_account():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await _login_to_main_menu(pilot, recent_sessions=[])
+
+            assert isinstance(app.screen, MainMenuScreen)
+            with pytest.raises(NoMatches):
+                app.screen.query_one("#recent-sessions")
+
+
+async def test_main_menu_shows_a_continue_choice_per_recent_session():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await _login_to_main_menu(pilot, recent_sessions=["the-tavern-of-doom", "old-campaign"])
+
+            radio_set = app.screen.query_one("#recent-sessions")
+            labels = [str(button.label) for button in radio_set.query("RadioButton")]
+            assert labels == ["the-tavern-of-doom", "old-campaign"]
+
+
+async def test_main_menu_new_character_reaches_welcome_screen():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await _login_to_main_menu(pilot)
+
+            await pilot.click("#new-character")
+            await pilot.pause()
+
+            assert isinstance(app.screen, WelcomeScreen)
+
+
+async def test_main_menu_continue_sends_join_session_for_the_selected_table():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await _login_to_main_menu(pilot, recent_sessions=["the-tavern-of-doom", "old-campaign"])
+
+            await pilot.click("#recent-1")  # "old-campaign", the second option
+            await pilot.click("#continue-session")
+            await pilot.pause()
+
+            assert app.transport.sent[-1][0] == "join_session"
+            assert app.transport.session_id == "old-campaign"
+            assert app.transport.player_id == "real-server-id"
+
+
+async def test_main_menu_continue_with_nothing_selected_shows_a_local_error():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await _login_to_main_menu(pilot, recent_sessions=["the-tavern-of-doom"])
+
+            await pilot.click("#continue-session")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainMenuScreen)  # never advanced
+            assert "table" in app.screen.query_one("#menu-error")._Static__content.lower()
+            assert not any(sent_type == "join_session" for sent_type, _ in app.transport.sent)
+
+
+async def test_main_menu_renders_a_real_tavern_directory():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await _login_to_main_menu(pilot)
+
+            await app._handle(Envelope(
+                type="tavern_directory", session_id="", sender_id="server",
+                payload={"sessions": [
+                    {"session_id": "the-tavern-of-doom", "player_count": 2, "started": False},
+                    {"session_id": "old-campaign", "player_count": 1, "started": True},
+                ]},
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#tavern-directory")._Static__content
+            assert "the-tavern-of-doom" in rendered
+            assert "2 players" in rendered
+            assert "waiting for players" in rendered
+            assert "old-campaign" in rendered
+            assert "in progress" in rendered
+
+
+async def test_main_menu_renders_an_empty_tavern_directory_by_default():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await _login_to_main_menu(pilot)
+
+            rendered = app.screen.query_one("#tavern-directory")._Static__content
+            assert "Nobody's at a table yet" in rendered
+
+
+async def test_main_menu_renders_an_incoming_tavern_message():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await _login_to_main_menu(pilot)
+
+            await app._handle(Envelope(
+                type="tavern_message", session_id="", sender_id="server",
+                payload={"player_id": "someone-else", "name": "rowan", "text": "anyone up for an adventure?"},
+            ))
+            await pilot.pause()
+
+            log_text = _log_text(app.screen.query_one("#tavern-chat-log"))
+            assert "rowan" in log_text
+            assert "anyone up for an adventure?" in log_text
+
+
+async def test_main_menu_sending_a_tavern_chat_message():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x")
+        async with app.run_test() as pilot:
+            await _login_to_main_menu(pilot)
+
+            await pilot.click("#tavern-chat-input")
+            await pilot.press(*"hello there", "enter")
+            await pilot.pause()
+
+            assert app.transport.sent[-1] == ("tavern_chat", {"text": "hello there"})
+            assert app.screen.query_one("#tavern-chat-input").value == ""
 
 
 async def test_welcome_screen_is_the_first_screen_and_prompts_for_class_when_new():

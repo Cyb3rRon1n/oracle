@@ -52,14 +52,29 @@ DEFAULT_NPC_XP = 50
 # - a real, deliberate subset of the five conditions this project tracks,
 # not all of them. grappled has no self-roll effect at all in the real
 # text (only a speed-0 movement effect, and Oracle has no speed/movement
-# system to hook that to) - correctly excluded, not a gap. stunned's real
-# effects (incapacitated, auto-fail STR/DEX saves, attacks *against* it
-# have advantage) are a structurally different kind of mechanic -
-# target-side and turn-blocking, not "the bearer rolls worse" - and
-# deliberately not modeled in this slice; a stunned character can still
-# act and rolls normally here, a real known gap, not silently pretended
-# away.
+# system to hook that to) - correctly excluded, not a gap.
 DISADVANTAGE_CONDITIONS = frozenset({"poisoned", "frightened", "prone"})
+
+# Conditions that impose advantage on rolls *against* the bearer -
+# target-side effects, structurally different from the bearer-side
+# disadvantage above. stunned's real SRD text: "Attack rolls against the
+# creature have advantage." Only attacks are affected (not saves, not
+# checks), matching the real rule exactly.
+TARGET_ADVANTAGE_CONDITIONS: dict[str, frozenset[str]] = {
+    "stunned": frozenset({"attack"}),
+}
+
+# Stunned characters auto-fail STR and DEX saving throws per real 5e SRD
+# text: "It automatically fails Strength and Dexterity saving throws."
+# Covers both the acting character (who can't succeed on their own save)
+# and any save that targets a stunned creature.
+STUNNED_AUTO_FAIL_SAVE_ABILITIES = frozenset({"str", "dex"})
+
+# Conditions that make a character incapacitated (can't take actions).
+# stunned's real text starts with "A stunned creature is incapacitated."
+# This is the turn-blocking effect: a stunned player's action is
+# rejected the same way an unconscious character's is.
+INCAPACITATING_CONDITIONS = frozenset({"stunned"})
 
 # Per-condition roll_kind exclusions, matching each condition's real SRD
 # text now that request_roll can actually distinguish a save from a check
@@ -116,6 +131,48 @@ def _has_disadvantage(character: CharacterSheet, roll_kind: str | None = None) -
         if roll_kind is not None and roll_kind in ROLL_KIND_DISADVANTAGE_EXCLUSIONS.get(key, frozenset()):
             continue
         reasons.append(c)
+
+    # Real 5e exhaustion: level 1 = disadvantage on ability checks,
+    # level 3 = disadvantage on attack rolls and saving throws. These
+    # stack with other sources but disadvantage doesn't actually stack
+    # in 5e (multiple sources still just apply once).
+    if character.exhaustion >= 1 and roll_kind == "check":
+        reasons.append("exhaustion (level 1+)")
+    elif character.exhaustion >= 3 and roll_kind in ("attack", "save"):
+        reasons.append("exhaustion (level 3+)")
+
+    return reasons
+
+
+def _has_advantage(character: CharacterSheet, roll_kind: str | None = None) -> list[str]:
+    """Return the list of tracked conditions granting advantage on rolls
+    *against* this character (target-side advantage, mirroring
+    _has_disadvantage's bearer-side disadvantage).
+
+    Same structural pattern as _has_disadvantage: every condition in the
+    character's own tracked list is checked against
+    TARGET_ADVANTAGE_CONDITIONS, and roll_kind narrows the match for
+    conditions whose real 5e text only affects certain roll kinds.
+
+    A stunned creature's real text: "Attack rolls against the creature
+    have advantage." - only attacks are affected, not saves or checks.
+
+    Called from the request_roll closure when a target name is given,
+    allowing the engine to automatically grant advantage on rolls
+    against a stunned (or other target-advantaged) creature without the
+    DM needing to know about or manually apply this real 5e rule.
+
+    Returns a list of condition names (for human-readable reasons), not
+    just a bool - same pattern _has_disadvantage uses."""
+    reasons = []
+    for c in character.conditions:
+        key = c.casefold()
+        affected_roll_kinds = TARGET_ADVANTAGE_CONDITIONS.get(key)
+        if affected_roll_kinds is None:
+            continue
+        if roll_kind is not None and roll_kind not in affected_roll_kinds:
+            continue
+        reasons.append(c)
     return reasons
 
 
@@ -151,10 +208,22 @@ CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
 # fallback CLASS_ABILITY_PRIORITY's own absence already establishes.
 CLASS_KNOWN_SPELLS: dict[str, list[str]] = {
     "wizard": [
-        "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
-        "burning_hands", "misty_step",
+        "fire_bolt", "ray_of_frost", "prestidigitation", "minor_illusion",
+        "magic_missile", "mage_armor", "shield", "thunderwave", "charm_person",
+        "detect_magic", "fog_cloud", "burning_hands",
+        "mirror_image", "shatter", "hold_person", "suggestion",
+        "fireball", "haste", "counterspell", "dispel_magic", "lightning_bolt",
+        "animate_dead", "misty_step",
+        "polymorph", "banishment", "greater_invisibility",
+        "hold_monster", "scrying",
     ],
-    "cleric": ["sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon"],
+    "cleric": [
+        "sacred_flame", "guidance", "spare_the_dying", "thaumaturgy",
+        "cure_wounds", "bless", "healing_word", "sanctuary", "guiding_bolt",
+        "detect_magic", "lesser_restoration",
+        "spiritual_weapon",
+        "dispel_magic", "animate_dead", "banishment", "scrying",
+    ],
 }
 
 # A lightweight session-zero choice (Session.content_preference,
@@ -339,6 +408,18 @@ def _cast_spell(character: CharacterSheet, spell_name: str, rules: RulesIndex) -
     character.spell_slots[slot_key] -= 1
     remaining = character.spell_slots[slot_key]
     return f"casts {entry['name']} (level {spell_level} slot, {remaining} remaining).", True
+
+
+def _spell_requires_concentration(spell_name: str, rules: RulesIndex) -> bool:
+    """Check if a spell requires concentration from its SRD data entry.
+
+    Uses the 'concentration' boolean field added to srd.json's spell
+    entries. Returns False for unknown spells (same graceful-miss
+    convention every other rules lookup already follows)."""
+    entry = rules.get_entry("spell", spell_name)
+    if entry is None:
+        return False
+    return bool(entry.get("concentration", False))
 
 
 def _generate_stats(character_class: str, stat_priority: tuple[str, ...] | None = None) -> dict[str, int]:
@@ -604,9 +685,13 @@ def _dice_roll_tags(roll: dict) -> str:
         roll_kind_label = f" ({roll_kind})" if roll_kind else ""
     disadvantage_reasons = roll.get("disadvantage_reasons")
     disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
+    advantage_reasons = roll.get("advantage_reasons")
+    advantage_label = f" (advantage: {', '.join(advantage_reasons)})" if advantage_reasons else ""
+    cover_bonus = roll.get("cover_bonus")
+    cover_label = f" (+{cover_bonus} cover)" if cover_bonus else ""
     return (
         damage_label + weapon_magic_label + ability_label + skill_label + spell_label
-        + roll_kind_label + disadvantage_label
+        + roll_kind_label + disadvantage_label + advantage_label + cover_label
     )
 
 
@@ -725,6 +810,8 @@ def build_starting_character(
     known_spells = list(CLASS_KNOWN_SPELLS.get(character_class.strip().lower(), []))
     spell_slots = rules.spell_slots_by_level(1) if known_spells else {}
     equipped_weapon, equipped_armor, equipped_shield = _auto_equip_starting_gear(inventory, rules)
+    # Real 5e speed: from race data, default 30 ft if not specified
+    race_speed = race_entry.get("speed", 30) if race_entry else 30
     return CharacterSheet(
         player_id=player_id,
         name=name,
@@ -742,6 +829,8 @@ def build_starting_character(
         spell_slots=dict(spell_slots),
         max_spell_slots=dict(spell_slots),
         background=background,
+        speed=race_speed,
+        hit_dice_remaining=1,  # Level 1 = 1 hit die
     )
 
 
@@ -1020,6 +1109,16 @@ class GameEngine:
         # started rather than getting dropped back into a pre-game lobby.
         return self._session.started or bool(self._session.log)
 
+    @property
+    def is_started(self) -> bool:
+        """Public counterpart to _has_started() - Transport's Tavern
+        directory (ROADMAP.md, 2026-08-15) needs this from outside the
+        engine (whether each active table is still waiting or already
+        underway) without reaching into a private method or
+        Session.started directly, which alone misses the same real-save
+        fallback _has_started() already handles."""
+        return self._has_started()
+
     def _resume_recap(self) -> str:
         """Composes _on_join_session's private "story so far" recap, sent
         to anyone (returning or brand-new) joining an already-started
@@ -1233,6 +1332,41 @@ class GameEngine:
         name = character.name if character else player_id
         await self._broadcast(self._player_left_envelope(player_id, name))
 
+    async def handle_leave(self, player_id: str) -> None:
+        """Called by the transport when a player intentionally leaves a
+        session (the /leave command) - the deliberate counterpart to
+        handle_disconnect: same turn_order cleanup, but the player gets
+        a left_session confirmation (so their client can transition back
+        to the Main Menu) rather than just vanishing, and the transport
+        moves their still-live connection back to the Tavern lobby."""
+        if player_id in self._session.turn_order:
+            self._session.turn_order.remove(player_id)
+            # current_turn_index may now point past the end of the
+            # shortened list - clamp it so current_turn resolves correctly
+            # for the remaining players instead of wrapping to an
+            # unexpected position.
+            if self._session.turn_order:
+                self._session.current_turn_index %= len(self._session.turn_order)
+            else:
+                self._session.current_turn_index = 0
+
+        character = self._session.characters.get(player_id)
+        name = character.name if character else player_id
+        await self._broadcast(self._player_left_envelope(player_id, name))
+        # Confirmation to the leaving player specifically - unlike
+        # handle_disconnect, the player's socket is still live; this is
+        # the signal their client uses to transition back to the Main
+        # Menu and reset session state.
+        await self._send_to(
+            player_id,
+            Envelope(
+                type="left_session",
+                session_id=self._session.session_id,
+                sender_id="server",
+                payload={"player_id": player_id, "name": name},
+            ),
+        )
+
     async def _narrate_opening_scene(self, character: CharacterSheet, action_text: str) -> None:
         """Best-effort: a failed opening scene shouldn't leave the lobby
         stuck, so failures here are reported but don't propagate like a
@@ -1275,14 +1409,42 @@ class GameEngine:
         # advance the turn (return, not a fallthrough), so a dying player
         # keeps getting reprompted until they resolve via /deathsave
         # (exempt from turn order, like /roll - see _on_death_save) rather
-        # than the turn silently skipping past them.
+        # than the turn silently skipping past them. Real 5e: falling
+        # unconscious also ends concentration.
         if character.hp == 0:
+            conc_msg = ""
+            if character.concentration_spell:
+                old = character.concentration_spell
+                character.concentration_spell = None
+                conc_msg = f" {old} concentration ends."
+                await self._send_to(player_id, self._character_update_envelope(player_id, character))
             if character.dead:
                 message = f"{character.name} has died and can't act."
             elif character.dying:
                 message = f"{character.name} is unconscious and dying - use /deathsave, not a normal action."
             else:
                 message = f"{character.name} is unconscious at 0 HP and needs healing before acting again."
+            await self._send_to(player_id, self._system_envelope(message + conc_msg, level="warning"))
+            return
+
+        # An incapacitated character (stunned, and any future
+        # incapacitating condition) can't take actions at all under real
+        # 5e - the same turn-blocking pattern as unconscious, applied to
+        # a different reason a submitted action can't proceed. Unlike
+        # unconscious (which is HP-based), this is condition-based: a
+        # character at full HP who is stunned is still incapacitated.
+        # Doesn't advance the turn, so the player gets reprompted until
+        # the condition wears off (e.g. the DM can narrate the stun
+        # ending at the start of their next turn via apply_update).
+        # Real 5e: being incapacitated also ends concentration.
+        if any(c.casefold() in INCAPACITATING_CONDITIONS for c in character.conditions):
+            active = next(c for c in character.conditions if c.casefold() in INCAPACITATING_CONDITIONS)
+            message = f"{character.name} is {active.lower()} and can't act."
+            if character.concentration_spell:
+                old = character.concentration_spell
+                character.concentration_spell = None
+                message += f" {old} concentration ends."
+                await self._send_to(player_id, self._character_update_envelope(player_id, character))
             await self._send_to(player_id, self._system_envelope(message, level="warning"))
             return
 
@@ -1345,6 +1507,10 @@ class GameEngine:
         sheet_changed = False
         npcs_touched: set[str] = set()
         rolls_made: list[dict] = []
+        # Concentration saves queued by apply_update when damage is taken
+        # while concentrating - rolled after narration completes, the same
+        # deferred-broadcast pattern rolls_made/xp_awards already use.
+        pending_concentration_saves: list[dict] = []
         world_changed = False
         # (text, category) - one entry per real update_character change
         # this turn, broadcast as color-coded log lines after narration
@@ -1519,11 +1685,126 @@ class GameEngine:
             disadvantage_reasons = _has_disadvantage(character, roll_kind)
             disadvantage = bool(disadvantage_reasons)
 
+            # Target resolution - done early so both auto-fail (stunned
+            # saves) and target-side advantage (stunned attacks) can use
+            # it. The target is the creature the DM named in the
+            # request_roll call (e.g. "bandit" for an attack against a
+            # specific NPC). Self-targeting is filtered out so the
+            # engine doesn't look up the acting character as an NPC.
+            advantage = False
+            advantage_reasons: list[str] = []
+            target_key = update.get("target", "").casefold().strip()
+            target_npc = None
+            if target_key and target_key not in ("self", player_id, character.name):
+                target_npc = self._session.npcs.get(target_key)
+
+            # Stunned auto-fail STR/DEX saves - the real 5e SRD rule:
+            # "It automatically fails Strength and Dexterity saving
+            # throws." This applies to any creature that is stunned, not
+            # just the acting character. The most common case is a
+            # stunned NPC being targeted by an effect that forces a save
+            # (e.g. Sacred Flame forcing a DEX save) - the DM calls
+            # request_roll with roll_kind="save" and target="stunned npc",
+            # and the engine auto-fails if the target is stunned. Also
+            # covers the rare case where a stunned PC is somehow forced
+            # to make a save on their own turn (e.g. a trap triggered by
+            # their movement), though the incapacitated check above
+            # usually prevents this. Checked before the roll is made, so
+            # no dice are rolled at all.
+            _auto_fail_save = False
+            if roll_kind == "save" and ability in STUNNED_AUTO_FAIL_SAVE_ABILITIES:
+                if any(c.casefold() == "stunned" for c in character.conditions):
+                    _auto_fail_save = True
+                elif target_npc is not None and any(c.casefold() == "stunned" for c in target_npc.conditions):
+                    _auto_fail_save = True
+            if _auto_fail_save:
+                total = 0
+                rolls = [0]
+                sides = 20
+                success = False if dc is not None else None
+                roll_entry = {
+                    "dice": notation, "total": total, "rolls": rolls, "sides": sides,
+                    "dc": dc, "success": success, "reason": reason,
+                    "ability": ability, "ability_modifier": ability_mod,
+                    "damage_type": damage_type, "roll_kind": roll_kind,
+                    "skill": skill, "proficient": proficient, "proficiency_bonus": proficiency_bonus,
+                    "spell": None, "disadvantage": False, "disadvantage_reasons": [],
+                    "advantage": False, "advantage_reasons": [],
+                    "critical": False, "weapon_magic_bonus": None,
+                }
+                rolls_made.append(roll_entry)
+                label = _dice_roll_tags(roll_entry)
+                if dc is None:
+                    return f"Rolled {notation}{label}: {total} {rolls}."
+                return (
+                    f"Rolled {notation}{label}: {total} {rolls} vs DC {dc} — "
+                    f"{'success' if success else 'failure'}."
+                )
+
+            # Target-side advantage - when a target creature has a
+            # condition that grants advantage on rolls against it
+            # (e.g. stunned: "Attack rolls against the creature have
+            # advantage"), the attacker's roll gains advantage,
+            # overriding any bearer-side disadvantage. Only affects the
+            # specific roll kinds the condition's real SRD text mentions
+            # (stunned only affects attacks, not saves or checks).
+            if target_npc is not None:
+                advantage_reasons = _has_advantage(target_npc, roll_kind)
+                if advantage_reasons:
+                    advantage = True
+                    disadvantage = False
+                    disadvantage_reasons = []
+
+            # Real 5e inspiration: when a character has inspiration and
+            # doesn't already have advantage from conditions, spending
+            # inspiration grants advantage on the roll. The flag is cleared
+            # after use (one-shot, like real 5e). The DM chooses when to
+            # award inspiration via update_character(grant_inspiration=true)
+            # and the engine auto-spends it on the next roll.
+            if not advantage and character.inspiration:
+                advantage = True
+                advantage_reasons.append("inspiration")
+                character.inspiration = False
+
+            # Real 5e cover: half cover = +2 to AC (attack rolls) or DEX
+            # saves, three-quarters cover = +5. Applied as a flat modifier
+            # to the roll's extra_modifier, not advantage/disadvantage.
+            cover_bonus = update.get("cover") or 0
+            cover_applied = cover_bonus in (2, 5) and roll_kind in ("attack", "save")
+
+            extra_modifier = (ability_mod or 0) + proficiency_bonus + weapon_magic_bonus
+            if cover_applied:
+                extra_modifier += cover_bonus
+
+            # Real 5e opportunity attack: triggered when a creature leaves
+            # another's reach. Consumes the reacting creature's reaction
+            # (one per round). Only for player characters attacking NPCs
+            # that leave their reach.
+            trigger = update.get("trigger")
+            if trigger == "opportunity_attack":
+                if not character.consume_reaction():
+                    return f"{character.name} cannot make an opportunity attack - reaction already used this round."
+
+            # Real 5e critical hit damage: when crit_damage is True,
+            # double all damage dice (e.g. 1d8 -> 2d8). Only for damage
+            # rolls after a critical hit, not for the attack roll itself.
+            # The modifier stays the same (e.g. 2d8+3, not 2d8+6).
+            crit_damage = update.get("crit_damage")
+            if crit_damage and notation:
+                import re as _re
+                match = _re.match(r"(\d+)d(\d+)(.*)", notation)
+                if match:
+                    num_dice = int(match.group(1))
+                    die_size = match.group(2)
+                    rest = match.group(3)
+                    notation = f"{num_dice * 2}d{die_size}{rest}"
+
             try:
                 total, rolls, sides = dice.roll(
                     notation,
-                    extra_modifier=(ability_mod or 0) + proficiency_bonus + weapon_magic_bonus,
+                    extra_modifier=extra_modifier,
                     disadvantage=disadvantage,
+                    advantage=advantage,
                 )
             except dice.InvalidDiceNotation as exc:
                 return f"Invalid dice notation: {exc}"
@@ -1554,8 +1835,11 @@ class GameEngine:
                 "skill": skill, "proficient": proficient, "proficiency_bonus": proficiency_bonus,
                 "spell": spell_entry["name"] if spell_entry and spell_entry.get("attack") else None,
                 "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
+                "advantage": advantage, "advantage_reasons": advantage_reasons,
                 "critical": critical,
                 "weapon_magic_bonus": weapon_magic_bonus or None,
+                "cover_bonus": cover_bonus if cover_applied else None,
+                "trigger": trigger,
             }
             rolls_made.append(roll_entry)
 
@@ -1590,6 +1874,11 @@ class GameEngine:
             # need to know every condition any origin/narration could ever
             # apply.
             if target in ("self", player_id, character.name) or target in character.conditions:
+                # Capture HP before apply_update to detect damage taken
+                # while concentrating - the concentration save DC is based
+                # on the actual damage dealt, which we need to measure.
+                prior_hp = character.hp
+                prior_concentration = character.concentration_spell
                 result = character.apply_update(update)
                 changed = not result.startswith("No changes applied")
                 if changed:
@@ -1605,6 +1894,57 @@ class GameEngine:
                         result = f"{character.name} {spell_note}"
                     else:
                         result += f" {character.name} {spell_note}"
+
+                    # Concentration tracking: when a concentration spell
+                    # is cast, the character begins concentrating on it.
+                    # If already concentrating on another spell, the old
+                    # one ends first (real 5e's own rule - "concentrating
+                    # on a new spell ends the old one"). Cantrips are
+                    # excluded - a cantrip's concentration would be
+                    # unusual and the slot-bookkeeping above already
+                    # handled it correctly.
+                    if _spell_requires_concentration(cast_spell, self._rules):
+                        old_spell = character.concentration_spell
+                        character.concentration_spell = slug(entry["name"]) if (entry := self._rules.get_entry("spell", cast_spell)) else cast_spell
+                        if old_spell and old_spell != character.concentration_spell:
+                            result += f" (ends {old_spell})"
+                            sheet_changed = True
+
+                # Voluntary concentration drop - the DM can end
+                # concentration at will via update_character's
+                # drop_concentration field (a free action in real 5e).
+                if update.get("drop_concentration") and character.concentration_spell:
+                    old = character.concentration_spell
+                    character.concentration_spell = None
+                    result += f" ({old} concentration ends)"
+                    sheet_changed = True
+                    changed = True
+
+                # Concentration save on damage - real 5e's core
+                # concentration mechanic: when a creature takes damage
+                # while concentrating, it must make a CON save. DC =
+                # max(10, damage/2). If failed, concentration breaks.
+                # The save is rolled after narration completes (queued in
+                # pending_concentration_saves) so the DM can narrate the
+                # outcome naturally, the same way rolls_made already defers
+                # dice_result broadcasts.
+                damage_taken = prior_hp - character.hp
+                if prior_concentration and damage_taken > 0:
+                    if character.hp == 0:
+                        # Dropping to 0 HP ends concentration immediately
+                        # (real 5e: unconscious = can't concentrate). No
+                        # save needed.
+                        character.concentration_spell = None
+                        result += f" ({prior_concentration} concentration ends)"
+                        sheet_changed = True
+                    else:
+                        dc = max(10, damage_taken // 2)
+                        pending_concentration_saves.append({
+                            "character": character,
+                            "spell": prior_concentration,
+                            "damage": damage_taken,
+                            "dc": dc,
+                        })
 
                 if changed:
                     category = _outcome_category(update) or ("spell" if cast_spell else None)
@@ -1819,6 +2159,46 @@ class GameEngine:
         for roll in rolls_made:
             await self._broadcast(self._log_envelope("dice", self._dice_log_text(character.name, roll)))
             await self._broadcast(self._dice_result_envelope(player_id, roll))
+
+        # Concentration saves - queued by apply_update when damage is
+        # taken while concentrating, rolled after narration completes so
+        # the DM can narrate the damage naturally before the save result
+        # is known. Each save is a CON check against DC = max(10,
+        # damage/2), the real 5e concentration rule. The roll is for the
+        # concentrating character (not the damage dealer), using their CON
+        # modifier. On failure, concentration breaks and the spell ends.
+        for save in pending_concentration_saves:
+            char = save["character"]
+            con_mod = char.stat_modifiers.get("con", 0) if char.stats else 0
+            total, rolls, sides = dice.roll("1d20", extra_modifier=con_mod)
+            success = total >= save["dc"]
+            save_entry = {
+                "dice": "1d20", "total": total, "rolls": rolls, "sides": sides,
+                "dc": save["dc"], "success": success,
+                "reason": f"concentration ({save['spell']})",
+                "ability": "con", "ability_modifier": con_mod,
+                "damage_type": None, "roll_kind": "save",
+                "skill": None, "proficient": False, "proficiency_bonus": 0,
+                "spell": None, "disadvantage": False, "disadvantage_reasons": [],
+                "advantage": False, "advantage_reasons": [],
+                "critical": False, "weapon_magic_bonus": None,
+            }
+            rolls_made.append(save_entry)
+            await self._broadcast(self._log_envelope("dice", self._dice_log_text(char.name, save_entry)))
+            await self._broadcast(self._dice_result_envelope(char.player_id, save_entry))
+            if not success:
+                old_spell = char.concentration_spell
+                char.concentration_spell = None
+                await self._broadcast(self._system_envelope(
+                    f"{char.name} loses concentration on {old_spell}.",
+                    level="info",
+                ))
+                sheet_changed = True
+            else:
+                await self._broadcast(self._system_envelope(
+                    f"{char.name} maintains concentration on {save['spell']}.",
+                    level="info",
+                ))
 
         # A direct owner ask: damage/heal/spell/item/condition should read
         # differently at a glance in the log, not blend into plain
@@ -2204,6 +2584,9 @@ class GameEngine:
         if roll.get("disadvantage"):
             payload["disadvantage"] = True
             payload["disadvantage_reasons"] = roll["disadvantage_reasons"]
+        if roll.get("advantage"):
+            payload["advantage"] = True
+            payload["advantage_reasons"] = roll["advantage_reasons"]
         if roll.get("critical"):
             payload["critical"] = True
         if roll.get("weapon_magic_bonus"):
