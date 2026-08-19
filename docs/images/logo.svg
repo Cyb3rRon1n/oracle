@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <style>
+    .veil { stroke: #7c4fe0; }
+    .rune { fill: #d9ab3a; }
+    .eye { fill: #d9ab3a; }
+    @media (prefers-color-scheme: dark) {
+      .veil { stroke: #a685f2; }
+      .rune { fill: #ecc35c; }
+      .eye { fill: #ecc35c; }
+    }
+  </style>
+  <!-- the Veil: a torn portal ring -->
+  <circle class="veil" cx="32" cy="32" r="22" stroke-width="3" stroke-dasharray="86 17" stroke-dashoffset="-6"/>
+  <!-- a rune shard escaping through the tear -->
+  <path class="rune" d="M32 4 c3 5 5 8 5 12 a5 5 0 0 1 -10 0 c0 -2.7 1.6 -4.6 2.6 -6.2 c0.4 1.7 1.2 2.1 1.2 3 c0 -3 0.4 -5.8 1.2 -8.8 z"/>
+  <!-- the seer's eye at center -->
+  <circle class="eye" cx="32" cy="32" r="3.2"/>
+</svg>
