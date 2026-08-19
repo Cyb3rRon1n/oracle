@@ -21,3 +21,6 @@ build/
 # Runtime state (not source)
 sessions/
 .player_id
+
+# Raw reliability-benchmark evidence (kept out of version control per ROADMAP item 6)
+evidence/
