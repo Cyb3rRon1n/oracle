@@ -3704,12 +3704,16 @@ class NarratesThenSelfCorrectsDM(NarratesFixedTextDM):
     NarratesFixedTextDM with update=None), but implements
     check_missed_change - simulating a real backend that gets a second
     chance to self-correct and takes it (or, if correction is None,
-    reviews and finds nothing to fix)."""
+    reviews and finds nothing to fix). An optional `proposal` (a dict)
+    makes it also implement propose_correction, returning that best-guess
+    update for the player to confirm via /apply."""
 
-    def __init__(self, text: str, correction: dict | None):
+    def __init__(self, text: str, correction: dict | None, proposal: dict | None = None):
         super().__init__(text)
         self._correction = correction
+        self._proposal = proposal
         self.check_missed_change_calls: list[tuple] = []
+        self.propose_correction_calls: list[tuple] = []
 
     async def check_missed_change(self, narration, character_summary, apply_update):
         self.check_missed_change_calls.append((narration, character_summary))
@@ -3717,6 +3721,10 @@ class NarratesThenSelfCorrectsDM(NarratesFixedTextDM):
             return False
         apply_update(self._correction)
         return True
+
+    async def propose_correction(self, narration, character_summary):
+        self.propose_correction_calls.append((narration, character_summary))
+        return self._proposal
 
 
 def _missed_change_warnings(received: list[tuple], player_id: str) -> list[tuple]:
@@ -3979,6 +3987,135 @@ async def test_missed_change_heuristic_does_not_fire_during_opening_scene():
     await start_session(engine, player_id)
 
     assert not _missed_change_warnings(received, player_id)
+
+
+async def test_missed_change_advisory_carries_proposed_change_when_backend_offers_one():
+    dm = NarratesThenSelfCorrectsDM(
+        "Your blade finds its mark - the bandit staggers, bleeding.",
+        correction=None,
+        proposal={"target": "bandit", "hp_delta": -4},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+
+    warnings = _missed_change_warnings(received, player_id)
+    assert warnings, "the heuristic should still warn when the DM declines to auto-correct"
+    assert warnings[0][3].get("proposed_change") == {"target": "bandit", "hp_delta": -4}
+    assert dm.propose_correction_calls, "propose_correction should have been asked"
+    assert "bandit" not in session.npcs, "the proposal must not be applied until the player confirms"
+
+
+async def test_apply_proposed_change_applies_confirmed_npc_proposal():
+    dm = NarratesThenSelfCorrectsDM(
+        "Your blade finds its mark - the bandit staggers, bleeding.",
+        correction=None,
+        proposal={"target": "bandit", "hp_delta": -4},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+
+    await engine.handle(Envelope(
+        type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
+    ))
+
+    assert session.npcs["bandit"].hp == 6, "DEFAULT_NPC_HP 10 - 4 once the player confirms"
+    npc_updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert npc_updates, "a confirmed proposal should broadcast like a real tool call"
+    confirms = [r for r in received if r[0] == "send_to" and r[1] == player_id
+                and r[2] == "system_message" and "Correction applied" in r[3]["text"]]
+    assert confirms
+
+
+async def test_apply_proposed_change_applies_confirmed_self_proposal():
+    dm = NarratesThenSelfCorrectsDM(
+        "A dart sinks into your shoulder - you bleed freely.",
+        correction=None,
+        proposal={"hp_delta": -3},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I dodge the trap"},
+    ))
+
+    await engine.handle(Envelope(
+        type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
+    ))
+
+    assert session.characters[player_id].hp == 7, "default 10 - 3 once confirmed"
+    char_updates = [r for r in received if r[0] == "send_to" and r[1] == player_id
+                    and r[2] == "character_update"]
+    assert char_updates
+
+
+async def test_apply_proposed_change_with_nothing_pending_informs_player():
+    dm = NarratesFixedTextDM("You walk quietly through the empty hall.")
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    await engine.handle(Envelope(
+        type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
+    ))
+
+    replies = [r for r in received if r[0] == "send_to" and r[1] == player_id
+               and r[2] == "system_message" and "no longer pending" in r[3]["text"]]
+    assert replies
+
+
+async def test_proposed_change_expires_on_next_turn():
+    class ProposesThenGoesQuietDM(NarratesThenSelfCorrectsDM):
+        def __init__(self):
+            super().__init__("", correction=None, proposal={"target": "bandit", "hp_delta": -4})
+            self._turns = 0
+
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            self._turns += 1
+            if self._turns == 1:
+                yield "Your blade finds its mark - the bandit staggers, bleeding."
+            else:
+                yield "You rest and catch your breath in the quiet clearing."
+
+    dm = ProposesThenGoesQuietDM()
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the bandit"},
+    ))
+    assert _missed_change_warnings(received, player_id), "first turn should propose a correction"
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I rest"},
+    ))
+
+    await engine.handle(Envelope(
+        type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
+    ))
+
+    assert "bandit" not in session.npcs, "the stale proposal must not be applied after a new turn"
+    replies = [r for r in received if r[0] == "send_to" and r[1] == player_id
+               and r[2] == "system_message" and "no longer pending" in r[3]["text"]]
+    assert replies
 
 
 class FailingStore:

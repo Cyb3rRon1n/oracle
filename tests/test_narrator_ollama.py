@@ -859,9 +859,9 @@ async def test_check_missed_change_returns_false_on_malformed_json():
 
 
 async def test_check_missed_change_is_a_no_op_for_the_legacy_tool_calling_path():
-    # Structured-output only, same "ignored entirely when structured_output
-    # is False" precedent request_roll/world_updates already have.
-    narrator = make_narrator()  # structured_output=False
+
+
+    narrator = make_narrator()
 
     def unexpected_apply_update(update: dict) -> str:
         raise AssertionError("should never be called on the legacy tool-calling path")
@@ -869,3 +869,43 @@ async def test_check_missed_change_is_a_no_op_for_the_legacy_tool_calling_path()
     corrected = await narrator.check_missed_change("Something happened.", "{}", unexpected_apply_update)
 
     assert corrected is False
+
+
+async def test_propose_correction_returns_best_guess_update_without_applying():
+    narrator = make_structured_narrator()
+    response = FakeChatResponse(
+        json.dumps({"mechanical_change": True, "target": "bandit", "hp_delta": -6})
+    )
+    narrator._client = FakeOllamaClient([response])
+
+    proposed = await narrator.propose_correction("Your blade cuts deep into the bandit.", "{}")
+
+    assert proposed == {"target": "bandit", "hp_delta": -6}
+    call = narrator._client.calls[0]
+    assert call["format"] == MISSED_CHANGE_SCHEMA
+
+
+async def test_propose_correction_returns_none_when_dm_has_no_guess():
+    narrator = make_structured_narrator()
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps({"mechanical_change": False}))])
+
+    proposed = await narrator.propose_correction("You walk into the empty room.", "{}")
+
+    assert proposed is None
+
+
+async def test_propose_correction_returns_none_on_malformed_json():
+    narrator = make_structured_narrator()
+    narrator._client = FakeOllamaClient([FakeChatResponse("not valid json")])
+
+    proposed = await narrator.propose_correction("Something happened.", "{}")
+
+    assert proposed is None
+
+
+async def test_propose_correction_is_a_no_op_for_the_legacy_tool_calling_path():
+    narrator = make_narrator()
+
+    proposed = await narrator.propose_correction("Something happened.", "{}")
+
+    assert proposed is None

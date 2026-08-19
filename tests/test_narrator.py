@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from server.narrator import UPDATE_CHARACTER_TOOL, AnthropicNarrator
+from server.narrator import UPDATE_CHARACTER_TOOL, AnthropicNarrator, NarratorBackend
 from server.rules import RulesIndex
 
 
@@ -360,3 +360,13 @@ async def test_check_missed_change_only_applies_real_update_character_tool_calls
     corrected = await narrator.check_missed_change("Something happened.", "{}", unexpected_apply_update)
 
     assert corrected is False
+
+
+async def test_propose_correction_base_default_offers_nothing():
+    class BareNarrator(NarratorBackend):
+        async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+            yield ""
+
+    backend = BareNarrator()
+    proposed = await backend.propose_correction("Your blade cuts deep into the bandit.", "{}")
+    assert proposed is None

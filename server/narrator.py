@@ -491,6 +491,23 @@ class NarratorBackend(Protocol):
         messaging on this.
         """
 
+    async def propose_correction(self, narration: str, character_summary: str) -> dict | None:
+        """Optional - not every backend needs this (getattr at the call
+        site, server/engine.py).
+
+        Called right before the passive missed-change advisory is sent -
+        after check_missed_change already declined to auto-correct. Returns
+        a best-guess update_character-shaped dict (target/hp_delta/
+        add_condition) the player can confirm and apply via /apply, or None
+        when there's genuinely nothing to propose. Deliberately framed as a
+        hypothesis for the player to weigh against what they actually saw,
+        not a decision the model is confident in - it already decided not to
+        act. Never a regex parse of narration text, the same
+        "the engine/model decides via a real mechanism" convention
+        check_missed_change documents above.
+        """
+        return None
+
 
 class AnthropicNarrator:
     def __init__(

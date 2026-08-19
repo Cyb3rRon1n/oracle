@@ -134,6 +134,28 @@ a character's or NPC's hp, inventory, or conditions that should have been record
 `target`/`hp_delta`/`add_condition` accordingly. Otherwise set `mechanical_change` to false and
 leave the other fields at their defaults."""
 
+
+def _missed_change_update(data: dict) -> dict:
+    """Builds the update_character-shaped dict from a MISSED_CHANGE_SCHEMA
+    response - shared by check_missed_change (which applies it) and
+    propose_correction (which hands it back for the player to confirm)."""
+    update = {"target": data.get("target") or "self"}
+    if data.get("hp_delta"):
+        update["hp_delta"] = data["hp_delta"]
+    if data.get("add_condition"):
+        update["add_condition"] = data["add_condition"]
+    return update
+
+
+PROPOSE_CORRECTION_SYSTEM_PROMPT = """You are the Dungeon Master reviewing your own narration from a moment
+ago, given below. You have already decided no correction is certain enough to auto-apply. But if the
+player confirms that something mechanically changed anyway, the sheet needs a concrete record. Respond
+with a single JSON object matching the given schema. Set `mechanical_change` to true only if the
+narration plausibly describes a real change to a character's or NPC's hp, inventory, or conditions,
+and fill in `target`/`hp_delta`/`add_condition` with your best guess of what the update_character call
+would have been. Otherwise set `mechanical_change` to false and leave the other fields at their
+defaults."""
+
 # Extends _OUTCOME_PROPERTIES with a second, independent decision: does this
 # turn need a real dice roll before the outcome can even be narrated? (See
 # _narrate_structured's two-pass docstring for the full reasoning.) A model
@@ -550,13 +572,34 @@ class OllamaNarrator:
             return False
         if not data.get("mechanical_change"):
             return False
-        update = {"target": data.get("target") or "self"}
-        if data.get("hp_delta"):
-            update["hp_delta"] = data["hp_delta"]
-        if data.get("add_condition"):
-            update["add_condition"] = data["add_condition"]
-        apply_update(update)
+        apply_update(_missed_change_update(data))
         return True
+
+    async def propose_correction(self, narration: str, character_summary: str) -> dict | None:
+        """See NarratorBackend.propose_correction (server/narrator.py) for
+        the full "why". Same mechanism as check_missed_change - one
+        constrained, non-streamed MISSED_CHANGE_SCHEMA call - but framed as
+        a hypothesis ("if something did change, what would it have been")
+        rather than a decision, and it returns the proposed update instead
+        of applying it, for the player to confirm via /apply. Structured-
+        output only, matching check_missed_change's own opt-out."""
+        if not self._structured_output:
+            return None
+        prompt = f"Character:\n{character_summary}\n\nYour narration:\n{narration}"
+        messages = [
+            {"role": "system", "content": PROPOSE_CORRECTION_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        response = await self._client.chat(
+            model=self._model, messages=messages, format=MISSED_CHANGE_SCHEMA, stream=False
+        )
+        try:
+            data = json.loads(response.message.content or "")
+        except json.JSONDecodeError:
+            return None
+        if not data.get("mechanical_change"):
+            return None
+        return _missed_change_update(data)
 
     async def _narrate_structured(
         self,

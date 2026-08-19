@@ -934,6 +934,55 @@ async def test_missed_change_advisory_renders_with_distinct_styling_over_a_real_
             await server_task
 
 
+class NarratesLethalDamageAndProposesCorrectionDM:
+    """Like NarratesLethalDamageWithNoToolCallDM, but also implements
+    propose_correction - the advisory should arrive with a /apply-able
+    suggestion the player can confirm over a real websocket."""
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None):
+        yield "Your blade finds its mark - the bandit staggers, bleeding, and falls dead."
+
+    async def propose_correction(self, narration, character_summary):
+        return {"target": "bandit", "hp_delta": -4}
+
+
+async def test_missed_change_proposal_applies_over_a_real_session():
+    session = Session(session_id="e2e-session-14")
+
+    def engine_factory(session_id, broadcast, send_to):
+        return GameEngine(
+            session, NarratesLethalDamageAndProposesCorrectionDM(), broadcast, send_to, enable_opening_scene=False
+        )
+
+    transport = Transport(engine_factory)
+    server_task = asyncio.create_task(transport.serve(host="localhost", port=8812))
+    await asyncio.sleep(0.3)
+
+    try:
+        app = DungeonMasterApp(uri="ws://localhost:8812", player_id=str(uuid.uuid4()), is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#name-input")
+            await pilot.press(*"Thrain")
+            await pilot.click("#join")
+            await _wait_until(lambda: isinstance(app.screen, LobbyScreen))
+
+            await pilot.click("#start")
+            await _wait_until(lambda: isinstance(app.screen, SessionScreen))
+
+            await pilot.click("#input")
+            await pilot.press(*"I strike the bandit", "enter")
+            await _wait_until(lambda: "/apply" in _log_text(app.screen.query_one("#log")))
+
+            await pilot.press(*"/apply", "enter")
+            await _wait_until(lambda: "Correction applied" in _log_text(app.screen.query_one("#log")))
+
+            assert session.npcs["bandit"].hp == 6, "the confirmed proposal should have been applied"
+    finally:
+        server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server_task
+
+
 class IntroducesHostileGoblinDM:
     """Simulates a DM turn introducing a new NPC with a real disposition -
     exercises the disposition field over an actual websocket session, not

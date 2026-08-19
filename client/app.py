@@ -667,6 +667,18 @@ class CharacterSheetPanel(Vertical):
         return line
 
 
+def _proposed_change_text(proposed: dict) -> str:
+    target = proposed.get("target") or "your character"
+    bits = []
+    if proposed.get("hp_delta"):
+        delta = proposed["hp_delta"]
+        bits.append(f"{delta} hp" if delta < 0 else f"heal {delta} hp")
+    if proposed.get("add_condition"):
+        bits.append(f"condition '{proposed['add_condition']}'")
+    what = ", ".join(bits) if bits else "a change"
+    return f"Suggested correction: {what} on {target}."
+
+
 def _npc_status_line(name: str, npc: dict) -> str:
     line = f"[dim]{name}: HP {npc.get('hp')}/{npc.get('max_hp')}"
     ac = npc.get("ac")
@@ -1117,6 +1129,9 @@ class SessionScreen(Screen):
             await self.app.transport.send("end_combat", {})
         elif text.startswith("/chat "):
             await self.app.transport.send("chat_message", {"text": text[len("/chat "):].strip()})
+        elif text.startswith("/apply"):
+            self.app._pending_proposal = None
+            await self.app.transport.send("apply_proposed_change", {})
         elif text.startswith("/note "):
             # notes/inventory bookkeeping, not adjudicated by the DM -
             # server/engine.py's _on_character_edit is the only handler,
@@ -1187,6 +1202,7 @@ class DungeonMasterApp(App):
         self.log_tail: list[dict] = []
         self.current_turn: str | None = None
         self._listening = False
+        self._pending_proposal: dict | None = None
 
     @property
     def player_id(self) -> str:
@@ -1580,6 +1596,17 @@ class DungeonMasterApp(App):
             # visually distinct treatment instead of blending in with the
             # rest at the same dim styling.
             rendered = f"[yellow]⚠ {text}[/yellow]" if envelope.payload.get("advisory") else f"[dim]{text}[/dim]"
+            # A server-authored proposed_change can ride along on the
+            # advisory (server/engine.py's _on_apply_proposed_change): the
+            # DM's best-guess correction the player can confirm with /apply
+            # (docs/protocol.md). Shown as a hint under the warning, pending
+            # until accepted or until the player's next turn expires it.
+            proposed = envelope.payload.get("proposed_change")
+            if proposed:
+                self._pending_proposal = proposed
+                rendered = (
+                    f"{rendered}\n[dim]{_proposed_change_text(proposed)} Type /apply to accept.[/dim]"
+                )
             if session_screen is not None:
                 session_screen.set_thinking(False)  # covers narration-failed, which never reaches a log_entry
                 session_screen.write_log(rendered)

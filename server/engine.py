@@ -826,6 +826,7 @@ class GameEngine:
         # Feeds build_starting_character's random per-character origin
         # (background/trait/near-death) - same load-once precedent.
         self._origin_table = origin_table or load_default_origin_table()
+        self._pending_proposals: dict[str, dict] = {}
 
     async def _save(self, notify_player_id: str | None = None) -> None:
         """Persists session state - best-effort, not fatal. Previously a
@@ -852,6 +853,49 @@ class GameEngine:
                         "Your progress may not be saving right now - see the server log.", level="warning"
                     ),
                 )
+
+    def _apply_level_up(self, character: CharacterSheet, levels_gained: int, old_level: int) -> list[str]:
+        """Shared by the in-turn NPC-defeat path (apply_update's closure)
+        and the player-confirmed correction path (_on_apply_proposed_change,
+        below) - the post-XP level-up math is identical for both. Returns
+        the ASI abilities applied (empty when nothing gained)."""
+        class_entry = (
+            self._rules.get_entry("class", character.character_class)
+            if character.character_class else None
+        )
+        if class_entry is not None:
+            # Same real formula as level-1 HP (hit die max + CON modifier,
+            # floored at 1 per level) - a character with a negative CON
+            # modifier still gains at least 1 HP per level, never 0 or
+            # negative growth.
+            con_mod = ability_modifier(character.stats["con"]) if character.stats else 0
+            hp_gain = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod) * levels_gained
+            character.max_hp += hp_gain
+            character.hp += hp_gain
+            # AC doesn't recompute here even when DEX is the ability
+            # improved below (e.g. a rogue's ASI) - the exact same
+            # already-documented "AC doesn't recompute if stats change
+            # after character creation" simplification the Structured
+            # Equipment entry (ROADMAP.md) already accepts for inventory
+            # changes, extended to cover this too rather than treated as a
+            # new, separate gap.
+            asi_abilities = _apply_ability_score_improvements(character, old_level, character.level)
+            # Spell slots grow by the real delta between the old and new
+            # level's max, not a full reset to the new max - the same
+            # "level-up grants more, it isn't a free rest" reasoning HP
+            # growth above already follows, applied to a resource that can
+            # also be partially spent already. A non-caster
+            # (max_spell_slots already empty) sees no change, since
+            # new_max is also {} for it.
+            if character.max_spell_slots or character.known_spells:
+                new_max = self._rules.spell_slots_by_level(character.level)
+                for slot_level, count in new_max.items():
+                    gained = count - character.max_spell_slots.get(slot_level, 0)
+                    if gained > 0:
+                        character.spell_slots[slot_level] = character.spell_slots.get(slot_level, 0) + gained
+                character.max_spell_slots = new_max
+            return asi_abilities
+        return []
 
     async def handle(self, envelope: Envelope) -> None:
         handler = getattr(self, f"_on_{envelope.type}", None)
@@ -1287,6 +1331,7 @@ class GameEngine:
             return
 
         text = envelope.payload.get("text", "")
+        self._pending_proposals.pop(player_id, None)
         await self._broadcast(self._log_envelope("action", f"{character.name}: {text}"))
 
         # Consumed (popped) here, not just checked - a real gap between
@@ -1697,47 +1742,7 @@ class GameEngine:
                 xp_award = _xp_for_npc(npc, update, self._rules)
                 old_level = character.level
                 levels_gained = character.gain_xp(xp_award, self._rules.xp_thresholds())
-                asi_abilities: list[str] = []
-                if levels_gained:
-                    class_entry = (
-                        self._rules.get_entry("class", character.character_class)
-                        if character.character_class else None
-                    )
-                    if class_entry is not None:
-                        # Same real formula as level-1 HP (hit die max +
-                        # CON modifier, floored at 1 per level) - a
-                        # character with a negative CON modifier still
-                        # gains at least 1 HP per level, never 0 or
-                        # negative growth.
-                        con_mod = ability_modifier(character.stats["con"]) if character.stats else 0
-                        hp_gain = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod) * levels_gained
-                        character.max_hp += hp_gain
-                        character.hp += hp_gain
-                        # AC doesn't recompute here even when DEX is the
-                        # ability improved below (e.g. a rogue's ASI) - the
-                        # exact same already-documented "AC doesn't
-                        # recompute if stats change after character
-                        # creation" simplification the Structured Equipment
-                        # entry (ROADMAP.md) already accepts for inventory
-                        # changes, extended to cover this too rather than
-                        # treated as a new, separate gap.
-                        asi_abilities = _apply_ability_score_improvements(character, old_level, character.level)
-
-                        # Spell slots grow by the real delta between the
-                        # old and new level's max, not a full reset to the
-                        # new max - the same "level-up grants more, it
-                        # isn't a free rest" reasoning HP growth above
-                        # already follows, applied to a resource that can
-                        # also be partially spent already. A non-caster
-                        # (max_spell_slots already empty) sees no change,
-                        # since new_max is also {} for it.
-                        if character.max_spell_slots or character.known_spells:
-                            new_max = self._rules.spell_slots_by_level(character.level)
-                            for slot_level, count in new_max.items():
-                                gained = count - character.max_spell_slots.get(slot_level, 0)
-                                if gained > 0:
-                                    character.spell_slots[slot_level] = character.spell_slots.get(slot_level, 0) + gained
-                            character.max_spell_slots = new_max
+                asi_abilities = self._apply_level_up(character, levels_gained, old_level)
                 sheet_changed = True
                 xp_awards.append((npc.name, xp_award, levels_gained, asi_abilities))
                 xp_note = f" {npc.name} is defeated! {character.name} gains {xp_award} XP."
@@ -1901,6 +1906,12 @@ class GameEngine:
             and not npcs_touched
             and POSSIBLE_UNTRACKED_CHANGE_PATTERN.search(buffer)
         ):
+            proposed = None
+            propose_correction = getattr(self._dm, "propose_correction", None)
+            if propose_correction is not None:
+                proposed = await propose_correction(buffer, character.model_dump_json())
+            if proposed:
+                self._pending_proposals[player_id] = proposed
             await self._send_to(
                 player_id,
                 self._system_envelope(
@@ -1908,6 +1919,7 @@ class GameEngine:
                     "your sheet might be out of sync with the story.",
                     level="warning",
                     advisory=True,
+                    proposed_change=proposed,
                 ),
             )
 
@@ -2037,6 +2049,88 @@ class GameEngine:
         if ac_changed:
             await self._broadcast(self._player_update_envelope(character))
         await self._save(player_id)
+
+    async def _on_apply_proposed_change(self, envelope: Envelope) -> None:
+        """Applies a server-authored correction proposal the player accepted
+        via /apply (docs/protocol.md's "Missed-change confirmable
+        proposal"). The proposal was generated by the DM backend when the
+        missed-change heuristic fired and check_missed_change declined to
+        auto-correct; it only ever carries target/hp_delta/add_condition
+        (the MISSED_CHANGE_SCHEMA field set). Exempt from turn order like
+        _on_character_edit - this is a correction of what already happened,
+        not a narrative action. Applies through the same
+        CharacterSheet.apply_update/NPC machinery a real in-turn tool call
+        uses, so its broadcasts match a real update_character. The pending
+        proposal expires on the player's next action (_on_player_action
+        pops it), so a stale suggestion can never be applied late."""
+        player_id = envelope.sender_id
+        character = self._session.characters.get(player_id)
+        if character is None:
+            await self._send_to(
+                player_id, self._system_envelope("You don't have a character to correct yet.", level="warning")
+            )
+            return
+        proposal = self._pending_proposals.pop(player_id, None)
+        if not proposal:
+            await self._send_to(
+                player_id,
+                self._system_envelope(
+                    "Nothing to apply - the correction suggestion is no longer pending.", level="info"
+                ),
+            )
+            return
+
+        target = proposal.get("target") or "self"
+        changed = False
+        if target in ("self", player_id, character.name):
+            result = character.apply_update(proposal)
+            changed = not result.startswith("No changes applied")
+            if changed:
+                await self._send_to(player_id, self._character_update_envelope(player_id, character))
+                await self._broadcast(self._player_update_envelope(character))
+                await self._broadcast(self._log_envelope("outcome", f"{character.name}: {result}"))
+        else:
+            npc_key = target.casefold()
+            npc = self._session.npcs.get(npc_key)
+            introduced = npc is None
+            if introduced:
+                max_hp = proposal.get("max_hp") or DEFAULT_NPC_HP
+                npc = CharacterSheet(player_id=target, name=target, hp=max_hp, max_hp=max_hp)
+                monster_entry = self._rules.get_entry("monster", target)
+                if monster_entry is not None:
+                    npc.stats = dict(monster_entry.get("stats", {}))
+                    if "ac" in monster_entry:
+                        npc.ac = monster_entry["ac"]
+                self._session.npcs[npc_key] = npc
+            was_alive = npc.hp > 0
+            delta_result = npc.apply_update(proposal)
+            changed = not delta_result.startswith("No changes applied")
+            defeated = was_alive and npc.hp == 0
+            if introduced or changed:
+                await self._broadcast(self._npc_update_envelope(npc.name, npc))
+            if changed:
+                await self._broadcast(self._log_envelope("outcome", f"{npc.name}: {delta_result}"))
+            if defeated:
+                xp_award = _xp_for_npc(npc, proposal, self._rules)
+                old_level = character.level
+                levels_gained = character.gain_xp(xp_award, self._rules.xp_thresholds())
+                asi_abilities = self._apply_level_up(character, levels_gained, old_level)
+                text = f"{character.name} defeats {npc.name} and gains {xp_award} XP!"
+                if levels_gained:
+                    text += f" {character.name} reaches level {character.level}!"
+                text += _asi_announcement(character.name, asi_abilities)
+                await self._broadcast(self._system_envelope(text, level="info"))
+                await self._send_to(player_id, self._character_update_envelope(player_id, character))
+                await self._broadcast(self._player_update_envelope(character))
+
+        await self._send_to(
+            player_id,
+            self._system_envelope(
+                "Correction applied - the sheet now matches the narration."
+                if changed else "Nothing changed - the suggestion didn't alter the sheet.",
+                level="info",
+            ),
+        )
 
     async def _on_death_save(self, envelope: Envelope) -> None:
         """A dying player's own roll against death (docs/protocol.md's
@@ -2347,7 +2441,7 @@ class GameEngine:
             payload["category"] = category
         return Envelope(type="log_entry", session_id=self._session.session_id, sender_id="server", payload=payload)
 
-    def _system_envelope(self, text: str, level: str = "info", advisory: bool = False) -> Envelope:
+    def _system_envelope(self, text: str, level: str = "info", advisory: bool = False, proposed_change: dict | None = None) -> Envelope:
         # advisory is deliberately narrow - only the missed-change heuristic
         # (below) sets it. Every other system_message (connection/turn-order/
         # save-failure) is a plain fact about what just happened; this one is
@@ -2359,6 +2453,8 @@ class GameEngine:
         payload: dict = {"level": level, "text": text}
         if advisory:
             payload["advisory"] = True
+        if proposed_change is not None:
+            payload["proposed_change"] = proposed_change
         return Envelope(
             type="system_message",
             session_id=self._session.session_id,

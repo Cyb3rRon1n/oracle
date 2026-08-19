@@ -30,6 +30,7 @@ EventType = Literal[
     "player_left",
     "session_started",
     "system_message",
+    "apply_proposed_change",
 ]
 
 
