@@ -1,5 +1,3 @@
-<img src="docs/wordmark.svg" width="360" alt="Oracle — an AI Dungeon Master">
-
 <p align="center">
   <a href="https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml"><img src="https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
