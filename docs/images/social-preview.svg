@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <rect width="1280" height="640" fill="#14161a"/>
+
+  <!-- large faint Veil ring watermark -->
+  <circle cx="1080" cy="200" r="230" stroke="#7c4fe0" stroke-opacity="0.12" stroke-width="3" stroke-dasharray="980 200" fill="none"/>
+
+  <g transform="translate(70,176) scale(4.5)">
+    <circle cx="32" cy="32" r="22" stroke="#a685f2" stroke-width="3" stroke-dasharray="86 17" stroke-dashoffset="-6" fill="none"/>
+    <path fill="#ecc35c" d="M32 4 c3 5 5 8 5 12 a5 5 0 0 1 -10 0 c0 -2.7 1.6 -4.6 2.6 -6.2 c0.4 1.7 1.2 2.1 1.2 3 c0 -3 0.4 -5.8 1.2 -8.8 z"/>
+    <circle cx="32" cy="32" r="3.2" fill="#ecc35c"/>
+  </g>
+
+  <text x="432" y="308" font-family="JetBrains Mono" font-weight="700" font-size="88" letter-spacing="-1" fill="#f0f2f5">oracle</text>
+
+  <text x="435" y="360" font-family="Inter" font-weight="400" font-size="30" fill="#9aa1ab">
+    <tspan x="435" dy="0">An AI Dungeon Master for real-time</tspan>
+    <tspan x="435" dy="40">tabletop RPG sessions</tspan>
+  </text>
+
+  <text x="70" y="580" font-family="JetBrains Mono" font-weight="400" font-size="22" fill="#7c8590" letter-spacing="0.5">you act</text>
+  <text x="182" y="580" font-family="JetBrains Mono" font-weight="400" font-size="22" fill="#4a4258">&#8594;</text>
+  <text x="222" y="580" font-family="JetBrains Mono" font-weight="400" font-size="22" fill="#7c8590" letter-spacing="0.5">DM adjudicates</text>
+  <text x="472" y="580" font-family="JetBrains Mono" font-weight="400" font-size="22" fill="#4a4258">&#8594;</text>
+  <text x="512" y="580" font-family="JetBrains Mono" font-weight="400" font-size="22" fill="#7c8590" letter-spacing="0.5">dice decide</text>
+  <text x="712" y="580" font-family="JetBrains Mono" font-weight="400" font-size="22" fill="#4a4258">&#8594;</text>
+  <text x="752" y="580" font-family="JetBrains Mono" font-weight="400" font-size="22" fill="#ecc35c" letter-spacing="0.5">story continues</text>
+</svg>

@@ -1,0 +1,34 @@
+<svg width="1200" height="300" viewBox="0 0 1200 300" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="300" fill="#14161a"/>
+
+  <!-- rack-shelf texture, matching the sibling banners -->
+  <g stroke="#ffffff" stroke-opacity="0.035" stroke-width="1">
+    <line x1="0" y1="60" x2="1200" y2="60"/>
+    <line x1="0" y1="110" x2="1200" y2="110"/>
+    <line x1="0" y1="190" x2="1200" y2="190"/>
+    <line x1="0" y1="240" x2="1200" y2="240"/>
+  </g>
+
+  <!-- large faint Veil ring, watermark on the right -->
+  <circle cx="1060" cy="150" r="150" stroke="#7c4fe0" stroke-opacity="0.12" stroke-width="2" stroke-dasharray="640 130" fill="none"/>
+  <circle cx="1060" cy="150" r="4" fill="#d9ab3a" fill-opacity="0.4"/>
+
+  <!-- Veil + rune mark -->
+  <g transform="translate(38,34.5) scale(3.5)">
+    <circle cx="32" cy="32" r="22" stroke="#a685f2" stroke-width="3" stroke-dasharray="86 17" stroke-dashoffset="-6" fill="none"/>
+    <path fill="#ecc35c" d="M32 4 c3 5 5 8 5 12 a5 5 0 0 1 -10 0 c0 -2.7 1.6 -4.6 2.6 -6.2 c0.4 1.7 1.2 2.1 1.2 3 c0 -3 0.4 -5.8 1.2 -8.8 z"/>
+    <circle cx="32" cy="32" r="3.2" fill="#ecc35c"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="280" y="160" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="72" font-weight="700" letter-spacing="6" fill="#f0f2f5">ORACLE</text>
+  <text x="282" y="196" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="22" fill="#9aa1ab">An AI Dungeon Master for real-time tabletop sessions</text>
+
+  <!-- d20, small callout bottom-right in place of a tier ticker -->
+  <g transform="translate(1030,222)" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <path d="M20 0 L38 11 L38 29 L20 40 L2 29 L2 11 Z" fill="none" stroke="#7c4fe0" stroke-width="2"/>
+    <text x="20" y="26" font-size="16" font-weight="700" fill="#ecc35c" text-anchor="middle">20</text>
+  </g>
+</svg>

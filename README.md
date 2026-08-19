@@ -1,8 +1,20 @@
 <img src="docs/wordmark.svg" width="360" alt="Oracle — an AI Dungeon Master">
 
-[![CI](https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+<p align="center">
+  <a href="https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml"><img src="https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Cyb3rRon1n/oracle/main/docs/images/banner.svg"
+       alt="Oracle - An AI Dungeon Master for real-time tabletop sessions"
+       style="max-width: 100%; height: auto;">
+</p>
+
+<p align="center">
+  📖 <a href="ROADMAP.md">Roadmap</a> · <a href="docs/protocol.md">Protocol</a> · <a href="https://cyb3rron1n.github.io/">Sibling Projects</a> · <a href="docs/images/favicon.svg">Favicon</a>
+</p>
 
 An AI Dungeon Master that runs a real-time tabletop RPG session over a terminal UI — an LLM sitting in the GM seat, adjudicating rules, narrating the world, and managing campaign state.
 
