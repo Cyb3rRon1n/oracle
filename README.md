@@ -1,4 +1,4 @@
-# Oracle
+<img src="docs/wordmark.svg" width="360" alt="Oracle — an AI Dungeon Master">
 
 [![CI](https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/Cyb3rRon1n/oracle/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -10,7 +10,7 @@ A solo engineering project built around one central, unglamorous question: when 
 
 ## Screenshots
 
-The first two are real captures from a live session — `qwen2.5:7b` on a real GPU-backed Ollama server, no mocked output. The narrative log sits full-width on top; the character sheet (with its tab bar — Overview/Map/Abilities/Inventory/Spells/Features & Notes, whichever apply) is a compact scrollable band underneath.
+All captures render the real client in the dark-dungeon theme. The two formerly live-Ollama captures (opening scene, mid-story turn) now use a scripted stand-in DM like the rest — the engine mechanics shown (real `update_world` setting the Map tab, the turn prompt) are 100% real; only the narration prose is scripted, so they stay deterministic and reproducible. The narrative log sits full-width on top; the character sheet (with its tab bar — Overview/Map/Abilities/Inventory/Spells/Features & Notes, whichever apply) is a compact scrollable band underneath.
 
 **A fresh session's DM-generated opening scene:**
 
@@ -32,7 +32,11 @@ The first two are real captures from a live session — `qwen2.5:7b` on a real G
 
 ![Character sheet showing Elowen's known spells and "Slots: 1 1/2" after casting Magic Missile, with the log showing the cast narrated and the spent slot reflected on the sheet](docs/screenshots/spellcasting.svg)
 
-`scripts/generate_screenshots.py` (`python -m scripts.generate_screenshots`) regenerates the three deterministic, mocked-narration screenshots above after a TUI change. The two live-Ollama captures need a real running server behind a real model instead — `scripts/generate_live_screenshots.py` (`SERVER_URI=ws://<host>:8765 python -m scripts.generate_live_screenshots`) does that, kept separate since it can't run without one.
+`scripts/generate_screenshots.py` (`python -m scripts.generate_screenshots`) regenerates all five deterministic screenshots above after a TUI change. `scripts/record_demo.sh` (see below) records a short animated demo instead.
+
+### Recording a demo
+
+`scripts/record_demo.sh [output.svg]` records a short animated demo (via [asciinema](https://asciinema.org) → [svg-term](https://github.com/marionebl/svg-term-cli)) showing narration actually streaming in, and writes `docs/screenshots/demo.svg`. It needs both tools (`pip install asciinema`, `npm install -g svg-term-cli`) and a server already running on `SERVER_URI` (default `ws://localhost:8765`) — against a real Ollama/Anthropic backend for genuine streaming narration, or any backend just to record the UI. It records the real terminal, so just play a few turns by hand and quit the client (Ctrl-D) when done.
 
 ## Concept
 

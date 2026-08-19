@@ -1194,6 +1194,65 @@ class DungeonMasterApp(App):
     deliberately left as the base App's no-op: WelcomeScreen owns the
     entire first view, pushed from on_mount()."""
 
+    CSS = """
+    /* Dark-dungeon theme: warm charcoal-brown surfaces with a torch-gold
+       accent (the same palette docs/wordmark.svg and the README use).
+       Defined once here as design tokens so every screen - welcome, lobby,
+       session - and the Header/Footer/buttons/inputs pick it up without
+       per-screen duplication. */
+    $background: #14100c;
+    $surface: #1b1610;
+    $panel: #221b13;
+    $boost: #2a2117;
+    $foreground: #e8dcc0;
+    $text: #e8dcc0;
+    $text-muted: #a3927a;
+    $text-disabled: #6f6150;
+    $primary: #c9a06c;
+    $primary-background: #2a2117;
+    $primary-foreground: #e8dcc0;
+    $secondary: #8a6d3f;
+    $secondary-background: #221b13;
+    $secondary-foreground: #c9a06c;
+    $accent: #d8a95f;
+    $accent-background: #2a2117;
+    $accent-foreground: #14100c;
+    $warning: #d9a441;
+    $warning-background: #d9a441;
+    $warning-foreground: #14100c;
+    $error: #c4574a;
+    $error-background: #c4574a;
+    $error-foreground: #14100c;
+    $success: #86a97c;
+    $success-background: #86a97c;
+    $success-foreground: #14100c;
+    $border: #4a3d2c;
+    $border-blurred: #2f2820;
+    $header-background: #1b1610;
+    $header-foreground: #d8a95f;
+    $footer-background: #14100c;
+    $footer-foreground: #a3927a;
+    $input-background: #1b1610;
+    $input-border: #4a3d2c;
+    $input-foreground: #e8dcc0;
+    $input-placeholder: #6f6150;
+    $link: #d8a95f;
+    $button-foreground: #14100c;
+    $button-background: #c9a06c;
+    $button-focus: #e0bd7d;
+    $button-focus-foreground: #14100c;
+    $button-hover: #d4aa72;
+    $button-hover-foreground: #14100c;
+    $button-primary-background: #c9a06c;
+    $button-primary-foreground: #14100c;
+    $button-success-background: #86a97c;
+    $button-success-foreground: #14100c;
+    $button-error-background: #c4574a;
+    $button-error-foreground: #14100c;
+    $button-warning-background: #d9a441;
+    $button-warning-foreground: #14100c;
+    """
+
     def __init__(self, uri: str, player_id: str, is_new_character: bool):
         super().__init__()
         self._uri = uri

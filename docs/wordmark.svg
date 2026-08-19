@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="140" viewBox="0 0 720 140" role="img" aria-labelledby="title desc">
+  <title id="title">Oracle</title>
+  <desc id="desc">An AI Dungeon Master</desc>
+  <rect width="720" height="140" fill="#14100c"/>
+  <rect x="0" y="132" width="720" height="8" fill="#2a2117"/>
+  <polygon points="40,60 52,40 64,60 52,80" fill="#d8a95f" opacity="0.9"/>
+  <text x="96" y="66" font-family="Georgia, 'Times New Roman', serif" font-size="48" font-weight="bold" fill="#e8dcc0" letter-spacing="6">ORACLE</text>
+  <text x="100" y="100" font-family="Georgia, 'Times New Roman', serif" font-size="16" fill="#a3927a" letter-spacing="4">AN AI DUNGEON MASTER</text>
+  <circle cx="640" cy="58" r="4" fill="#c4574a"/>
+  <circle cx="656" cy="58" r="4" fill="#d9a441"/>
+  <circle cx="672" cy="58" r="4" fill="#86a97c"/>
+</svg>
