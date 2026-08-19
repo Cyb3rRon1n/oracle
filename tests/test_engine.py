@@ -1038,6 +1038,84 @@ async def test_defeat_broadcasts_system_message_announcing_xp():
     assert announcements, "a defeat should broadcast a system_message announcing the XP gained"
 
 
+async def test_party_split_awards_even_share_to_every_joined_player():
+    # Real 5e's party-wide XP: a 50 XP goblin split between two players is
+    # 25 each - the acting player keeps their own share, the other player
+    # gets the rest, and the announcement names the whole party.
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -7}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    other_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+    await join(engine, other_id, name="Lyra")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the goblin down"},
+    ))
+
+    assert session.characters[player_id].xp == 25
+    assert session.characters[other_id].xp == 25
+    assert "The party gains 50 XP" in dm.tool_results[0]
+    announcements = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message"
+        and "The party defeats goblin and gains 50 XP (25 each)" in r[2]["text"]
+    ]
+    assert announcements, "a party defeat should announce the per-member share"
+    updates = [r for r in received if r[0] == "send_to" and r[2] == "character_update"]
+    assert {r[3]["player_id"] for r in updates} == {player_id, other_id}
+
+
+async def test_party_split_drops_the_remainder():
+    # A 50 XP kill across three players floors to 16 each (48 total) - the
+    # leftover 2 simply drops, real 5e's "divvy evenly" guidance.
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -7}])
+    engine, session, _ = make_engine(dm)
+    ids = [str(uuid.uuid4()) for _ in range(3)]
+    for pid in ids:
+        await join(engine, pid)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=ids[0],
+        payload={"text": "I strike the goblin down"},
+    ))
+
+    assert all(session.characters[pid].xp == 16 for pid in ids)
+
+
+async def test_party_split_levels_up_every_member_who_crosses_the_threshold():
+    # A 5,400 XP kill split across two players is 2,700 each - exactly the
+    # level-4 threshold, so both members level and both get their ASI, and
+    # the broadcast announces each leveler by name.
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 5400}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    other_id = str(uuid.uuid4())
+    for pid, name in ((player_id, "Thrain"), (other_id, "Lyra")):
+        await engine.handle(Envelope(
+            type="join_session", session_id="test-session", sender_id=pid,
+            payload={"player_name": name, "character_class": "fighter"},
+        ))
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the boss down"},
+    ))
+
+    assert session.characters[player_id].xp == 2700
+    assert session.characters[other_id].xp == 2700
+    assert session.characters[player_id].level == 4
+    assert session.characters[other_id].level == 4
+    assert session.characters[player_id].stats["str"] == 17
+    assert session.characters[other_id].stats["str"] == 17
+    text = "".join(
+        r[2]["text"] for r in received if r[0] == "broadcast" and r[1] == "system_message"
+    )
+    assert "Thrain reaches level 4" in text
+    assert "Lyra reaches level 4" in text
+
+
 async def test_level_up_grows_hp_by_class_hit_die_and_broadcasts_level_up():
     dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 300}])
     engine, session, received = make_engine(dm)

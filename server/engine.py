@@ -303,6 +303,29 @@ def _asi_announcement(name: str, asi_abilities: list[str]) -> str:
     return f" {name}'s {labels} {verb}!"
 
 
+def _party_xp_announcement(npc_name: str, xp_award: int, party_results: list[tuple]) -> str:
+    """Builds the player-facing defeat/level-up broadcast text for a kill,
+    shared by the in-turn apply_update closure and the player-confirmed
+    correction path so the two can't drift - the same reason _asi_announcement
+    exists. A solo session (one member) keeps the original single-actor
+    phrasing; a party kill names the per-member share and every member who
+    leveled."""
+    if len(party_results) == 1:
+        _pid, member, levels_gained, asi_abilities = party_results[0]
+        text = f"{member.name} defeats {npc_name} and gains {xp_award} XP!"
+        if levels_gained:
+            text += f" {member.name} reaches level {member.level}!"
+        text += _asi_announcement(member.name, asi_abilities)
+        return text
+    share = xp_award // len(party_results)
+    text = f"The party defeats {npc_name} and gains {xp_award} XP ({share} each)!"
+    for _pid, member, levels_gained, asi_abilities in party_results:
+        if levels_gained:
+            text += f" {member.name} reaches level {member.level}!"
+        text += _asi_announcement(member.name, asi_abilities)
+    return text
+
+
 def _cast_spell(character: CharacterSheet, spell_name: str, rules: RulesIndex) -> tuple[str, bool]:
     """Applies update_character's new cast_spell field - deterministic
     slot bookkeeping (real 5e's own resource), not something the DM has
@@ -897,6 +920,28 @@ class GameEngine:
             return asi_abilities
         return []
 
+    def _award_party_xp(self, xp_award: int) -> list[tuple[str, CharacterSheet, int, list[str]]]:
+        """Splits a kill's XP across the whole party rather than giving it
+        all to whoever's turn it is - real 5e's party-wide rule, still
+        applied deterministically (no DM tool call, the same reliability
+        reasoning ROADMAP.md already documents for XP). The split is a floor
+        division and the remainder simply drops; a solo session (N=1) awards
+        everything to the one member, an exact no-op vs. the old behaviour.
+        Returns (player_id, member, levels_gained, asi_abilities) per party
+        member in session.characters - shared by apply_update's closure and
+        _on_apply_proposed_change so the two paths can't drift."""
+        members = list(self._session.characters.values())
+        if not members:
+            return []
+        share = xp_award // len(members)
+        results = []
+        for member in members:
+            old_level = member.level
+            levels_gained = member.gain_xp(share, self._rules.xp_thresholds())
+            asi_abilities = self._apply_level_up(member, levels_gained, old_level)
+            results.append((member.player_id, member, levels_gained, asi_abilities))
+        return results
+
     async def handle(self, envelope: Envelope) -> None:
         handler = getattr(self, f"_on_{envelope.type}", None)
         if handler is not None:
@@ -1404,7 +1449,8 @@ class GameEngine:
         # turn's apply_update calls actually defeated, so a broadcast can
         # announce each defeat/level-up after narration finishes streaming,
         # not interrupt it mid-stream.
-        xp_awards: list[tuple[str, int, int]] = []
+        xp_awards: list[tuple[str, int, list[tuple[str, CharacterSheet, int, list[str]]]]] = []
+        xp_award_members: dict[str, CharacterSheet] = {}
 
         def request_roll(update: dict) -> str:
             notation = update.get("dice", "1d20")
@@ -1730,25 +1776,21 @@ class GameEngine:
 
             xp_note = ""
             if defeated:
-                # XP goes to whoever's turn it is, not split across the
-                # whole party - a deliberate simplifying default (real 5e
-                # splits party-wide), chosen because Oracle's turn queue
-                # already anchors every mechanical update on a single
-                # acting character (apply_update/request_roll/update_world
-                # all take just one `character`) - party-wide XP would need
-                # a session-wide "who else is present" notion this turn
-                # loop doesn't have. Revisit if/when a real multi-character-
-                # per-turn scenario shows up.
+                # Split across the whole party (real 5e's rule) by
+                # _award_party_xp - a floor division, the remainder simply
+                # drops, and a solo session is an exact no-op that awards
+                # everything to the one member.
                 xp_award = _xp_for_npc(npc, update, self._rules)
-                old_level = character.level
-                levels_gained = character.gain_xp(xp_award, self._rules.xp_thresholds())
-                asi_abilities = self._apply_level_up(character, levels_gained, old_level)
+                party_results = self._award_party_xp(xp_award)
+                for _pid, _member, _levels, _asi in party_results:
+                    xp_award_members[_pid] = _member
                 sheet_changed = True
-                xp_awards.append((npc.name, xp_award, levels_gained, asi_abilities))
-                xp_note = f" {npc.name} is defeated! {character.name} gains {xp_award} XP."
-                if levels_gained:
-                    xp_note += f" {character.name} reaches level {character.level}!"
-                xp_note += _asi_announcement(character.name, asi_abilities)
+                xp_awards.append((npc.name, xp_award, party_results))
+                xp_note = f" {npc.name} is defeated! The party gains {xp_award} XP."
+                for _pid, _member, levels_gained, asi_abilities in party_results:
+                    if levels_gained:
+                        xp_note += f" {_member.name} reaches level {_member.level}!"
+                    xp_note += _asi_announcement(_member.name, asi_abilities)
 
             if introduced:
                 intro = f"Introduced {npc.name} (HP {npc.hp}/{npc.max_hp})."
@@ -1833,7 +1875,11 @@ class GameEngine:
         for text, category in outcomes:
             await self._broadcast(self._log_envelope("outcome", text, category=category))
 
-        if sheet_changed:
+        if xp_award_members:
+            for _pid, _member in xp_award_members.items():
+                await self._send_to(_pid, self._character_update_envelope(_pid, _member))
+                await self._broadcast(self._player_update_envelope(_member))
+        elif sheet_changed:
             await self._send_to(player_id, self._character_update_envelope(player_id, character))
             # The private character_update above carries the full sheet
             # (inventory included) to the owner; everyone else's presence
@@ -1851,11 +1897,8 @@ class GameEngine:
         # matches how every other game-flow announcement not itself DM
         # narration (a join, an out-of-turn refusal) already reaches
         # clients, so no client-side changes were needed to render this.
-        for npc_name, xp_award, levels_gained, asi_abilities in xp_awards:
-            text = f"{character.name} defeats {npc_name} and gains {xp_award} XP!"
-            if levels_gained:
-                text += f" {character.name} reaches level {character.level}!"
-            text += _asi_announcement(character.name, asi_abilities)
+        for npc_name, xp_award, party_results in xp_awards:
+            text = _party_xp_announcement(npc_name, xp_award, party_results)
             await self._broadcast(self._system_envelope(text, level="info"))
 
         # A dying/dead transition is already reflected in the sheet_changed
@@ -2112,16 +2155,12 @@ class GameEngine:
                 await self._broadcast(self._log_envelope("outcome", f"{npc.name}: {delta_result}"))
             if defeated:
                 xp_award = _xp_for_npc(npc, proposal, self._rules)
-                old_level = character.level
-                levels_gained = character.gain_xp(xp_award, self._rules.xp_thresholds())
-                asi_abilities = self._apply_level_up(character, levels_gained, old_level)
-                text = f"{character.name} defeats {npc.name} and gains {xp_award} XP!"
-                if levels_gained:
-                    text += f" {character.name} reaches level {character.level}!"
-                text += _asi_announcement(character.name, asi_abilities)
+                party_results = self._award_party_xp(xp_award)
+                text = _party_xp_announcement(npc.name, xp_award, party_results)
                 await self._broadcast(self._system_envelope(text, level="info"))
-                await self._send_to(player_id, self._character_update_envelope(player_id, character))
-                await self._broadcast(self._player_update_envelope(character))
+                for _pid, _member, _levels, _asi in party_results:
+                    await self._send_to(_pid, self._character_update_envelope(_pid, _member))
+                    await self._broadcast(self._player_update_envelope(_member))
 
         await self._send_to(
             player_id,
