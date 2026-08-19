@@ -485,6 +485,7 @@ class Objective(BaseModel):
 class WorldState(BaseModel):
     location: str = "unknown"
     summary: str = ""
+    mood: str = ""
     flags: dict[str, bool] = Field(default_factory=dict)
     objectives: list[Objective] = Field(default_factory=list)
     # A real graph, not a 2D grid - ROADMAP.md item 8 scoped this as the
@@ -515,6 +516,11 @@ class WorldState(BaseModel):
         if summary and summary != self.summary:
             self.summary = summary
             changes.append("summary updated")
+
+        mood = update.get("mood")
+        if mood and mood != self.mood:
+            self.mood = mood
+            changes.append(f"mood now '{mood}'")
 
         add_objective = update.get("add_objective")
         if add_objective and not any(o.text == add_objective for o in self.objectives):
@@ -618,6 +624,8 @@ class WorldState(BaseModel):
         parts = []
         if self.location and self.location != "unknown":
             parts.append(f"Current location: {self.location}")
+        if self.mood:
+            parts.append(f"Current mood: {self.mood}")
         active_objectives = [o.text for o in self.objectives if o.status == "active"]
         if active_objectives:
             parts.append("Active objectives:\n" + "\n".join(f"- {text}" for text in active_objectives))

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from server.narrator import UPDATE_CHARACTER_TOOL, AnthropicNarrator, NarratorBackend
+from server.narrator import (
+    UPDATE_CHARACTER_TOOL,
+    UPDATE_WORLD_TOOL,
+    AnthropicNarrator,
+    NarratorBackend,
+)
 from server.rules import RulesIndex
 
 
@@ -135,6 +140,12 @@ async def test_narrate_includes_world_summary_when_given():
     sent_content = narrator._client.messages.calls[0]["messages"][0]["content"]
     assert "World state:" in sent_content
     assert "Find the missing goat" in sent_content
+
+
+def test_update_world_tool_exposes_mood():
+    props = UPDATE_WORLD_TOOL["input_schema"]["properties"]
+    assert "mood" in props
+    assert props["mood"]["type"] == "string"
 
 
 async def test_narrate_omits_world_summary_section_when_not_given():

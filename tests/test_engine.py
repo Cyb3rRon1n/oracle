@@ -3012,6 +3012,22 @@ async def test_update_world_connect_locations_broadcasts_the_map():
     assert updates[-1][2]["location_map"] == {"Great Hall": ["Armory"], "Armory": ["Great Hall"]}
 
 
+async def test_update_world_mood_broadcasts():
+    dm = UpdateWorldDM({"mood": "tense"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I descend into the sunless crypt"},
+    ))
+
+    assert session.world.mood == "tense"
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "world_update"]
+    assert updates[-1][2]["mood"] == "tense"
+
+
 async def test_update_world_no_op_does_not_broadcast():
     dm = UpdateWorldDM({})
     engine, session, received = make_engine(dm)

@@ -1696,7 +1696,7 @@ async def test_map_tab_is_hidden_with_no_locations_and_shown_once_the_dm_registe
 
             await app._handle(_state_sync(
                 "p1", started=False,
-                world_state={"location": "Great Hall", "location_map": {"Great Hall": ["Armory"], "Armory": ["Great Hall"]}},
+                world_state={"location": "Great Hall", "mood": "tense", "location_map": {"Great Hall": ["Armory"], "Armory": ["Great Hall"]}},
             ))
             await pilot.pause()
 
@@ -1705,6 +1705,7 @@ async def test_map_tab_is_hidden_with_no_locations_and_shown_once_the_dm_registe
             assert "Great Hall" in rendered
             assert "(here)" in rendered
             assert "-> Armory" in rendered
+            assert "Mood: tense" in rendered
 
 
 async def test_turn_prompt_for_another_player_names_them_not_just_your_own_turn():

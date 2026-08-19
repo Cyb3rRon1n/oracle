@@ -472,6 +472,21 @@ def test_world_apply_update_location_and_summary():
     assert "location now" in result and "summary updated" in result
 
 
+def test_world_apply_update_mood():
+    world = WorldState()
+
+    result = world.apply_update({"mood": "tense"})
+    assert world.mood == "tense"
+    assert "mood now 'tense'" in result
+
+    result = world.apply_update({"mood": "tense"})
+    assert result.startswith("No changes applied")
+
+    result = world.apply_update({"mood": "foreboding"})
+    assert world.mood == "foreboding"
+    assert "mood now 'foreboding'" in result
+
+
 def test_world_apply_update_objectives_add_complete_remove():
     world = WorldState()
 
@@ -593,6 +608,12 @@ def test_narrator_context_includes_location_when_known():
     world = WorldState()
     world.apply_update({"location": "Millbrook"})
     assert world.narrator_context() == "Current location: Millbrook"
+
+
+def test_narrator_context_includes_mood_when_set():
+    world = WorldState(location="Millbrook", mood="tense")
+
+    assert world.narrator_context() == "Current location: Millbrook\nCurrent mood: tense"
 
 
 def test_narrator_context_includes_only_active_objectives():

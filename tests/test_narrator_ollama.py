@@ -566,8 +566,9 @@ async def test_structured_narrate_world_updates_uses_the_world_schema_and_prompt
 
     call = narrator._client.calls[0]
     assert "world_change" in call["format"]["properties"]
-    assert "location" in call["format"]["properties"]
     assert "world_change" in call["format"]["required"]
+    assert "location" in call["format"]["properties"]
+    assert "mood" in call["format"]["properties"]
     assert "You must also track world_change" in call["messages"][0]["content"]
 
 
@@ -621,6 +622,7 @@ async def test_structured_narrate_world_change_applies_a_real_update():
         "mechanical_change": False,
         "world_change": True,
         "location": "Great Hall",
+        "mood": "tense",
         "add_objective": "Find the missing heirloom",
     }
     narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
@@ -639,7 +641,7 @@ async def test_structured_narrate_world_change_applies_a_real_update():
     ]
 
     assert "".join(chunks) == "You step into the great hall."
-    assert calls == [{"location": "Great Hall", "add_objective": "Find the missing heirloom"}]
+    assert calls == [{"location": "Great Hall", "mood": "tense", "add_objective": "Find the missing heirloom"}]
 
 
 async def test_structured_narrate_no_world_change_never_calls_update_world():

@@ -279,6 +279,15 @@ _WORLD_PROPERTIES = {
         "type": "string",
         "description": "The party's new current location, only if it just changed. Leave blank otherwise.",
     },
+    "mood": {
+        "type": "string",
+        "description": (
+            "The current scene's mood/environment tag - a short descriptor of the present "
+            "moment's emotional tone, e.g. 'tense', 'foreboding', 'hopeful', 'festive'. "
+            "Set it when the tone of the current scene meaningfully shifts, not every turn. "
+            "Leave blank if unchanged."
+        ),
+    },
     "add_objective": {
         "type": "string",
         "description": (
@@ -382,6 +391,10 @@ fill in the matching field:
   state" section above lists current active objectives, copy the matching one's text from
   there character-for-character - don't retype it from memory.
 - A new place worth remembering is discovered -> set `add_location` to its name.
+- The emotional tone of the current scene meaningfully shifts (entering a haunted ruin, the mood
+  lifting after a victory) -> set `mood` to a short descriptor of the new tone ('tense',
+  'foreboding', 'hopeful', 'festive'). Do not set it every turn - only when the tone really
+  changes, so it stays a stable, useful tag rather than a running commentary.
 Set world_change to false for anything else - idle conversation, background rumors with no
 direct request, examining something without traveling, or combat with no location/goal change."""
 
@@ -718,6 +731,8 @@ class OllamaNarrator:
             world_update: dict = {}
             if data.get("location"):
                 world_update["location"] = data["location"]
+            if data.get("mood"):
+                world_update["mood"] = data["mood"]
             if data.get("add_objective"):
                 world_update["add_objective"] = data["add_objective"]
             if data.get("complete_objective"):

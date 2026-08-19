@@ -248,6 +248,16 @@ UPDATE_WORLD_TOOL = {
                     "big picture changes, not every turn."
                 ),
             },
+            "mood": {
+                "type": "string",
+                "description": (
+                    "The current scene's mood/environment tag - a short descriptor of the "
+                    "emotional tone of the present moment, e.g. 'tense', 'foreboding', "
+                    "'hopeful', 'festive', 'oppressive'. Update it when the tone of the "
+                    "current scene meaningfully shifts (entering a haunted ruin, the mood "
+                    "lifting after a victory), not every turn."
+                ),
+            },
             "add_objective": {
                 "type": "string",
                 "description": "A new active objective/plot thread/quest hook to track, in plain language.",

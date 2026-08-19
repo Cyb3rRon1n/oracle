@@ -518,18 +518,23 @@ class CharacterSheetPanel(Vertical):
         # DM to supply consistent x/y positions this project doesn't ask
         # for. Shared world state, not owner-only (unlike stats/inventory) -
         # every player sees the same map, matching world_state's existing
-        # broadcast-to-everyone treatment.
+        # broadcast-to-everyone treatment. The scene mood rides the same
+        # payload (WorldState.mood) - shown above the map since it can be
+        # set before any locations are registered.
+        lines = []
+        mood = self._world.get("mood")
+        if mood:
+            lines.append(f"[dim]Mood: {mood}[/dim]")
         location_map = self._world.get("location_map") or {}
         if not location_map:
-            return ""
+            return "\n".join(lines)
         current = self._world.get("location")
-        lines = ["[b]Map[/b]"]
+        lines.append("[b]Map[/b]")
         for name in sorted(location_map):
             marker = " [dim](here)[/dim]" if name == current else ""
             lines.append(f"{name}{marker}")
             lines.extend(f"  -> {exit_name}" for exit_name in location_map.get(name) or [])
         return "\n".join(lines).rstrip()
-
     def all_text(self) -> str:
         """Every tab's content concatenated - for tests/tooling that just
         need to check whether some text appears anywhere on the sheet,
