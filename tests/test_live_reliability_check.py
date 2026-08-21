@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from scripts.live_reliability_check import (
+    FIELD_PARITY_CHARACTER_CLASS,
+    FIELD_PARITY_SCENARIO,
     SCENARIO,
     aggregate_stats,
     run_scenario,
@@ -220,3 +222,127 @@ async def test_write_json_repeat_round_trips(tmp_path):
     assert len(report["runs"]) == 2
     assert len(report["runs"][0]) == len(SCENARIO)
     assert report["aggregate"]["mean_rate"] == 1.0
+
+
+# --- field-parity scenario (rest/notes/disposition/cast_spell) ---
+# Separate from SCENARIO above on purpose - see live_reliability_check.py's
+# module docstring and FIELD_PARITY_SCENARIO's own comment: never mixed
+# with the combat scenario, so its own historical numbers stay comparable.
+
+
+def _all_correct_field_parity_behaviors() -> list[dict]:
+    return [
+        {"updates": [{"target": "self", "hp_delta": -4}], "text_chunks": ["The dart bites in."]},
+        {"updates": [{"target": "self", "rest": "long"}], "text_chunks": ["A full night's rest."]},
+        {"updates": [{"target": "self", "cast_spell": "cure wounds"}], "text_chunks": ["A healing prayer."]},
+        {
+            "updates": [{"target": "pilgrim", "notes": "A grateful pilgrim seeking her family."}],
+            "text_chunks": ["She thanks you warmly."],
+        },
+        {"updates": [{"target": "figure", "disposition": "hostile"}], "text_chunks": ["The figure attacks."]},
+        {"updates": [], "text_chunks": ["The stars wheel overhead."]},
+    ]
+
+
+async def test_field_parity_scenario_scores_perfectly_when_every_field_is_set():
+    narrator = ScriptedNarrator(_all_correct_field_parity_behaviors())
+
+    results = await run_scenario(
+        narrator, scenario=FIELD_PARITY_SCENARIO, character_class=FIELD_PARITY_CHARACTER_CLASS
+    )
+
+    assert len(results) == len(FIELD_PARITY_SCENARIO)
+    assert all(r.correct for r in results)
+
+
+async def test_field_parity_rest_is_ambiguous_when_the_earlier_damage_call_never_landed():
+    # A "long rest" at already-full HP is a real no-op (server/state.py) -
+    # if the setup turn's own call was missed, the rest turn can't prove
+    # anything either way and shouldn't be penalized.
+    behaviors = _all_correct_field_parity_behaviors()
+    behaviors[0] = {"updates": [], "text_chunks": ["Nothing happens."]}
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(
+        narrator, scenario=FIELD_PARITY_SCENARIO, character_class=FIELD_PARITY_CHARACTER_CLASS
+    )
+
+    assert results[0].correct is False  # the missed self-damage call is still a real miss
+    assert results[1].correct is None  # but the rest turn itself is unscorable, not penalized
+
+
+async def test_field_parity_rest_missing_is_scored_incorrect_when_healing_was_possible():
+    behaviors = _all_correct_field_parity_behaviors()
+    behaviors[1] = {"updates": [], "text_chunks": ["Nothing happens."]}
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(
+        narrator, scenario=FIELD_PARITY_SCENARIO, character_class=FIELD_PARITY_CHARACTER_CLASS
+    )
+
+    assert results[1].correct is False
+
+
+async def test_field_parity_cast_spell_missing_is_scored_incorrect():
+    behaviors = _all_correct_field_parity_behaviors()
+    behaviors[2] = {"updates": [], "text_chunks": ["Nothing happens."]}
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(
+        narrator, scenario=FIELD_PARITY_SCENARIO, character_class=FIELD_PARITY_CHARACTER_CLASS
+    )
+
+    assert results[2].correct is False
+
+
+async def test_field_parity_note_missing_is_scored_incorrect():
+    behaviors = _all_correct_field_parity_behaviors()
+    behaviors[3] = {"updates": [], "text_chunks": ["She says nothing memorable."]}
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(
+        narrator, scenario=FIELD_PARITY_SCENARIO, character_class=FIELD_PARITY_CHARACTER_CLASS
+    )
+
+    assert results[3].correct is False
+
+
+async def test_field_parity_disposition_wrong_value_is_scored_incorrect():
+    behaviors = _all_correct_field_parity_behaviors()
+    behaviors[4] = {
+        "updates": [{"target": "figure", "disposition": "neutral"}],
+        "text_chunks": ["The figure watches, unreadable."],
+    }
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(
+        narrator, scenario=FIELD_PARITY_SCENARIO, character_class=FIELD_PARITY_CHARACTER_CLASS
+    )
+
+    assert results[4].correct is False
+
+
+async def test_field_parity_no_call_control_turn_still_scores():
+    narrator = ScriptedNarrator(_all_correct_field_parity_behaviors())
+
+    results = await run_scenario(
+        narrator, scenario=FIELD_PARITY_SCENARIO, character_class=FIELD_PARITY_CHARACTER_CLASS
+    )
+
+    assert results[5].correct is True
+
+
+async def test_write_json_records_the_scenario_name(tmp_path):
+    narrator = ScriptedNarrator(_all_correct_field_parity_behaviors())
+    results = await run_scenario(
+        narrator, scenario=FIELD_PARITY_SCENARIO, character_class=FIELD_PARITY_CHARACTER_CLASS
+    )
+
+    out_path = tmp_path / "field_parity_report.json"
+    write_json(results, "qwen2.5:7b", "ollama", None, out_path, "field-parity")
+
+    import json
+
+    report = json.loads(out_path.read_text())
+    assert report["scenario"] == "field-parity"
+    assert len(report["turns"]) == len(FIELD_PARITY_SCENARIO)
