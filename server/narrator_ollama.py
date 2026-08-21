@@ -74,14 +74,14 @@ MAX_TOOL_ROUNDS = 4
 # "should I call this?" becomes "fill in this field", a different problem
 # shape small models handle more reliably than tool-selection, evidenced
 # by real tool-call *attempts* jumping from 0-2/8 to 6-7/8 turns per run.
-# Deliberately a minimal first slice, not full update_character parity:
-# no lookup_rule support (the reliability harness's own scoring never
-# exercises it), no rest/notes/disposition/cast_spell fields - just enough
-# (target, hp_delta, add_condition) to validate the core hypothesis against
-# the harness's existing scenario, which only ever needs those three. Real
-# production sessions still lose access to those other update_character
-# fields while this is active - a real, known gap, not silently accepted;
-# see ROADMAP.md for what expanding schema parity would need.
+# Started as a minimal first slice (target, hp_delta, add_condition - just
+# enough to validate the core hypothesis against the reliability harness's
+# own scenario, which only ever needs those three) and has since grown
+# rest/notes/disposition/cast_spell to close the update_character parity
+# gap those first six fields left open - see ROADMAP.md. Still not full
+# parity: no lookup_rule support (the harness's scoring never exercises
+# it), and max_hp/add_item/magic_bonus/remove_item/remove_condition remain
+# uncovered - a real, known gap, not silently accepted.
 _OUTCOME_PROPERTIES = {
     "narration": {
         "type": "string",
@@ -106,6 +106,44 @@ _OUTCOME_PROPERTIES = {
     "add_condition": {
         "type": "string",
         "description": "A condition to apply (e.g. 'poisoned'), or an empty string if none.",
+    },
+    "rest": {
+        "type": "string",
+        "enum": ["short", "long", ""],
+        "description": (
+            "Set when the character/NPC rests for a meaningful stretch of time (camping "
+            "overnight, resting after a fight) instead of guessing hp_delta - the engine "
+            "computes the real amount healed. 'long' fully restores HP; 'short' restores "
+            "about half of what's missing. Empty string if not applicable. Don't combine "
+            "with a non-zero hp_delta in the same response."
+        ),
+    },
+    "notes": {
+        "type": "string",
+        "description": (
+            "A brief standing note about this character/NPC (personality, goal, "
+            "relationship to the party), replacing any previous note. Most useful on an "
+            "NPC's introduction or when the relationship meaningfully changes. Empty "
+            "string if not applicable."
+        ),
+    },
+    "disposition": {
+        "type": "string",
+        "enum": ["hostile", "neutral", "friendly", ""],
+        "description": (
+            "An NPC/monster's current attitude toward the party. Set on introduction if "
+            "clear from context, and update later if the relationship meaningfully "
+            "changes. Not meaningful for 'self' - empty string if not applicable."
+        ),
+    },
+    "cast_spell": {
+        "type": "string",
+        "description": (
+            "Set only when the acting character casts one of their own known spells (e.g. "
+            "'fire bolt', 'cure wounds') - the engine deducts the real spell slot "
+            "automatically. Only meaningful for the acting character, never an NPC target. "
+            "Empty string if no spell was cast."
+        ),
     },
 }
 
@@ -135,15 +173,24 @@ a character's or NPC's hp, inventory, or conditions that should have been record
 leave the other fields at their defaults."""
 
 
-def _missed_change_update(data: dict) -> dict:
-    """Builds the update_character-shaped dict from a MISSED_CHANGE_SCHEMA
-    response - shared by check_missed_change (which applies it) and
-    propose_correction (which hands it back for the player to confirm)."""
+def _outcome_update(data: dict) -> dict:
+    """Builds the update_character-shaped dict from any _OUTCOME_PROPERTIES-
+    shaped response - shared by _narrate_structured (a normal turn),
+    check_missed_change (which applies it), and propose_correction (which
+    hands it back for the player to confirm)."""
     update = {"target": data.get("target") or "self"}
     if data.get("hp_delta"):
         update["hp_delta"] = data["hp_delta"]
     if data.get("add_condition"):
         update["add_condition"] = data["add_condition"]
+    if data.get("rest"):
+        update["rest"] = data["rest"]
+    if data.get("notes"):
+        update["notes"] = data["notes"]
+    if data.get("disposition"):
+        update["disposition"] = data["disposition"]
+    if data.get("cast_spell"):
+        update["cast_spell"] = data["cast_spell"]
     return update
 
 
@@ -423,7 +470,16 @@ accordingly. `target` is whoever actually got hurt or changed, not simply whoeve
 the acting character attacks someone else and that other creature takes the damage, target is
 that NPC's name, never the acting character's own name or 'self'. Set mechanical_change to
 false (and leave the other fields at their defaults) for a turn with no real mechanical
-outcome. Never break character in `narration`."""
+outcome. When the character/NPC rests for a meaningful stretch (camping overnight, resting
+after a fight), set `rest` to 'short' or 'long' instead of guessing an hp_delta - the engine
+computes the real amount healed; don't combine rest with a non-zero hp_delta. When the acting
+character casts one of their own known spells, set `cast_spell` to its name - the engine
+deducts the real spell slot; still fill in hp_delta/add_condition separately for the spell's
+actual effect. When you introduce a new NPC worth remembering, or a recurring one's
+relationship to the party meaningfully changes, set `notes` (a sentence on personality/goal/
+relationship) and `disposition` (hostile/neutral/friendly) - these two can be the only real
+change on a turn, independent of mechanical_change. Leave rest/notes/disposition/cast_spell as
+empty strings when not applicable. Never break character in `narration`."""
 
 # Opt-in (few_shot_example, off by default - see OllamaNarrator.__init__),
 # a single worked example appended once to the base structured-output
@@ -471,8 +527,9 @@ now genuinely happened - its real result is given below. Respond with a single J
 matching the given schema - never prose outside that JSON. Write `narration` (3-5 sentences,
 open-ended prose, never a numbered/bulleted list) that matches the real roll result given to
 you - if it says failure, the character does not simply succeed anyway. Set `mechanical_change`
-and fill in `target`/`hp_delta`/`add_condition` the same way a normal turn would, now informed
-by whether the roll actually succeeded. Never break character."""
+and fill in `target`/`hp_delta`/`add_condition`/`rest`/`notes`/`disposition`/`cast_spell` the
+same way a normal turn would, now informed by whether the roll actually succeeded. Never break
+character."""
 
 
 class OllamaNarrator:
@@ -585,7 +642,7 @@ class OllamaNarrator:
             return False
         if not data.get("mechanical_change"):
             return False
-        apply_update(_missed_change_update(data))
+        apply_update(_outcome_update(data))
         return True
 
     async def propose_correction(self, narration: str, character_summary: str) -> dict | None:
@@ -612,7 +669,7 @@ class OllamaNarrator:
             return None
         if not data.get("mechanical_change"):
             return None
-        return _missed_change_update(data)
+        return _outcome_update(data)
 
     async def _narrate_structured(
         self,
@@ -719,13 +776,16 @@ class OllamaNarrator:
 
         yield data.get("narration", "")
 
-        if data.get("mechanical_change"):
-            update = {"target": data.get("target") or "self"}
-            if data.get("hp_delta"):
-                update["hp_delta"] = data["hp_delta"]
-            if data.get("add_condition"):
-                update["add_condition"] = data["add_condition"]
-            apply_update(update)
+        # rest/notes/disposition/cast_spell can each be the only real change
+        # on a turn (an NPC introduction with just a note, a rest with no
+        # separate hp_delta) - mechanical_change's own schema description
+        # only promises "HP, inventory, or conditions", so gating on it
+        # alone would silently drop those. Checked independently, same
+        # falsy-omission style as hp_delta/add_condition above.
+        if data.get("mechanical_change") or any(
+            data.get(field) for field in ("rest", "notes", "disposition", "cast_spell")
+        ):
+            apply_update(_outcome_update(data))
 
         if self._world_updates and data.get("world_change") and update_world is not None:
             world_update: dict = {}

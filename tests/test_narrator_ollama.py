@@ -356,6 +356,153 @@ async def test_structured_narrate_omits_zero_hp_delta_and_empty_condition():
     assert calls == [{"target": "self"}]
 
 
+async def test_structured_narrate_omits_empty_rest_notes_disposition_cast_spell():
+    # Same "schema-conformant but nothing to add" omission as the hp_delta/
+    # add_condition test above, extended to the four fields added to close
+    # ROADMAP.md's structured-output schema gap.
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "You steady your stance.",
+        "mechanical_change": True,
+        "target": "self",
+        "rest": "",
+        "notes": "",
+        "disposition": "",
+        "cast_spell": "",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    _ = [c async for c in narrator.narrate([], "{}", "I brace myself", record_apply_update)]
+
+    assert calls == [{"target": "self"}]
+
+
+async def test_structured_narrate_applies_rest_notes_disposition_cast_spell():
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "The wizard rests by the fire, then whispers an old prayer over the wounded scout.",
+        "mechanical_change": True,
+        "target": "scout",
+        "rest": "long",
+        "notes": "A grateful, loyal scout who now owes the party a favor.",
+        "disposition": "friendly",
+        "cast_spell": "cure wounds",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    _ = [c async for c in narrator.narrate([], "{}", "I tend to the scout", record_apply_update)]
+
+    assert calls == [
+        {
+            "target": "scout",
+            "rest": "long",
+            "notes": "A grateful, loyal scout who now owes the party a favor.",
+            "disposition": "friendly",
+            "cast_spell": "cure wounds",
+        }
+    ]
+
+
+async def test_structured_narrate_notes_alone_triggers_apply_update_without_mechanical_change():
+    # notes/disposition/rest/cast_spell can each be the only real change on
+    # a turn - mechanical_change's own schema description only promises
+    # "HP, inventory, or conditions", so a model correctly leaving it false
+    # for an NPC-introduction-only turn must still get its note recorded.
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "The old innkeeper eyes you warily but says nothing more.",
+        "mechanical_change": False,
+        "target": "innkeeper",
+        "notes": "Suspicious of strangers, but not hostile.",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    _ = [c async for c in narrator.narrate([], "{}", "I greet the innkeeper", record_apply_update)]
+
+    assert calls == [{"target": "innkeeper", "notes": "Suspicious of strangers, but not hostile."}]
+
+
+async def test_structured_narrate_disposition_alone_triggers_apply_update_without_mechanical_change():
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "The bandit lowers his sword and raises his hands.",
+        "mechanical_change": False,
+        "target": "bandit",
+        "disposition": "friendly",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    _ = [c async for c in narrator.narrate([], "{}", "I offer the bandit mercy", record_apply_update)]
+
+    assert calls == [{"target": "bandit", "disposition": "friendly"}]
+
+
+async def test_structured_narrate_rest_alone_triggers_apply_update_without_mechanical_change():
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "You settle in by the fire and sleep through the night.",
+        "mechanical_change": False,
+        "target": "self",
+        "rest": "long",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    _ = [c async for c in narrator.narrate([], "{}", "I make camp for the night", record_apply_update)]
+
+    assert calls == [{"target": "self", "rest": "long"}]
+
+
+async def test_structured_narrate_cast_spell_alone_triggers_apply_update_without_mechanical_change():
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "You mutter the words and a mote of light flickers to life over your palm.",
+        "mechanical_change": False,
+        "target": "self",
+        "cast_spell": "light",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    _ = [c async for c in narrator.narrate([], "{}", "I cast light", record_apply_update)]
+
+    assert calls == [{"target": "self", "cast_spell": "light"}]
+
+
 async def test_structured_narrate_roll_requests_off_ignores_roll_fields_entirely():
     # OLLAMA_ROLL_REQUESTS defaults off - even a payload that (implausibly,
     # since the off-path schema doesn't offer the field at all) sets
@@ -833,6 +980,38 @@ async def test_check_missed_change_applies_a_real_correction():
     call = narrator._client.calls[0]
     assert call["format"] == MISSED_CHANGE_SCHEMA
     assert "narration" not in call["format"]["properties"]
+
+
+async def test_check_missed_change_applies_rest_notes_disposition_cast_spell():
+    # Same _outcome_update mapping the main narrate() path uses (see
+    # test_structured_narrate_applies_rest_notes_disposition_cast_spell) -
+    # confirms it's genuinely shared, not a second copy that could drift.
+    narrator = make_structured_narrator()
+    response = FakeChatResponse(
+        json.dumps(
+            {
+                "mechanical_change": True,
+                "target": "self",
+                "rest": "short",
+                "notes": "Exhausted but resolute.",
+                "disposition": "",
+                "cast_spell": "cure wounds",
+            }
+        )
+    )
+    narrator._client = FakeOllamaClient([response])
+
+    received_updates = []
+
+    def apply_update(update: dict) -> str:
+        received_updates.append(update)
+        return "Applied."
+
+    await narrator.check_missed_change("You catch your breath and murmur a healing prayer.", "{}", apply_update)
+
+    assert received_updates == [
+        {"target": "self", "rest": "short", "notes": "Exhausted but resolute.", "cast_spell": "cure wounds"}
+    ]
 
 
 async def test_check_missed_change_returns_false_when_the_dm_declines_to_correct():
