@@ -579,6 +579,41 @@ def _class_features_for(class_entry: dict | None, level: int) -> list[str]:
     return feats
 
 
+NPC_NOTES_CONTEXT_MAX_CHARS = 80
+
+
+def _npc_roster(session: Session) -> str:
+    """One bounded line per living tracked NPC, appended to the DM's
+    world_summary so dispositions/notes/wounds stay visible even after the
+    NPC has scrolled out of the rolling history window - the structured
+    subset of ROADMAP.md item 1's memory blind spot, cheap because it's
+    real data rather than prose needing a summary. Without this,
+    `disposition`'s own stated purpose ("stay consistent against turn to
+    turn") only ever worked while the NPC was still in recent history.
+    Dead NPCs are excluded - gone from active play. "" when there's
+    nothing living to report, the same "don't render the absent default"
+    convention WorldState.narrator_context() follows.
+    # ponytail: no cap on tracked-NPC count; a session that introduces
+    dozens of NPCs would grow this block linearly - trim by recency if
+    that's ever observed in play."""
+    lines = []
+    for npc in session.npcs.values():
+        if npc.hp <= 0:
+            continue
+        bits = [f"HP {npc.hp}/{npc.max_hp}"]
+        if npc.disposition != "neutral":
+            bits.append(npc.disposition)
+        if npc.conditions:
+            bits.append(", ".join(sorted(npc.conditions)))
+        line = f"- {npc.name}: " + ", ".join(bits)
+        if npc.notes:
+            line += f" - {npc.notes[:NPC_NOTES_CONTEXT_MAX_CHARS]}"
+        lines.append(line)
+    if not lines:
+        return ""
+    return "Tracked NPCs:\n" + "\n".join(lines)
+
+
 def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     """The owner's own full sheet - everything model_dump() already has,
     plus two fields that exist but were never actually sent: real class
@@ -1850,6 +1885,10 @@ class GameEngine:
             )
 
         buffer = ""
+        world_summary = self._session.world.narrator_context()
+        npc_roster = _npc_roster(self._session)
+        if npc_roster:
+            world_summary = f"{world_summary}\n{npc_roster}" if world_summary else npc_roster
         async for chunk in self._dm.narrate(
             history=self._session.history,
             character_summary=character.model_dump_json(),
@@ -1857,7 +1896,7 @@ class GameEngine:
             apply_update=apply_update,
             request_roll=request_roll,
             update_world=update_world,
-            world_summary=self._session.world.narrator_context(),
+            world_summary=world_summary,
         ):
             buffer += chunk
             await self._broadcast(self._log_envelope("narration", chunk, done=False))

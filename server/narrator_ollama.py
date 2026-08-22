@@ -743,7 +743,12 @@ class OllamaNarrator:
         # own docstring (server/narrator.py) for why this exists at all:
         # complete_objective needs an exact prior text match, and recalling
         # that correctly from several turns back measured at 0% (ROADMAP.md).
-        if self._world_updates and world_summary:
+        # world_summary now also carries the tracked-NPC roster
+        # (_npc_roster, server/engine.py) - grounded context the DM should
+        # see regardless of whether update_world tracking is on, and an
+        # empty summary still means no section at all, so a session with
+        # world updates off behaves exactly as before unless NPCs exist.
+        if world_summary:
             prompt += f"World state:\n{world_summary}\n\n"
         prompt += f"Player action: {action_text}"
         messages: list[dict] = [
@@ -777,7 +782,7 @@ class OllamaNarrator:
             roll_result_text = request_roll(roll_update)
 
             followup_prompt = f"Character:\n{character_summary}\n\n"
-            if self._world_updates and world_summary:
+            if world_summary:
                 followup_prompt += f"World state:\n{world_summary}\n\n"
             followup_prompt += f"Player action: {action_text}\n\nRoll result: {roll_result_text}"
             followup_schema = _with_world_fields(STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA, self._world_updates)

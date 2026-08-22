@@ -744,7 +744,7 @@ async def test_structured_narrate_includes_world_summary_when_given():
     assert "Find the missing goat" in call["messages"][-1]["content"]
 
 
-async def test_structured_narrate_omits_world_summary_when_world_updates_is_off():
+async def test_structured_narrate_includes_the_summary_even_when_world_updates_is_off():
     # Only meaningful when world_updates is actually on - passing it
     # otherwise would describe schema fields this call doesn't even
     # expose, pure noise for a narrator that isn't tracking world state.
@@ -754,8 +754,23 @@ async def test_structured_narrate_omits_world_summary_when_world_updates_is_off(
 
     _ = [
         c async for c in narrator.narrate(
-            [], "{}", "I wait", noop_apply_update, world_summary="Current location: Millbrook"
+            [], "{}", "I wait", noop_apply_update, world_summary="Tracked NPCs:\n- Bandit: HP 3/10"
         )
+    ]
+
+    call = narrator._client.calls[0]
+    assert "World state:" in call["messages"][-1]["content"]
+    assert "Bandit: HP 3/10" in call["messages"][-1]["content"]
+    assert "world_change" not in call["format"]["properties"]
+
+
+async def test_structured_narrate_empty_world_summary_sends_no_world_state_section():
+    narrator = OllamaNarrator(model="m", rules=RulesIndex.load_default(), structured_output=True)
+    payload = {"narration": "Nothing changes.", "mechanical_change": False}
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    _ = [
+        c async for c in narrator.narrate([], "{}", "I wait", noop_apply_update, world_summary="")
     ]
 
     call = narrator._client.calls[0]

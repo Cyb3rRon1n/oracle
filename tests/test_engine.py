@@ -3357,6 +3357,61 @@ async def test_narrate_receives_the_current_world_state_as_a_summary():
     assert dm.world_summaries[-1] == "Current location: Millbrook\nActive objectives:\n- Find the missing goat"
 
 
+async def test_narrate_world_summary_includes_the_tracked_npc_roster():
+    # _npc_roster rides world_summary so dispositions/notes/wounds stay
+    # visible to the DM past the rolling history window.
+    dm = UpdateSequenceDM(
+        [{"target": "bandit", "max_hp": 10, "hp_delta": -7,
+          "notes": "A greedy toll-keeper.", "disposition": "hostile"}]
+    )
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the bandit"},
+    ))
+
+    session.world.apply_update({"location": "Millbrook"})
+    engine._dm = recorder = OpeningSceneDM()
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    summary = recorder.world_summaries[-1]
+    assert summary.startswith("Current location: Millbrook\nTracked NPCs:")
+    assert "- bandit: HP 3/10, hostile - A greedy toll-keeper." in summary
+
+
+async def test_tracked_npc_roster_excludes_the_dead_and_omits_neutral_disposition():
+    dm = UpdateSequenceDM([
+        {"target": "bandit", "max_hp": 6, "hp_delta": -6},
+        {"target": "guard", "max_hp": 8, "hp_delta": -2, "add_condition": "poisoned"},
+        {"target": "innkeeper", "disposition": "friendly",
+         "notes": "w" * 100},
+    ])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "Chaos erupts in the tavern"},
+    ))
+
+    engine._dm = recorder = OpeningSceneDM()
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    summary = recorder.world_summaries[-1]
+    assert "bandit" not in summary, "a dead NPC has left active play"
+    assert "- guard: HP 6/8, poisoned" in summary
+    assert "- innkeeper: HP 10/10, friendly" in summary
+    assert "w" * 100 not in summary, "notes are truncated in the roster"
+
+
 async def test_opening_scene_prompt_is_grounded_in_the_world_bible():
     # The near-death/transport/Guardian-greeting premise is composed from
     # real setting data (server/lore), not left for the DM to invent (and
