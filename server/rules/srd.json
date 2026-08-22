@@ -178,6 +178,113 @@
         "Greatclub: Melee Weapon Attack: +6 to hit, reach 5 ft., one target. Hit: 13 (2d8+4) bludgeoning damage.",
         "Javelin: Melee or Ranged Weapon Attack: +6 to hit, reach 5 ft. or range 30/120 ft., one target. Hit: 11 (2d6+4) piercing damage."
       ]
+    },
+    "hobgoblin": {
+      "name": "Hobgoblin",
+      "size": "Medium",
+      "type": "humanoid (goblinoid)",
+      "ac": 18,
+      "hp": "11 (2d8+2)",
+      "speed": "30 ft.",
+      "stats": {"str": 16, "dex": 12, "con": 13, "int": 10, "wis": 10, "cha": 9},
+      "senses": "darkvision 60 ft., passive Perception 10",
+      "cr": "1/2",
+      "traits": [
+        "Martial Advantage: Once per turn, the hobgoblin can deal an extra 7 (2d6) damage to a creature it hits with a weapon attack if that creature is within 5 feet of an ally of the hobgoblin that isn't incapacitated."
+      ],
+      "actions": [
+        "Longsword: Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d8+1) slashing damage.",
+        "Javelin: Melee or Ranged Weapon Attack: +3 to hit, reach 5 ft. or range 30/120 ft., one target. Hit: 4 (1d6+1) piercing damage."
+      ]
+    },
+    "gnoll": {
+      "name": "Gnoll",
+      "size": "Medium",
+      "type": "humanoid (gnoll)",
+      "ac": 15,
+      "hp": "22 (5d8)",
+      "speed": "30 ft.",
+      "stats": {"str": 14, "dex": 12, "con": 11, "int": 6, "wis": 10, "cha": 7},
+      "senses": "darkvision 60 ft., passive Perception 10",
+      "cr": "1/2",
+      "traits": [
+        "Rampage: When the gnoll reduces a creature to 0 hit points with a melee attack on its turn, it can take a bonus action to move up to half its speed and make a bite attack."
+      ],
+      "actions": [
+        "Bite: Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 4 (1d4+2) piercing damage.",
+        "Spear: Melee or Ranged Weapon Attack: +4 to hit, reach 5 ft. or range 20/60 ft., one target. Hit: 5 (1d6+2) piercing damage."
+      ]
+    },
+    "ghoul": {
+      "name": "Ghoul",
+      "size": "Medium",
+      "type": "undead",
+      "ac": 12,
+      "hp": "22 (5d8)",
+      "speed": "30 ft.",
+      "stats": {"str": 13, "dex": 15, "con": 10, "int": 7, "wis": 10, "cha": 6},
+      "immunities": "poison",
+      "senses": "darkvision 60 ft., passive Perception 10",
+      "cr": "1",
+      "actions": [
+        "Bite: Melee Weapon Attack: +2 to hit, reach 5 ft., one creature. Hit: 4 (1d6+1) piercing damage. If the target is a creature other than an elf or undead, it must succeed on a DC 10 Constitution saving throw or be paralyzed for 1 minute.",
+        "Claws: Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 7 (2d4+2) slashing damage. If the target is a creature other than an elf or undead, it must succeed on a DC 10 Constitution saving throw or be paralyzed for 1 minute."
+      ]
+    },
+    "harpy": {
+      "name": "Harpy",
+      "size": "Medium",
+      "type": "monstrosity",
+      "ac": 11,
+      "hp": "38 (7d10)",
+      "speed": "20 ft., fly 40 ft.",
+      "stats": {"str": 12, "dex": 13, "con": 12, "int": 7, "wis": 10, "cha": 13},
+      "senses": "passive Perception 10",
+      "cr": "1",
+      "actions": [
+        "Multiattack: The harpy makes two claw attacks.",
+        "Claws: Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 6 (2d4+1) slashing damage.",
+        "Luring Song: The harpy sings a magical melody. Every humanoid and giant within 300 feet that can hear the song must succeed on a DC 11 Wisdom saving throw or be charmed until the song ends; a charmed target flies or moves toward the harpy against its will."
+      ]
+    },
+    "owlbear": {
+      "name": "Owlbear",
+      "size": "Large",
+      "type": "monstrosity",
+      "ac": 13,
+      "hp": "59 (7d10+21)",
+      "speed": "40 ft.",
+      "stats": {"str": 20, "dex": 12, "con": 17, "int": 3, "wis": 12, "cha": 7},
+      "senses": "darkvision 60 ft., passive Perception 13",
+      "cr": "3",
+      "traits": [
+        "Keen Sight and Smell: The owlbear has advantage on Wisdom (Perception) checks that rely on sight or smell."
+      ],
+      "actions": [
+        "Multiattack: The owlbear makes two attacks: one with its beak and one with its claws.",
+        "Beak: Melee Weapon Attack: +7 to hit, reach 5 ft., one creature. Hit: 10 (1d10+5) piercing damage.",
+        "Claws: Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 14 (2d8+5) slashing damage."
+      ]
+    },
+    "troll": {
+      "name": "Troll",
+      "size": "Large",
+      "type": "giant",
+      "ac": 15,
+      "hp": "84 (8d10+40)",
+      "speed": "30 ft.",
+      "stats": {"str": 18, "dex": 13, "con": 20, "int": 7, "wis": 9, "cha": 7},
+      "senses": "darkvision 60 ft., passive Perception 9",
+      "cr": "5",
+      "traits": [
+        "Keen Smell: The troll has advantage on Wisdom (Perception) checks that rely on smell.",
+        "Regeneration: The troll regains 10 hit points at the start of its turn if it has at least 1 hit point. If the troll takes acid or fire damage, this trait doesn't function at the start of the troll's next turn. The troll dies only if it starts its turn with 0 hit points and doesn't regenerate."
+      ],
+      "actions": [
+        "Multiattack: The troll makes three attacks: one with its bite and two with its claws.",
+        "Bite: Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 7 (1d6+4) piercing damage.",
+        "Claw: Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 11 (2d6+4) slashing damage."
+      ]
     }
   },
   "spells": {
@@ -352,6 +459,70 @@
       "classes": ["cleric"],
       "damage": "1d8 force",
       "attack": true
+    },
+    "sleep": {
+      "name": "Sleep",
+      "level": 1,
+      "school": "Enchantment",
+      "casting_time": "1 action",
+      "range": "90 feet",
+      "components": "V, S, M (a pinch of fine sand, rose petals, or a cricket)",
+      "duration": "1 minute",
+      "description": "This spell sends creatures into a magical slumber. Roll 6d8; the total is how many hit points of creatures this spell can put to sleep. Starting with the creature that has the lowest current hit points, each creature affected by this spell falls unconscious until the spell ends, the sleeper takes damage, or someone uses an action to shake the sleeper awake.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, roll an additional 2d8 for each slot level above 1st.",
+      "classes": ["wizard"]
+    },
+    "charm_person": {
+      "name": "Charm Person",
+      "level": 1,
+      "school": "Enchantment",
+      "casting_time": "1 action",
+      "range": "30 feet",
+      "components": "V, S",
+      "duration": "1 hour",
+      "description": "You attempt to charm a humanoid you can see within range. It must succeed on a Wisdom saving throw or be charmed by you for the duration. The charmed creature regards you as a friendly acquaintance; when the spell ends, it knows it was charmed by you.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, you can target one additional humanoid for each slot level above 1st.",
+      "classes": ["wizard"],
+      "save_ability": "wis"
+    },
+    "thunderwave": {
+      "name": "Thunderwave",
+      "level": 1,
+      "school": "Evocation",
+      "casting_time": "1 action",
+      "range": "Self (15-foot cube)",
+      "components": "V, S",
+      "duration": "Instantaneous",
+      "description": "A wave of thunderous force sweeps out from you. Each creature in a 15-foot cube originating from you must make a Constitution saving throw. On a failed save, a creature takes 2d8 thunder damage and is pushed 10 feet away from you. On a successful save, the creature takes half as much damage and isn't pushed.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, the damage increases by 1d8 for each slot level above 1st.",
+      "classes": ["wizard"],
+      "damage": "2d8 thunder",
+      "save_ability": "con"
+    },
+    "inflict_wounds": {
+      "name": "Inflict Wounds",
+      "level": 1,
+      "school": "Necromancy",
+      "casting_time": "1 action",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "Instantaneous",
+      "description": "Make a melee spell attack against a creature you can reach. On a hit, the target takes 3d10 necrotic damage.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, the damage increases by 1d10 for each slot level above 1st.",
+      "classes": ["cleric"],
+      "damage": "3d10 necrotic",
+      "attack": true
+    },
+    "shield_of_faith": {
+      "name": "Shield of Faith",
+      "level": 1,
+      "school": "Abjuration",
+      "casting_time": "1 bonus action",
+      "range": "60 feet",
+      "components": "V, S, M (a small parchment with a bit of holy text written on it)",
+      "duration": "Concentration, up to 10 minutes",
+      "description": "A shimmering field appears around a creature of your choice within range, granting it a +2 bonus to AC for the duration.",
+      "classes": ["cleric"]
     }
   },
   "conditions": {

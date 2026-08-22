@@ -152,9 +152,12 @@ CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
 CLASS_KNOWN_SPELLS: dict[str, list[str]] = {
     "wizard": [
         "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
-        "burning_hands", "misty_step",
+        "burning_hands", "misty_step", "sleep", "charm_person", "thunderwave",
     ],
-    "cleric": ["sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon"],
+    "cleric": [
+        "sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon",
+        "inflict_wounds", "shield_of_faith",
+    ],
 }
 
 # A lightweight session-zero choice (Session.content_preference,

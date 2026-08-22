@@ -239,7 +239,7 @@ def test_build_starting_character_gives_wizard_real_known_spells_and_slots():
 
     assert sheet.known_spells == [
         "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
-        "burning_hands", "misty_step",
+        "burning_hands", "misty_step", "sleep", "charm_person", "thunderwave",
     ]
     assert sheet.spell_slots == {"1": 2}
     assert sheet.max_spell_slots == {"1": 2}
@@ -250,7 +250,10 @@ def test_build_starting_character_gives_cleric_real_known_spells_and_slots():
     rules = RulesIndex.load_default()
     sheet = build_starting_character("p1", "Fenwick", "cleric", rules)
 
-    assert sheet.known_spells == ["sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon"]
+    assert sheet.known_spells == [
+        "sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon",
+        "inflict_wounds", "shield_of_faith",
+    ]
     assert sheet.spell_slots == {"1": 2}
 
 
@@ -261,6 +264,19 @@ def test_build_starting_character_gives_a_non_caster_no_spells():
     assert sheet.known_spells == []
     assert sheet.spell_slots == {}
     assert sheet.max_spell_slots == {}
+
+
+def test_expanded_monster_entries_resolve_to_real_xp_and_ac():
+    # The 2026-08-21 SRD batch (hobgoblin/troll/...) - every entry must
+    # resolve via the real lookup path, map its CR to a real XP award
+    # (locks the cr strings against typos), and carry an AC that an
+    # introduced NPC would copy.
+    rules = RulesIndex.load_default()
+    for name in ("hobgoblin", "gnoll", "ghoul", "harpy", "owlbear", "troll"):
+        entry = rules.get_entry("monster", name)
+        assert entry is not None, f"missing monster {name}"
+        assert "ac" in entry, name
+        assert rules.xp_for_cr(entry["cr"]), f"{name}: CR '{entry['cr']}' has no XP"
 
 
 def test_build_starting_character_applies_race_ability_bonus_and_display_name():
@@ -2684,6 +2700,30 @@ async def test_request_roll_spell_resolves_spiritual_weapon_as_an_attack():
     assert payload["dice"] == "1d8"
     assert payload["damage_type"] == "force"
     assert payload["ability"] == "wis"  # cleric's real spellcasting ability
+    assert payload["roll_kind"] == "attack"
+
+
+async def test_request_roll_spell_resolves_inflict_wounds_as_an_attack():
+    # inflict_wounds (2026-08-21 SRD expansion, cleric) mirrors
+    # spiritual_weapon's own attack-based shape - real dice/damage/
+    # ability resolution, not just that the data loads.
+    dm = RequestRollDM({"dice": "1d20", "spell": "inflict_wounds"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "cleric", name="Fenwick")
+
+    with patch("server.dice.random.randint", return_value=10):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I channel necrotic power into my touch"},
+        ))
+
+    results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
+    payload = results[-1][2]
+    assert payload["spell"] == "Inflict Wounds"
+    assert payload["dice"] == "3d10"
+    assert payload["damage_type"] == "necrotic"
+    assert payload["ability"] == "wis"
     assert payload["roll_kind"] == "attack"
 
 
