@@ -384,6 +384,29 @@
         "Fighting Style: Choose a fighting style specialty.",
         "Second Wind: On your turn, you can use a bonus action to regain hit points equal to 1d10 + your fighter level. Once used, you must finish a short or long rest before using it again."
       ],
+      "features_by_level": {
+        "2": [
+          "Action Surge: You can take one additional action on your turn. Once used, you must finish a short or long rest before using it again."
+        ],
+        "5": [
+          "Extra Attack: You can attack twice instead of once whenever you take the Attack action on your turn."
+        ],
+        "9": [
+          "Indomitable: You can reroll a saving throw that you fail and must use the new roll. Once used, you must finish a long rest before using it again."
+        ],
+        "11": [
+          "Extra Attack Improvement: Your Extra Attack now lets you attack three times instead of two."
+        ],
+        "13": [
+          "Indomitable Improvement: You can use Indomitable twice per long rest instead of once."
+        ],
+        "17": [
+          "Indomitable Improvement: You can use Indomitable three times per long rest instead of twice."
+        ],
+        "20": [
+          "Extra Attack Improvement: Your Extra Attack now lets you attack four times instead of three."
+        ]
+      },
       "saving_throws": "Strength, Constitution"
     },
     "wizard": {
@@ -393,6 +416,14 @@
         "Spellcasting: You can cast wizard spells using Intelligence as your spellcasting ability.",
         "Arcane Recovery: Once per day when you finish a short rest, you can recover expended spell slots with a combined level equal to or less than half your wizard level (rounded up)."
       ],
+      "features_by_level": {
+        "18": [
+          "Spell Mastery: Choose a 1st-level wizard spell and a 2nd-level wizard spell you know; you can cast each at its lowest level without expending a spell slot, regaining the use after a long rest."
+        ],
+        "20": [
+          "Signature Spells: Choose two 3rd-level wizard spells you know; you can cast each once without expending a spell slot, regaining the use after a long rest."
+        ]
+      },
       "saving_throws": "Intelligence, Wisdom"
     },
     "rogue": {
@@ -403,6 +434,32 @@
         "Sneak Attack: Once per turn, deal an extra 1d6 damage to a creature you hit with an attack if you have advantage, or another enemy of the target is within 5 feet of it.",
         "Thieves' Cant: You know this secret mix of dialect, jargon, and code."
       ],
+      "features_by_level": {
+        "2": [
+          "Cunning Action: You can take a bonus action on each of your turns in combat to Dash, Disengage, or Hide."
+        ],
+        "5": [
+          "Uncanny Dodge: When an attacker that you can see hits you with an attack, you can use your reaction to halve the attack's damage against you."
+        ],
+        "7": [
+          "Evasion: You can nimbly dodge out of the way of certain area effects; when you succeed on a Dexterity saving throw to take only half damage, you instead take no damage."
+        ],
+        "11": [
+          "Reliable Talent: Treat a d20 roll of 9 or lower as a 10 for ability checks where you add your proficiency bonus."
+        ],
+        "14": [
+          "Blindsense: You can sense hidden or invisible creatures within 10 feet of you."
+        ],
+        "15": [
+          "Slippery Mind: You gain proficiency in Wisdom saving throws."
+        ],
+        "18": [
+          "Elusive: No attack roll can have advantage against you while you aren't incapacitated."
+        ],
+        "20": [
+          "Stroke of Luck: Once per long rest, turn a miss into a hit, or treat an ability check failure as a roll of 20."
+        ]
+      },
       "saving_throws": "Dexterity, Intelligence"
     },
     "cleric": {
@@ -412,6 +469,39 @@
         "Spellcasting: You can cast cleric spells using Wisdom as your spellcasting ability.",
         "Divine Domain: Choose a domain related to your deity, granting domain spells and features."
       ],
+      "features_by_level": {
+        "2": [
+          "Channel Divinity: You gain a pool of divine effects fueled by Channel Divinity, usable once per short or long rest.",
+          "Turn Undead: As an action, present your holy symbol and force each undead of your choice within 30 feet to spend its turns trying to move away from you."
+        ],
+        "5": [
+          "Destroy Undead: Undead turned by you automatically die if they have a challenge rating of 1/2 or lower."
+        ],
+        "6": [
+          "Channel Divinity Improvement: You can use Channel Divinity twice per rest instead of once."
+        ],
+        "8": [
+          "Destroy Undead Improvement: Destroy Undead now destroys turned undead of challenge rating 1 or lower."
+        ],
+        "10": [
+          "Divine Intervention: You call upon your deity for divine intervention; roll percentile dice against a success chance equal to your cleric level. On a success, the deity intervenes and the ability is regained only after a week."
+        ],
+        "11": [
+          "Destroy Undead Improvement: Destroy Undead now destroys turned undead of challenge rating 2 or lower."
+        ],
+        "14": [
+          "Destroy Undead Improvement: Destroy Undead now destroys turned undead of challenge rating 3 or lower."
+        ],
+        "17": [
+          "Destroy Undead Improvement: Destroy Undead now destroys turned undead of challenge rating 4 or lower."
+        ],
+        "18": [
+          "Channel Divinity Improvement: You can use Channel Divinity three times per rest instead of twice."
+        ],
+        "20": [
+          "Divine Intervention Improvement: Your calls for Divine Intervention succeed automatically, no roll required."
+        ]
+      },
       "saving_throws": "Wisdom, Charisma"
     }
   },

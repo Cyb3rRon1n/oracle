@@ -556,12 +556,32 @@ def _public_character_view(character: CharacterSheet) -> dict:
     }
 
 
+def _class_features_for(class_entry: dict | None, level: int) -> list[str]:
+    """Every class feature a character has earned through `level` -
+    srd.json's own level_1_features plus each features_by_level entry at
+    every later level, accumulated in order. Derived from (class, level)
+    on every view build rather than stored on the sheet: the same real
+    data always produces the same features, so there's no state to
+    persist or migrate and a level-up automatically reveals what it
+    granted. Levels whose only content is a subclass choice or an ASI
+    have no entry in srd.json - ASI math is already applied separately,
+    and subclasses are deliberately out of scope (same call the race
+    system made about subraces)."""
+    if class_entry is None:
+        return []
+    feats = list(class_entry.get("level_1_features", []))
+    by_level = class_entry.get("features_by_level", {})
+    for lvl in range(2, level + 1):
+        feats.extend(by_level.get(str(lvl), []))
+    return feats
+
+
 def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     """The owner's own full sheet - everything model_dump() already has,
     plus two fields that exist but were never actually sent: real class
-    features (server/rules/srd.json's own level_1_features, e.g. a
-    wizard's "Arcane Recovery" - SRD data that's been in this dataset all
-    along, just never surfaced past lookup_rule) and a persistent skill-
+    features (_class_features_for, above: srd.json's own per-class feature
+    text accumulated through the character's current level, so a level-up
+    automatically adds what it granted) and a persistent skill-
     proficiency list (CLASS_SKILL_PROFICIENCIES, which already drives real
     roll bonuses but previously only ever showed up transiently in a
     roll's own label text, never as something a player could just look
@@ -573,7 +593,7 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     race_entry = rules.get_entry("race", character.race) if character.race else None
     return {
         **character.model_dump(),
-        "class_features": list((class_entry or {}).get("level_1_features", [])),
+        "class_features": _class_features_for(class_entry, character.level),
         "racial_traits": list((race_entry or {}).get("traits", [])),
         "skill_proficiencies": list(
             CLASS_SKILL_PROFICIENCIES.get(character.character_class.strip().lower(), ())

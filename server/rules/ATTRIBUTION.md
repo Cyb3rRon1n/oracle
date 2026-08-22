@@ -65,6 +65,21 @@ would have been a real, known correctness bug (the exact trap this file's
 own "Deliberately did not add heavier armor" note, prior to this
 expansion, existed specifically to avoid).
 
+## Class progression coverage (2026-08-21)
+
+Each `classes` entry now carries a `features_by_level` table alongside its
+existing `level_1_features` - real SRD 5.1 class features at the level they
+are gained, for all four classes (levels 1-20). Two deliberate scoping
+choices, not oversights:
+- **Subclass features are omitted.** Levels whose only content is a
+  subclass choice (Fighter's Martial Archetype, Wizard's Arcane Tradition,
+  Rogue's Roguish Archetype) have no entry - Oracle has no subclass system,
+  the same call the race system made about subraces. Cleric's Divine Domain
+  stays as an informational line in `level_1_features`, where it already was.
+- **ASI levels are omitted** - Ability Score Improvement is applied by
+  `server/engine.py`'s own ASI math (`ASI_LEVELS`), not re-documented as a
+  feature string.
+
 ## Race coverage (2026-08-11, subraces added the same day)
 
 `races` covers the SRD's four core playable races - Human, Elf, Dwarf,
@@ -77,6 +92,5 @@ Each subrace entry is self-contained - its `ability_score_increase`/
 with the subrace's, rather than requiring `server/engine.py` to stack two
 separate lookups at character-creation time.
 
-Expanding coverage further (more monsters, spells, full class
-progressions) is future work; any addition should stay within
-SRD-licensed content.
+Expanding coverage further (more monsters, spells) is future work; any
+addition should stay within SRD-licensed content.

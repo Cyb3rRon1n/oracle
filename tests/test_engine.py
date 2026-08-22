@@ -1395,6 +1395,65 @@ async def test_owner_character_view_handles_a_blank_or_unrecognized_class():
     assert view["skill_proficiencies"] == []
 
 
+async def test_owner_character_view_class_features_grow_with_level():
+    # srd.json's features_by_level accumulates through the character's own
+    # level - derived at view time from (class, level), so a real level-up
+    # automatically reveals what it granted.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Thrain", "character_class": "fighter"},
+    ))
+    character = session.characters[player_id]
+
+    feats = " ".join(_owner_character_view(character, engine._rules)["class_features"])
+    assert "Second Wind" in feats
+    assert "Action Surge" not in feats
+
+    character.gain_xp(300, engine._rules.xp_thresholds())  # -> level 2
+    feats = " ".join(_owner_character_view(character, engine._rules)["class_features"])
+    assert "Action Surge" in feats
+    assert "Extra Attack" not in feats
+
+    character.gain_xp(6200, engine._rules.xp_thresholds())  # -> level 5
+    assert character.level == 5
+    feats = " ".join(_owner_character_view(character, engine._rules)["class_features"])
+    assert "Extra Attack" in feats
+    assert "Indomitable" not in feats  # level 9
+
+
+async def test_owner_character_view_multi_level_jump_includes_every_feature_through_the_new_level():
+
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Mirna", "character_class": "cleric"},
+    ))
+    character = session.characters[player_id]
+
+    character.gain_xp(34000, engine._rules.xp_thresholds())  # 0 -> level 8
+    assert character.level == 8
+    feats = " ".join(_owner_character_view(character, engine._rules)["class_features"])
+    for feature in ("Channel Divinity", "Turn Undead", "Destroy Undead"):
+        assert feature in feats
+    assert "Divine Intervention" not in feats  # level 10
+
+
+async def test_owner_character_view_class_features_stay_empty_for_a_leveled_blank_class():
+    # A blank/unrecognized class has no progression table to draw from -
+    # leveling up must not conjure features out of nowhere.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    character = session.characters[player_id]
+
+    character.gain_xp(300, engine._rules.xp_thresholds())  # -> level 2
+    assert character.level == 2
+    assert _owner_character_view(character, engine._rules)["class_features"] == []
+
+
 async def test_owner_character_view_includes_racial_traits():
     # Real 5e SRD racial trait text (server/rules/srd.json's "races" table)
     # - existed as data but was never attached to any payload before the
