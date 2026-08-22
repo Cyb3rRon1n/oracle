@@ -507,8 +507,8 @@ class NarratorBackend(Protocol):
 
         Called right before the passive missed-change advisory is sent -
         after check_missed_change already declined to auto-correct. Returns
-        a best-guess update_character-shaped dict (target/hp_delta/
-        add_condition) the player can confirm and apply via /apply, or None
+        a best-guess update_character-shaped dict (any of update_character's
+        own fields) the player can confirm and apply via /apply, or None
         when there's genuinely nothing to propose. Deliberately framed as a
         hypothesis for the player to weigh against what they actually saw,
         not a decision the model is confident in - it already decided not to
@@ -605,8 +605,9 @@ class AnthropicNarrator:
             f"Character:\n{character_summary}\n\n"
             f"You just narrated this, but didn't call update_character:\n{narration}\n\n"
             "Review it: if it describes a real change to a character's or NPC's hp, "
-            "inventory, or conditions that should have been recorded, call "
-            "update_character now with the correct target and fields. If nothing "
+            "inventory, or conditions that should have been recorded - including a "
+            "meaningful rest, a spell cast, or an NPC note/disposition worth recording - "
+            "call update_character now with the correct target and fields. If nothing "
             "actually needs correcting, don't call anything."
         )
         response = await self._client.messages.create(

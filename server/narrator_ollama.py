@@ -169,8 +169,26 @@ MISSED_CHANGE_SYSTEM_PROMPT = """You are the Dungeon Master reviewing your own n
 ago, given below, which did not call update_character. Respond with a single JSON object matching
 the given schema. Set `mechanical_change` to true only if that narration describes a real change to
 a character's or NPC's hp, inventory, or conditions that should have been recorded, and fill in
-`target`/`hp_delta`/`add_condition` accordingly. Otherwise set `mechanical_change` to false and
-leave the other fields at their defaults."""
+`target`/`hp_delta`/`add_condition` accordingly - target is whoever actually got hurt or changed,
+not simply whoever acted. Set `rest` ('short' or 'long') if the narration described a meaningful
+rest - the engine computes the real healing, so don't guess an hp_delta for it. Set `cast_spell`
+if the acting character cast one of their own known spells. Set `notes`/`disposition` if an NPC
+was introduced or a relationship meaningfully changed - these can be a real correction even when
+`mechanical_change` is false. Otherwise set `mechanical_change` to false and leave every field at
+its default."""
+
+
+def _has_outcome_change(data: dict) -> bool:
+    """The single apply/propose gate for any _OUTCOME_PROPERTIES-shaped
+    response: mechanical_change OR any of the four fields that count as a
+    real change on their own. Shared by _narrate_structured,
+    check_missed_change, and propose_correction so all three keep the same
+    semantics (the review paths originally gated on mechanical_change only
+    and silently dropped notes-only/rest-only corrections)."""
+    return bool(
+        data.get("mechanical_change")
+        or any(data.get(field) for field in ("rest", "notes", "disposition", "cast_spell"))
+    )
 
 
 def _outcome_update(data: dict) -> dict:
@@ -200,8 +218,12 @@ player confirms that something mechanically changed anyway, the sheet needs a co
 with a single JSON object matching the given schema. Set `mechanical_change` to true only if the
 narration plausibly describes a real change to a character's or NPC's hp, inventory, or conditions,
 and fill in `target`/`hp_delta`/`add_condition` with your best guess of what the update_character call
-would have been. Otherwise set `mechanical_change` to false and leave the other fields at their
-defaults."""
+would have been - target is whoever actually got hurt or changed, not simply whoever acted. Also set
+`rest` ('short' or 'long') if the narration plausibly described a meaningful rest, `cast_spell` if the
+acting character plausibly cast one of their own known spells, and `notes`/`disposition` if an NPC was
+plausibly introduced or a relationship meaningfully changed - these can be a real proposal even when
+`mechanical_change` is false. Otherwise set `mechanical_change` to false and leave every field at its
+default."""
 
 # Extends _OUTCOME_PROPERTIES with a second, independent decision: does this
 # turn need a real dice roll before the outcome can even be narrated? (See
@@ -640,7 +662,7 @@ class OllamaNarrator:
             data = json.loads(response.message.content or "")
         except json.JSONDecodeError:
             return False
-        if not data.get("mechanical_change"):
+        if not _has_outcome_change(data):
             return False
         apply_update(_outcome_update(data))
         return True
@@ -667,7 +689,7 @@ class OllamaNarrator:
             data = json.loads(response.message.content or "")
         except json.JSONDecodeError:
             return None
-        if not data.get("mechanical_change"):
+        if not _has_outcome_change(data):
             return None
         return _outcome_update(data)
 
@@ -782,9 +804,7 @@ class OllamaNarrator:
         # only promises "HP, inventory, or conditions", so gating on it
         # alone would silently drop those. Checked independently, same
         # falsy-omission style as hp_delta/add_condition above.
-        if data.get("mechanical_change") or any(
-            data.get(field) for field in ("rest", "notes", "disposition", "cast_spell")
-        ):
+        if _has_outcome_change(data):
             apply_update(_outcome_update(data))
 
         if self._world_updates and data.get("world_change") and update_world is not None:

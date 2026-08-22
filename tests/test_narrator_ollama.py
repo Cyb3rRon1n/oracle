@@ -1014,6 +1014,31 @@ async def test_check_missed_change_applies_rest_notes_disposition_cast_spell():
     ]
 
 
+async def test_check_missed_change_applies_a_notes_only_correction_without_mechanical_change():
+    # The review path's gate must match the main narrate() path's own
+    # broadened semantics: notes/disposition/rest/cast_spell each count as a
+    # real correction even when mechanical_change is false.
+    narrator = make_structured_narrator()
+    response = FakeChatResponse(
+        json.dumps({"mechanical_change": False, "target": "bandit", "notes": "A greedy toll-keeper."})
+    )
+    narrator._client = FakeOllamaClient([response])
+
+    received_updates = []
+
+    def apply_update(update: dict) -> str:
+        received_updates.append(update)
+        return "Applied."
+
+    corrected = await narrator.check_missed_change("The bandit grins and names his price.", "{}", apply_update)
+
+    assert corrected is True
+    assert received_updates == [{"target": "bandit", "notes": "A greedy toll-keeper."}]
+    review_prompt = narrator._client.calls[0]["messages"][0]["content"]
+    for field in ("rest", "notes", "disposition", "cast_spell"):
+        assert field in review_prompt
+
+
 async def test_check_missed_change_returns_false_when_the_dm_declines_to_correct():
     narrator = make_structured_narrator()
     response = FakeChatResponse(json.dumps({"mechanical_change": False}))
@@ -1064,6 +1089,23 @@ async def test_propose_correction_returns_best_guess_update_without_applying():
     assert proposed == {"target": "bandit", "hp_delta": -6}
     call = narrator._client.calls[0]
     assert call["format"] == MISSED_CHANGE_SCHEMA
+
+
+async def test_propose_correction_returns_a_rest_only_proposal_without_mechanical_change():
+    # Same broadened gate as check_missed_change: a rest-only hypothesis is
+    # a real proposal, not discarded because mechanical_change is false.
+    narrator = make_structured_narrator()
+    response = FakeChatResponse(
+        json.dumps({"mechanical_change": False, "target": "self", "rest": "long"})
+    )
+    narrator._client = FakeOllamaClient([response])
+
+    proposed = await narrator.propose_correction("You make camp and sleep until dawn.", "{}")
+
+    assert proposed == {"target": "self", "rest": "long"}
+    review_prompt = narrator._client.calls[0]["messages"][0]["content"]
+    for field in ("rest", "notes", "disposition", "cast_spell"):
+        assert field in review_prompt
 
 
 async def test_propose_correction_returns_none_when_dm_has_no_guess():
