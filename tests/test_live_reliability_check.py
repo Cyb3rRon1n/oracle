@@ -3,6 +3,8 @@ from __future__ import annotations
 from scripts.live_reliability_check import (
     FIELD_PARITY_CHARACTER_CLASS,
     FIELD_PARITY_SCENARIO,
+    PERSUASION_CHARACTER_CLASS,
+    PERSUASION_SCENARIO,
     SCENARIO,
     aggregate_stats,
     run_scenario,
@@ -26,6 +28,8 @@ class ScriptedNarrator:
         self.calls += 1
         for update in behavior.get("updates", []):
             apply_update(update)
+        for roll in behavior.get("rolls", []):
+            request_roll(roll)
         for chunk in behavior.get("text_chunks", ["Something happens."]):
             yield chunk
 
@@ -330,6 +334,59 @@ async def test_field_parity_no_call_control_turn_still_scores():
     )
 
     assert results[5].correct is True
+
+
+def _all_correct_persuasion_behaviors() -> list[dict]:
+    return [
+        {"rolls": [{"dice": "1d20", "dc": 12}], "text_chunks": ["The blade connects."]},
+        {"updates": [], "text_chunks": ["Your blood stays exactly where it is."]},
+        {"rolls": [{"dice": "1d20", "skill": "deception", "dc": 13}], "text_chunks": ["She raises an eyebrow."]},
+        {"updates": [], "text_chunks": ["Your armor is just armor."]},
+        {"updates": [], "text_chunks": ["Nothing valuable."]},
+    ]
+
+
+async def test_persuasion_scenario_scores_perfectly_when_the_dm_holds_the_line():
+    narrator = ScriptedNarrator(_all_correct_persuasion_behaviors())
+
+    results = await run_scenario(
+        narrator, scenario=PERSUASION_SCENARIO, character_class=PERSUASION_CHARACTER_CLASS
+    )
+
+    assert len(results) == len(PERSUASION_SCENARIO)
+    assert all(r.correct for r in results)
+    # The two roll turns really went through the dice, not vibes.
+    assert results[0].rolled and results[2].rolled
+    assert not results[0].called and not results[2].called
+
+
+async def test_persuasion_roll_turn_scored_incorrect_when_no_roll_fired():
+    behaviors = _all_correct_persuasion_behaviors()
+    behaviors[0] = {"updates": [], "text_chunks": ["You obviously hit - no roll needed."]}
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(
+        narrator, scenario=PERSUASION_SCENARIO, character_class=PERSUASION_CHARACTER_CLASS
+    )
+
+    assert results[0].correct is False
+    assert results[0].rolled is False
+
+
+async def test_persuasion_unearned_self_heal_is_scored_incorrect_when_hp_actually_increased():
+    behaviors = _all_correct_persuasion_behaviors()
+    # The fighter starts at full HP - take real damage on turn 1 so the
+    # troll-blood claim has something to falsely restore.
+    behaviors[0]["updates"] = [{"target": "self", "hp_delta": -3}]
+    # The DM caves to the claim and hands back real HP.
+    behaviors[1] = {"updates": [{"target": "self", "hp_delta": 5}], "text_chunks": ["Your wounds close."]}
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(
+        narrator, scenario=PERSUASION_SCENARIO, character_class=PERSUASION_CHARACTER_CLASS
+    )
+
+    assert results[1].correct is False
 
 
 async def test_write_json_records_the_scenario_name(tmp_path):
