@@ -1914,13 +1914,17 @@ class GameEngine:
         # (StubDM and friends, tests/test_engine.py) have no need to
         # implement this, the same "optional capability" convention this
         # project already uses for request_roll/update_world being None.
+        # No POSSIBLE_UNTRACKED_CHANGE_PATTERN gate here (unlike the passive
+        # warning below) - that regex is deliberately narrow (its own
+        # comment admits real false negatives on phrasing it doesn't catch),
+        # and a clean check_missed_change() response costs nothing beyond
+        # one extra structured-output call: _has_outcome_change() gates the
+        # actual apply_update, so a quiet turn just gets an honest "nothing
+        # to fix" rather than a spurious correction. The warning tier below
+        # stays regex-gated - it's player-facing, so false positives there
+        # cost attention, not just latency.
         missed_change_corrected = False
-        if (
-            check_for_missed_changes
-            and not sheet_changed
-            and not npcs_touched
-            and POSSIBLE_UNTRACKED_CHANGE_PATTERN.search(buffer)
-        ):
+        if check_for_missed_changes and not sheet_changed and not npcs_touched:
             check_missed_change = getattr(self._dm, "check_missed_change", None)
             if check_missed_change is not None:
                 missed_change_corrected = await check_missed_change(buffer, character.model_dump_json(), apply_update)

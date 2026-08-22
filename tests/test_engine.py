@@ -4211,6 +4211,52 @@ async def test_missed_change_heuristic_silent_when_narration_has_no_trigger_lang
     assert not _missed_change_warnings(received, player_id)
 
 
+async def test_missed_change_self_correction_reached_without_trigger_language():
+    # check_missed_change() is no longer gated behind
+    # POSSIBLE_UNTRACKED_CHANGE_PATTERN (see server/engine.py) - it's a
+    # second, independent detection channel meant to catch exactly the
+    # phrasing the narrow regex misses, so it must still be asked even on a
+    # turn the regex wouldn't have flagged.
+    dm = NarratesThenSelfCorrectsDM(
+        "The merchant sizes you up and quietly slips a dagger from his sleeve, driving it home.",
+        correction={"target": "self", "hp_delta": -3},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I haggle with the merchant"},
+    ))
+
+    assert dm.check_missed_change_calls, "check_missed_change should run even without regex-trigger language"
+    assert _missed_change_corrections(received, player_id)
+
+
+async def test_missed_change_self_correction_silent_when_nothing_changed_and_no_trigger_language():
+    # The other half of the same guarantee: asking on every quiet turn must
+    # not turn into noise when the backend genuinely finds nothing to fix.
+    dm = NarratesThenSelfCorrectsDM(
+        "You glance around the room but find nothing of note.", correction=None,
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert dm.check_missed_change_calls
+    assert not _missed_change_corrections(received, player_id)
+    assert not _missed_change_warnings(received, player_id), (
+        "the passive warning stays regex-gated - a quiet turn shouldn't warn just because "
+        "check_missed_change was asked"
+    )
+
+
 async def test_missed_change_heuristic_does_not_fire_during_opening_scene():
     # An opening scene routinely sets flavor using this heuristic's own
     # trigger words (a village recently attacked, a wounded NPC met in
