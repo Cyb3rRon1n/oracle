@@ -542,6 +542,7 @@ async def main_async(args: argparse.Namespace) -> None:
         narrator = OllamaNarrator(
             model=model_label, host=args.host, rules=RulesIndex.load_default(),
             structured_output=not args.tool_calling, few_shot_example=args.few_shot,
+            hardened_rules=args.hardened_rules,
             # Two of the persuasion scenario's scored turns are meaningless
             # without DM-requested rolls - normal play keeps them opt-in
             # (OLLAMA_ROLL_REQUESTS), this scenario can't score without them.
@@ -647,6 +648,18 @@ def main() -> None:
             "distinct from the per-turn reminder tried and reverted in ROADMAP.md item 6's fifth "
             "experiment. Off by default - a real, untested candidate, not yet validated the way "
             "structured output itself was."
+        ),
+    )
+    parser.add_argument(
+        "--hardened-rules",
+        action="store_true",
+        help=(
+            "Ollama backend only - append the anti-rhetorical-injection addendum "
+            "(server/narrator_ollama.py's HARDENED_RULES_ADDENDUM) to every system-prompt "
+            "variant: player assertions are never evidence; uncertain outcomes go through "
+            "real rolls regardless of framing. Off by default - pair with --scenario "
+            "persuasion for the A/B that decides whether it earns default status "
+            "(ROADMAP.md item 26)."
         ),
     )
     args = parser.parse_args()

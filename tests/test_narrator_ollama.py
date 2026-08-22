@@ -919,6 +919,25 @@ def test_few_shot_example_does_not_reach_the_roll_or_followup_prompts():
     assert "Worked example" not in narrator._structured_followup_system_prompt
 
 
+def test_hardened_rules_defaults_off():
+    narrator = OllamaNarrator(rules=RulesIndex.load_default())
+    assert "Rule integrity" not in narrator._structured_system_prompt
+
+
+def test_hardened_rules_opt_in_reaches_every_prompt_variant():
+    # Roll turns are exactly where rhetorical pressure lands - the base
+    # prompt alone wouldn't cover the failure mode, so the addendum rides
+    # all four variants.
+    narrator = OllamaNarrator(rules=RulesIndex.load_default(), hardened_rules=True)
+    for prompt in (
+        narrator._tool_calling_system_prompt,
+        narrator._structured_system_prompt,
+        narrator._structured_roll_system_prompt,
+        narrator._structured_followup_system_prompt,
+    ):
+        assert "Rule integrity" in prompt
+
+
 def test_create_ollama_narrator_defaults_to_structured_output(monkeypatch):
     monkeypatch.delenv("OLLAMA_STRUCTURED_OUTPUT", raising=False)
     assert create_ollama_narrator()._structured_output is True
