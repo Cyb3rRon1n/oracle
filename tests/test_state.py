@@ -616,6 +616,29 @@ def test_narrator_context_includes_mood_when_set():
     assert world.narrator_context() == "Current location: Millbrook\nCurrent mood: tense"
 
 
+def test_narrator_context_includes_summary_when_set():
+    # summary was previously only ever surfaced to a reconnecting player via
+    # _resume_recap() (server/engine.py) - never to the DM's own per-turn
+    # context, so it could scroll out of Session.history's rolling window
+    # on an ordinary long session exactly as easily as a reconnect gap
+    # (ROADMAP.md item 1). Same field now doing double duty.
+    world = WorldState(location="Millbrook", summary="The party freed the village from bandits.")
+
+    assert world.narrator_context() == (
+        "Current location: Millbrook\nThe party freed the village from bandits."
+    )
+
+
+def test_narrator_context_orders_summary_between_location_and_mood():
+    world = WorldState(
+        location="Millbrook", summary="The party freed the village from bandits.", mood="hopeful"
+    )
+
+    assert world.narrator_context() == (
+        "Current location: Millbrook\nThe party freed the village from bandits.\nCurrent mood: hopeful"
+    )
+
+
 def test_narrator_context_includes_only_active_objectives():
     # Given to the DM specifically so complete_objective can copy an
     # exact text match (ROADMAP.md's update_world reliability

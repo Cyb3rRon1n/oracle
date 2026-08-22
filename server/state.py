@@ -602,10 +602,17 @@ class WorldState(BaseModel):
         return "Applied: " + "; ".join(changes) + "."
 
     def narrator_context(self) -> str:
-        """Plain-text current location + active objectives, given to the DM
-        on every turn as NarratorBackend.narrate()'s own world_summary
-        argument - not left for the model to infer or recall from `history`
-        alone. Built to test a specific hypothesis for complete_objective's
+        """Plain-text current location + summary + active objectives, given
+        to the DM on every turn as NarratorBackend.narrate()'s own
+        world_summary argument - not left for the model to infer or recall
+        from `history` alone. summary was previously computed here-adjacent
+        (_resume_recap(), server/engine.py) but only ever reached a
+        reconnecting player's own welcome message, never the DM's own
+        per-turn context - the rolling history window (Session.history,
+        max_history_messages) can scroll past it on an ordinary long
+        session exactly as easily as a reconnect gap (ROADMAP.md item 1).
+        Same field, same update_world write path, now doing double duty.
+        Built to test a specific hypothesis for complete_objective's
         own 0% measured reliability (ROADMAP.md's update_world
         investigation): that it was a *recall* problem - a small model
         needing to retype an objective's exact text correctly from several
@@ -624,6 +631,8 @@ class WorldState(BaseModel):
         parts = []
         if self.location and self.location != "unknown":
             parts.append(f"Current location: {self.location}")
+        if self.summary:
+            parts.append(self.summary)
         if self.mood:
             parts.append(f"Current mood: {self.mood}")
         active_objectives = [o.text for o in self.objectives if o.status == "active"]
