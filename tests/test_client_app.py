@@ -47,7 +47,8 @@ class FakeTransport:
 
 
 def _state_sync(
-    player_id: str, *, started: bool, characters: dict | None = None, world_state: dict | None = None
+    player_id: str, *, started: bool, characters: dict | None = None, world_state: dict | None = None,
+    turn_order: list[str] | None = None, in_combat: bool = False,
 ) -> Envelope:
     return Envelope(
         type="state_sync", session_id="s", sender_id="server",
@@ -55,8 +56,9 @@ def _state_sync(
             "characters": characters or {player_id: {"name": "Thrain", "hp": 10, "max_hp": 10}},
             "npcs": {},
             "world_state": world_state or {},
-            "turn_order": [player_id],
+            "turn_order": turn_order if turn_order is not None else [player_id],
             "current_turn": player_id,
+            "in_combat": in_combat,
             "log_tail": [],
             "started": started,
         },
@@ -1790,6 +1792,80 @@ async def test_state_sync_shows_another_players_turn_on_reconnect():
             await pilot.pause()
 
             assert "Rowan's turn" in str(app.screen.query_one("#status")._Static__content)
+
+
+async def test_state_sync_shows_a_persistent_combat_indicator_on_reconnect():
+    # docs/protocol.md's "In-combat indicator and initiative order" -
+    # in_combat/turn_order already reached the client for the mechanical
+    # turn cycling; this is the panel section that makes it visible
+    # persistently, not just via the one-time system_message announcement.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync(
+                "p1", started=True,
+                characters={
+                    "p1": {"player_id": "p1", "name": "Thrain", "hp": 10, "max_hp": 10},
+                    "p2": {"player_id": "p2", "name": "Rowan", "hp": 8, "max_hp": 8},
+                },
+                turn_order=["p2", "p1"], in_combat=True,
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
+            assert "Combat" in rendered
+            assert "Rowan" in rendered
+            assert "Thrain" in rendered
+            # current_turn defaults to the passed player_id ("p1") in the
+            # _state_sync helper - Thrain, not Rowan, should be marked current.
+            assert "Thrain [i](current)[/i]" in rendered
+            assert "Rowan [i](current)[/i]" not in rendered
+
+
+async def test_combat_indicator_hidden_when_not_in_combat():
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
+            assert "Combat" not in rendered
+
+
+async def test_turn_prompt_updates_the_combat_indicator_live():
+    # in_combat/turn_order ride turn_prompt too (not just state_sync) so an
+    # already-connected client's combat indicator updates the instant
+    # /combat start or /combat end fires, without waiting for a reconnect.
+    with patch("client.app.ClientTransport", FakeTransport):
+        app = DungeonMasterApp(uri="ws://x", player_id="p1", is_new_character=True)
+        async with app.run_test() as pilot:
+            await pilot.click("#join")
+            await pilot.pause()
+            await app._handle(_state_sync("p1", started=True))
+            await pilot.pause()
+
+            await app._handle(Envelope(
+                type="turn_prompt", session_id="s", sender_id="server",
+                payload={"player_id": "p1", "prompt_text": "What do you do?", "in_combat": True, "turn_order": ["p1"]},
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
+            assert "Combat" in rendered
+
+            await app._handle(Envelope(
+                type="turn_prompt", session_id="s", sender_id="server",
+                payload={"player_id": "p1", "prompt_text": "What do you do?", "in_combat": False, "turn_order": ["p1"]},
+            ))
+            await pilot.pause()
+
+            rendered = app.screen.query_one("#sheet", CharacterSheetPanel).all_text()
+            assert "Combat" not in rendered
 
 
 async def test_turn_status_survives_narration_finishing():

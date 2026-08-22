@@ -2439,6 +2439,12 @@ class GameEngine:
                 "world_state": self._session.world.model_dump(),
                 "turn_order": self._session.turn_order,
                 "current_turn": self._session.current_turn,
+                # ROADMAP.md's own long-open "client-visible in-combat
+                # indicator" gap - Session.in_combat/turn_order already
+                # existed for the mechanical turn cycling, just never
+                # reached a (re)joining client to render a persistent
+                # combat/initiative-order display.
+                "in_combat": self._session.in_combat,
                 "log_tail": self._session.log[-20:],
                 # _has_started(), not the raw field - so a client can route
                 # correctly (lobby vs. session view) even for the disabled-
@@ -2524,11 +2530,21 @@ class GameEngine:
         )
 
     def _turn_prompt_envelope(self) -> Envelope:
+        # in_combat/turn_order ride along here too, not just state_sync -
+        # turn_prompt is what already-connected clients receive live on
+        # every start_combat/end_combat (and every ordinary turn advance),
+        # so this is what keeps an in-combat indicator/initiative-order
+        # display current without waiting for a fresh (re)join.
         return Envelope(
             type="turn_prompt",
             session_id=self._session.session_id,
             sender_id="server",
-            payload={"player_id": self._session.current_turn, "prompt_text": "What do you do?"},
+            payload={
+                "player_id": self._session.current_turn,
+                "prompt_text": "What do you do?",
+                "in_combat": self._session.in_combat,
+                "turn_order": self._session.turn_order,
+            },
         )
 
     def _log_envelope(

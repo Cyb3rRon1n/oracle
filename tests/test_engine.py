@@ -3658,6 +3658,32 @@ async def test_start_combat_orders_players_by_initiative_roll():
     assert announcements
 
 
+async def test_start_combat_and_end_combat_reach_state_sync_and_turn_prompt():
+    # docs/protocol.md's "In-combat indicator and initiative order" -
+    # Session.in_combat already existed for the mechanical turn cycling;
+    # this locks that it actually reaches both envelopes a client reads it
+    # from, not just the one-time system_message announcement.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "fighter", name="Thrain")
+
+    await _start_combat(engine, player_id)
+
+    prompts = [r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"]
+    assert prompts[-1][2]["in_combat"] is True
+    assert prompts[-1][2]["turn_order"] == session.turn_order
+
+    other_id = str(uuid.uuid4())
+    await join(engine, other_id, name="Rowan")
+    syncs = [r for r in received if r[0] == "send_to" and r[1] == other_id and r[2] == "state_sync"]
+    assert syncs[-1][3]["in_combat"] is True
+
+    await _end_combat(engine, player_id)
+
+    prompts = [r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"]
+    assert prompts[-1][2]["in_combat"] is False
+
+
 async def test_start_combat_announcement_names_everyone_with_their_roll():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())

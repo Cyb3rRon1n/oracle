@@ -242,6 +242,9 @@ class CharacterSheetPanel(Vertical):
         self._world: dict = {}
         self._others: dict = {}
         self._npcs: dict = {}
+        self._in_combat: bool = False
+        self._turn_order: list[str] = []
+        self._current_turn: str | None = None
 
     def compose(self) -> ComposeResult:
         # Each pane's Static sits inside its own VerticalScroll - the panel
@@ -316,6 +319,25 @@ class CharacterSheetPanel(Vertical):
         self._others = others
         self._refresh_display()
 
+    def render_combat(self, in_combat: bool, turn_order: list[str], current_turn: str | None) -> None:
+        # docs/protocol.md's "In-combat indicator and initiative order" -
+        # turn_order/current_turn already reach the client via state_sync/
+        # turn_prompt for the mechanical turn cycling; this is what makes
+        # them visible as a persistent panel section instead of only ever
+        # a one-time system_message announcement (still written too, see
+        # GameEngine._on_start_combat - a narrative "something happened"
+        # beat distinct from this panel's always-current state, the same
+        # split NPCs/objectives already establish).
+        self._in_combat = in_combat
+        self._turn_order = turn_order
+        self._current_turn = current_turn
+        self._refresh_display()
+
+    def _combat_participant_name(self, player_id: str) -> str:
+        if player_id == self._character.get("player_id"):
+            return self._character.get("name", "?")
+        return self._others.get(player_id, {}).get("name", "?")
+
     def _overview_text(self) -> str:
         character = self._character
         name_line = f"[b]{character.get('name', '?')}[/b]"
@@ -343,6 +365,14 @@ class CharacterSheetPanel(Vertical):
         # already have), so this line only shows up on your own sheet.
         if "xp" in character:
             lines.append(f"[dim]XP: {character.get('xp', 0)}[/dim]")
+
+        if self._in_combat and self._turn_order:
+            lines.append("")
+            lines.append("[b]⚔ Combat[/b]")
+            for player_id in self._turn_order:
+                name = self._combat_participant_name(player_id)
+                marker = " [i](current)[/i]" if player_id == self._current_turn else ""
+                lines.append(f"- {name}{marker}")
 
         active_objectives = [o for o in (self._world.get("objectives") or []) if o.get("status") == "active"]
         if active_objectives:
@@ -1265,6 +1295,8 @@ class DungeonMasterApp(App):
         self.npcs: dict = {}
         self.log_tail: list[dict] = []
         self.current_turn: str | None = None
+        self.in_combat: bool = False
+        self.turn_order: list[str] = []
         self._listening = False
         self._pending_proposal: dict | None = None
 
@@ -1351,6 +1383,7 @@ class DungeonMasterApp(App):
         sheet.render_others(self.others)
         sheet.render_world(self.world)
         sheet.render_npcs(self.npcs)
+        sheet.render_combat(self.in_combat, self.turn_order, self.current_turn)
 
     def refresh_turn_status(self) -> None:
         # Persistent, unlike turn_prompt's own one-shot log line - closes a
@@ -1527,6 +1560,8 @@ class DungeonMasterApp(App):
             self.npcs = payload.get("npcs", {})
             self.log_tail = payload.get("log_tail", [])
             self.current_turn = payload.get("current_turn")
+            self.in_combat = payload.get("in_combat", False)
+            self.turn_order = payload.get("turn_order", [])
 
             if isinstance(self.screen, WelcomeScreen):
                 # started: whether the adventure has already begun (see
@@ -1642,7 +1677,10 @@ class DungeonMasterApp(App):
             # new protocol field - just using data already on hand.
             turn_player_id = envelope.payload.get("player_id")
             self.current_turn = turn_player_id
+            self.in_combat = envelope.payload.get("in_combat", False)
+            self.turn_order = envelope.payload.get("turn_order", [])
             self.refresh_turn_status()
+            self.refresh_sheet_widgets()
             if session_screen is not None:
                 if turn_player_id == self._player_id:
                     session_screen.write_log("[i]Your turn.[/i]")
