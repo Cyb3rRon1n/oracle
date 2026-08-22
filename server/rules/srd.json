@@ -285,6 +285,87 @@
         "Bite: Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 7 (1d6+4) piercing damage.",
         "Claw: Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 11 (2d6+4) slashing damage."
       ]
+    },
+    "giant_spider": {
+      "name": "Giant Spider",
+      "size": "Large",
+      "type": "beast",
+      "ac": 14,
+      "hp": "26 (4d10+4)",
+      "speed": "30 ft., climb 30 ft.",
+      "stats": {"str": 14, "dex": 16, "con": 12, "int": 2, "wis": 11, "cha": 4},
+      "skills": "Stealth +7",
+      "senses": "blindsight 10 ft., darkvision 60 ft., passive Perception 10",
+      "cr": "1",
+      "traits": [
+        "Spider Climb: The spider can climb difficult surfaces, including upside down on ceilings, without needing to make an ability check.",
+        "Web Sense: While in contact with a web, the spider knows the exact location of any other creature in contact with the same web.",
+        "Web Walker: The spider ignores movement restrictions caused by webbing."
+      ],
+      "actions": [
+        "Bite: Melee Weapon Attack: +5 to hit, reach 5 ft., one creature. Hit: 7 (1d8+3) piercing damage, and the target must make a DC 11 Constitution saving throw, taking 9 (2d8) poison damage on a failed save, or half as much damage on a successful one. If the poison damage reduces the target to 0 hit points, the target is stable but poisoned for 1 hour, even after regaining hit points, and is paralyzed while poisoned in this way.",
+        "Web (Recharge 5-6): Ranged Weapon Attack: +5 to hit, range 30/60 ft., one creature. Hit: The target is restrained by webbing. As an action, the restrained target can make a DC 12 Strength check, bursting the webbing on a success. The webbing can also be attacked and destroyed (AC 10; hp 5; vulnerability to fire damage; immunity to bludgeoning, poison, and psychic damage)."
+      ]
+    },
+    "bugbear": {
+      "name": "Bugbear",
+      "size": "Medium",
+      "type": "humanoid (goblinoid)",
+      "ac": 16,
+      "hp": "27 (5d8+5)",
+      "speed": "30 ft.",
+      "stats": {"str": 15, "dex": 14, "con": 13, "int": 8, "wis": 11, "cha": 9},
+      "skills": "Stealth +6, Survival +1",
+      "senses": "darkvision 60 ft., passive Perception 10",
+      "cr": "1",
+      "traits": [
+        "Brute: A melee weapon deals one extra die of its damage when the bugbear hits with it (included in the attacks below).",
+        "Surprise Attack: If the bugbear surprises a creature and hits it with an attack during the first round of combat, the target takes an extra 7 (2d6) damage from the attack."
+      ],
+      "actions": [
+        "Morningstar: Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 11 (2d8+2) piercing damage.",
+        "Javelin: Melee or Ranged Weapon Attack: +4 to hit, reach 5 ft. or range 30/120 ft., one target. Hit: 9 (2d6+2) piercing damage in melee, or 5 (1d6+2) piercing damage at range."
+      ]
+    },
+    "wight": {
+      "name": "Wight",
+      "size": "Medium",
+      "type": "undead",
+      "ac": 14,
+      "hp": "45 (6d8+18)",
+      "speed": "30 ft.",
+      "stats": {"str": 15, "dex": 14, "con": 16, "int": 10, "wis": 13, "cha": 15},
+      "skills": "Perception +3, Stealth +4",
+      "resistances": "necrotic; bludgeoning, piercing, and slashing from nonmagical attacks",
+      "immunities": "poison",
+      "senses": "darkvision 60 ft., passive Perception 13",
+      "cr": "3",
+      "traits": [
+        "Sunlight Sensitivity: While in sunlight, the wight has disadvantage on attack rolls and Wisdom (Perception) checks that rely on sight."
+      ],
+      "actions": [
+        "Multiattack: The wight makes two longsword attacks or two longbow attacks. It can use its Life Drain in place of one longsword attack.",
+        "Life Drain: Melee Weapon Attack: +4 to hit, reach 5 ft., one creature. Hit: 6 (1d6+3) necrotic damage. The target's hit point maximum is reduced by an amount equal to the damage taken, and the wight regains hit points equal to that amount. This reduction lasts until the target finishes a long rest. The target dies if this effect reduces its hit point maximum to 0. A humanoid slain this way rises 24 hours later as a zombie under the wight's control, unless the humanoid is restored to life or its body is destroyed.",
+        "Longsword: Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 6 (1d8+2) slashing damage, or 7 (1d10+2) slashing damage if used with two hands.",
+        "Longbow: Ranged Weapon Attack: +4 to hit, range 150/600 ft., one target. Hit: 6 (1d8+2) piercing damage."
+      ]
+    },
+    "basilisk": {
+      "name": "Basilisk",
+      "size": "Medium",
+      "type": "monstrosity",
+      "ac": 15,
+      "hp": "52 (8d8+16)",
+      "speed": "20 ft.",
+      "stats": {"str": 16, "dex": 8, "con": 15, "int": 2, "wis": 8, "cha": 7},
+      "senses": "darkvision 60 ft., passive Perception 9",
+      "cr": "3",
+      "traits": [
+        "Petrifying Gaze: If a creature that can see the basilisk's eyes starts its turn within 30 feet of it, the basilisk can force it to make a DC 12 Constitution saving throw if it isn't already petrified. On a failed save, the creature begins to turn to stone and is restrained; it must repeat the saving throw at the end of its next turn, becoming petrified on a further failure or ending the effect on a success. The petrification lasts until removed by a spell such as greater restoration."
+      ],
+      "actions": [
+        "Bite: Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 10 (2d6+3) piercing damage, and the target must succeed on a DC 12 Constitution saving throw against the basilisk's Petrifying Gaze."
+      ]
     }
   },
   "spells": {
@@ -523,6 +604,45 @@
       "duration": "Concentration, up to 10 minutes",
       "description": "A shimmering field appears around a creature of your choice within range, granting it a +2 bonus to AC for the duration.",
       "classes": ["cleric"]
+    },
+    "guiding_bolt": {
+      "name": "Guiding Bolt",
+      "level": 1,
+      "school": "Evocation",
+      "casting_time": "1 action",
+      "range": "120 feet",
+      "components": "V, S",
+      "duration": "1 round",
+      "description": "A flash of light streaks toward a creature of your choice within range. Make a ranged spell attack against the target. On a hit, the target takes 4d6 radiant damage, and the next attack roll made against this target before the end of your next turn has advantage.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 2nd level or higher, the damage increases by 1d6 for each slot level above 1st.",
+      "classes": ["cleric"],
+      "damage": "4d6 radiant",
+      "attack": true
+    },
+    "hold_person": {
+      "name": "Hold Person",
+      "level": 2,
+      "school": "Enchantment",
+      "casting_time": "1 action",
+      "range": "60 feet",
+      "components": "V, S, M (a small, straight piece of iron)",
+      "duration": "Concentration, up to 1 minute",
+      "description": "Choose a humanoid you can see within range. The target must succeed on a Wisdom saving throw or be paralyzed for the duration. At the end of each of its turns, the target can make another Wisdom saving throw, ending the effect on itself on a success.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 3rd level or higher, you can target one additional humanoid for each slot level above 2nd.",
+      "classes": ["cleric", "wizard"],
+      "save_ability": "wis"
+    },
+    "web": {
+      "name": "Web",
+      "level": 2,
+      "school": "Conjuration",
+      "casting_time": "1 action",
+      "range": "60 feet",
+      "components": "V, S, M (a bit of spiderweb)",
+      "duration": "Concentration, up to 1 hour",
+      "description": "You conjure a mass of thick, sticky webbing at a point within range. The webs fill a 20-foot cube for the duration. The webs are difficult terrain and lightly obscure their area. Each creature that starts its turn in the webs or that enters them during its turn must make a Dexterity saving throw, becoming restrained on a failure until the webs are burned away or the spell ends.",
+      "classes": ["wizard"],
+      "save_ability": "dex"
     }
   },
   "conditions": {

@@ -240,6 +240,7 @@ def test_build_starting_character_gives_wizard_real_known_spells_and_slots():
     assert sheet.known_spells == [
         "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
         "burning_hands", "misty_step", "sleep", "charm_person", "thunderwave",
+        "hold_person", "web",
     ]
     assert sheet.spell_slots == {"1": 2}
     assert sheet.max_spell_slots == {"1": 2}
@@ -252,7 +253,7 @@ def test_build_starting_character_gives_cleric_real_known_spells_and_slots():
 
     assert sheet.known_spells == [
         "sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon",
-        "inflict_wounds", "shield_of_faith",
+        "inflict_wounds", "shield_of_faith", "guiding_bolt", "hold_person",
     ]
     assert sheet.spell_slots == {"1": 2}
 
@@ -273,6 +274,17 @@ def test_expanded_monster_entries_resolve_to_real_xp_and_ac():
     # introduced NPC would copy.
     rules = RulesIndex.load_default()
     for name in ("hobgoblin", "gnoll", "ghoul", "harpy", "owlbear", "troll"):
+        entry = rules.get_entry("monster", name)
+        assert entry is not None, f"missing monster {name}"
+        assert "ac" in entry, name
+        assert rules.xp_for_cr(entry["cr"]), f"{name}: CR '{entry['cr']}' has no XP"
+
+
+def test_third_srd_monster_batch_resolves_to_real_xp_and_ac():
+    # The 2026-08-22 batch (giant_spider/bugbear/wight/basilisk) - same
+    # real-lookup-path lock as the 2026-08-21 batch above.
+    rules = RulesIndex.load_default()
+    for name in ("giant_spider", "bugbear", "wight", "basilisk"):
         entry = rules.get_entry("monster", name)
         assert entry is not None, f"missing monster {name}"
         assert "ac" in entry, name
@@ -2556,6 +2568,45 @@ async def test_cast_spell_consumes_a_slot_for_a_newly_added_spell():
     character = session.characters[player_id]
     assert character.spell_slots == {"1": 1}
     assert dm.tool_result is not None and "Burning Hands" in dm.tool_result
+
+
+async def test_cast_spell_consumes_a_slot_for_a_third_batch_first_level_spell():
+    # Guiding Bolt (2026-08-22 batch, cleric's first ranged attack spell)
+    # - same real-CLASS_KNOWN_SPELLS lock as Burning Hands above.
+    dm = UpdateCharacterDM({"cast_spell": "Guiding Bolt"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "cleric", name="Fenwick")
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast guiding bolt"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.spell_slots == {"1": 1}
+    assert dm.tool_result is not None and "Guiding Bolt" in dm.tool_result
+
+
+async def test_cast_spell_consumes_a_slot_for_a_third_batch_second_level_spell():
+    # Hold Person is 2nd level - a fresh level-1 caster has no 2nd-level
+    # slot yet, so this grants one directly (mirroring a real level-up)
+    # to confirm the spell itself is real and reachable, not just data
+    # sitting in srd.json.
+    dm = UpdateCharacterDM({"cast_spell": "Hold Person"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+    session.characters[player_id].spell_slots["2"] = 1
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast hold person"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.spell_slots["2"] == 0
+    assert dm.tool_result is not None and "Hold Person" in dm.tool_result
 
 
 async def test_cast_spell_cantrip_does_not_consume_a_slot():
