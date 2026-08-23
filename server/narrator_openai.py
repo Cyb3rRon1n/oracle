@@ -23,7 +23,7 @@ from .narrator import ApplyUpdate, RequestRoll, UpdateWorld, _turns_to_text
 from .narrator_ollama import (
     DECIDE_FOLLOWUP_SCHEMA as _DECIDE_FOLLOWUP_SCHEMA,
     DECIDE_SCHEMA as _DECIDE_SCHEMA,
-    STRUCTURED_OUTPUT_SYSTEM_PROMPT,
+    DECIDE_SYSTEM_PROMPT as _DECIDE_SYSTEM_PROMPT,
     WORLD_UPDATE_PROMPT_ADDENDUM,
     _outcome_update,
     _strip_narration,
@@ -54,11 +54,10 @@ class OpenAINarrator:
         self._model = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         self._rules = rules or RulesIndex.load_default()
         lore_block = (world_bible or load_default_world_bible()).system_prompt_block()
+        # The decide call must not instruct the model to write narration -
+        # DECIDE_SCHEMA has no narration field (prose is a separate call).
         self._system_prompt = (
-            _with_world_prompt(STRUCTURED_OUTPUT_SYSTEM_PROMPT, world_updates).replace(
-                "Respond with a single JSON object matching the given schema",
-                "Decide the outcome",
-            )
+            _with_world_prompt(_DECIDE_SYSTEM_PROMPT, world_updates)
             + lore_block
             + (WORLD_UPDATE_PROMPT_ADDENDUM if world_updates else "")
         )

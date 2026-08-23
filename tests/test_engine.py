@@ -953,6 +953,29 @@ async def test_npc_update_broadcast_keeps_first_seen_casing_after_recase():
     assert [u[2]["name"] for u in updates] == ["Bandit", "Bandit"]
 
 
+async def test_npc_target_slugified_on_later_turn_updates_existing_npc_not_a_duplicate():
+    dm = UpdateSequenceDM([{"target": "second bandit", "max_hp": 10, "hp_delta": -3}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack the second bandit"},
+    ))
+    assert session.npcs["second bandit"].hp == 7
+
+    dm._updates = [{"target": "second_bandit", "hp_delta": -3}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I attack him again"},
+    ))
+
+    assert len(session.npcs) == 1, "slugified target must update the existing NPC, not fork it"
+    assert session.npcs["second bandit"].hp == 4
+    assert "Introduced" not in dm.tool_results[-1], "slugified target updates, doesn't re-introduce"
+
+
 async def test_defeating_known_srd_monster_awards_correct_cr_xp():
     # "goblin" matches server/rules/srd.json's own monster entry (CR 1/4),
     # so the real SRD xp_by_cr table (50 XP) should apply automatically -
@@ -2878,7 +2901,7 @@ async def test_npc_introduction_leaves_stats_empty_for_an_unmatched_name():
         payload={"text": "I size up the shadow beast"},
     ))
 
-    assert session.npcs["shadow_beast"].stats == {}
+    assert session.npcs["shadow beast"].stats == {}
 
 
 def test_compute_ac_unarmored_is_ten_plus_dex_modifier():
@@ -3029,7 +3052,7 @@ async def test_npc_introduction_leaves_ac_at_default_for_an_unmatched_name():
         payload={"text": "I size up the shadow beast"},
     ))
 
-    assert session.npcs["shadow_beast"].ac == 10  # CharacterSheet's own unarmored default
+    assert session.npcs["shadow beast"].ac == 10  # CharacterSheet's own unarmored default
 
 
 async def test_public_character_view_includes_ac():

@@ -90,7 +90,7 @@ Open two browser windows pointed at the same session id and you're playing toget
 
 ## The tool-call reliability investigation
 
-The [ROADMAP](ROADMAP.md) documents a repeatable harness (`scripts/live_reliability_check.py`) measuring whether small local models actually fire `update_character` when narration demands it — baseline percentages across models, a two-request split tried and reverted, and what moved the needle (structured output roughly doubled real tool-call correctness). The v2 narrator changes (two-phase turns, lorebook injection, campaign summaries) change the prompt context those baselines were measured against; treat pre/post numbers as separate eras until the harness has been re-run against the current pipeline.
+The [ROADMAP](ROADMAP.md) documents a repeatable harness (`scripts/live_reliability_check.py`) measuring whether small local models actually fire `update_character` when narration demands it — baseline percentages across models, a two-request split tried and reverted, and what moved the needle (structured output roughly doubled real tool-call correctness). The v2 narrator changes (two-phase turns, lorebook injection, campaign summaries) change the prompt context those baselines were measured against; the post-v2 re-run is logged as ROADMAP item 32 (two-phase decide phase: 4/7 on the combat scenario vs ~66% single-call, after fixing a narration-instructing-decide-prompt bug and a target-scoring artifact) — pre/post numbers remain separate eras.
 
 ## Contributing
 

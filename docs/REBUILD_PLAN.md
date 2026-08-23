@@ -104,6 +104,8 @@ agentic GM study (arXiv:2502.19519); Talemate; constrained-decoding surveys.
 
 - The tool-call reliability harness (`evidence/`, ROADMAP experiments) survives phase 2's
   narrator changes, but two-phase turns + summarizer change prompt context — re-run the
-  harness after phase 2 so ROADMAP percentages stay honest.
+  harness after phase 2 so ROADMAP percentages stay honest. **Done 2026-08-23** (ROADMAP
+  item 32): two-phase decide phase scored 4/7 on combat vs ~66% single-call, after fixing
+  narration-instructing decide prompts and an underscore-scoring artifact.
 - Desktop packaging: optional thin Electron wrapper later; not planned.
 - Protocol v2 schemas frozen in docs/protocol.md ("Protocol v2 additions").

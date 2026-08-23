@@ -220,6 +220,10 @@ LEAK_PATTERN = re.compile(
 )
 
 
+def _norm_target(name: str) -> str:
+    return name.casefold().replace("_", " ")
+
+
 @dataclass
 class TurnResult:
     index: int
@@ -327,7 +331,10 @@ async def run_scenario(
             # "bandit", something the real engine has never actually
             # treated as wrong. Affects every prior experiment this
             # harness has ever scored, not just this one - see ROADMAP.md.
-            correct = called and turn["target"].casefold() in {t.casefold() for t in called_targets}
+            # Same normalization as the engine's npc_key (casefold +
+            # underscore-fold): "second_bandit" IS the second bandit -
+            # scoring it a miss is a scorer artifact, not a model error.
+            correct = called and _norm_target(turn["target"]) in {_norm_target(t) for t in called_targets}
         elif expected == EXPECT_REST:
             # A "long rest" at already-full HP is a real no-op in
             # CharacterSheet.apply_update() (server/state.py) - nothing

@@ -1859,7 +1859,10 @@ class GameEngine:
             # one already being tracked. npc.name keeps the first-seen
             # casing for display, so the tool result and broadcasts stay
             # consistent turn to turn regardless of how later calls case it.
-            npc_key = target.casefold()
+            # Underscores fold too: small models slugify ("second_bandit"
+            # vs "Second Bandit" across turns - seen twice in the post-v2
+            # harness runs).
+            npc_key = target.casefold().replace("_", " ")
             npc = self._session.npcs.get(npc_key)
             introduced = npc is None
 
@@ -2382,7 +2385,9 @@ class GameEngine:
                 await self._broadcast(self._player_update_envelope(character))
                 await self._broadcast(self._log_envelope("outcome", f"{character.name}: {result}"))
         else:
-            npc_key = target.casefold()
+            # Same key normalization as the in-turn apply_update path (see
+            # there) - the two call sites must not drift.
+            npc_key = target.casefold().replace("_", " ")
             npc = self._session.npcs.get(npc_key)
             introduced = npc is None
             if introduced:

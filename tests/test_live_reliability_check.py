@@ -111,6 +111,21 @@ async def test_a_recased_target_is_still_scored_correct():
     assert results[0].correct is True  # but scored correct against the scenario's lowercase "bandit"
 
 
+async def test_a_slugified_target_is_still_scored_correct():
+    # Turn 4 expects "second bandit" - slugify it the way small models do.
+    behaviors = _all_correct_behaviors()
+    behaviors[3] = {
+        "updates": [{"target": "second_bandit", "hp_delta": -5, "max_hp": 10}],
+        "text_chunks": ["Hit."],
+    }
+    narrator = ScriptedNarrator(behaviors)
+
+    results = await run_scenario(narrator)
+
+    assert results[3].called_targets == ["second_bandit"]
+    assert results[3].correct is True
+
+
 async def test_leaked_tool_call_text_is_flagged_even_without_a_real_call():
     behaviors = [{"updates": [], "text_chunks": ["Something happens."]} for _ in SCENARIO]
     behaviors[0] = {

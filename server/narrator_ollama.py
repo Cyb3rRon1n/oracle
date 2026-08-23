@@ -610,6 +610,41 @@ and fill in `target`/`hp_delta`/`add_condition`/`rest`/`notes`/`disposition`/`ca
 same way a normal turn would, now informed by whether the roll actually succeeded. Never break
 character."""
 
+# Two-phase decide variants (docs/REBUILD_PLAN.md): derived from the prompts
+# above by stripping every narration instruction - DECIDE_SCHEMA /
+# DECIDE_FOLLOWUP_SCHEMA have no narration field (prose is written in the
+# separate unconstrained call), and a prompt that orders the model to "Write
+# `narration`" next to a schema without one measurably degrades the fields
+# that DO exist on small models (first post-v2 harness run: 2/7 vs the 66%
+# single-call baseline; re-run with these fixed prompts: 4/7 underscore-folded,
+# see ROADMAP.md item 32).
+DECIDE_SYSTEM_PROMPT = (
+    STRUCTURED_OUTPUT_SYSTEM_PROMPT
+    .replace(
+        "Respond with a single JSON object matching the given schema - never prose outside that JSON,\n"
+        "never a tool call. `narration` is your in-character response (3-5 sentences, open-ended prose,\n"
+        "never a numbered or bulleted list of options). ",
+        "Decide the outcome of this turn. Respond with a single JSON object matching the given schema -\n"
+        "never prose outside that JSON, never a tool call. Do NOT write narration; your structured\n"
+        "decisions are narrated in a separate step. ",
+    )
+    .replace(" Never break character in `narration`.", "")
+)
+DECIDE_FOLLOWUP_SYSTEM_PROMPT = (
+    STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT
+    .replace(
+        "Respond with a single JSON object\nmatching the given schema - never prose outside that JSON. Write `narration` (3-5 sentences,\nopen-ended prose, never a numbered/bulleted list) that matches the real roll result given to\nyou - if it says failure, the character does not simply succeed anyway.",
+        "Respond with a single JSON object matching the given schema - never prose outside that JSON.\nDo NOT write narration; your structured decisions are narrated in a separate step. Decide the\noutcome to match the real roll result given to you - if it says failure, the character does not\nsimply succeed anyway.",
+    )
+    .replace(" Never break\ncharacter.", "")
+)
+
+# Guard: the replaces above must actually fire - if the source text drifts and
+# one silently no-ops, the decide prompt would order narration-writing against
+# a narration-free schema again (the exact 2/7 r1 failure).
+for _p in (DECIDE_SYSTEM_PROMPT, DECIDE_FOLLOWUP_SYSTEM_PROMPT):
+    assert "Do NOT write narration" in _p, "decide-prompt replace() no-op'd"
+
 
 class OllamaNarrator:
     """Local NarratorBackend backed by Ollama. No web_search — that's an
@@ -652,6 +687,10 @@ class OllamaNarrator:
         self._structured_system_prompt = structured_prompt + suffix
         self._structured_roll_system_prompt = STRUCTURED_OUTPUT_ROLL_SYSTEM_PROMPT + suffix
         self._structured_followup_system_prompt = STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT + suffix
+        # Two-phase variants - narration-free system prompts matching the
+        # narration-free DECIDE schemas (see the constants' own comment).
+        self._decide_system_prompt = DECIDE_SYSTEM_PROMPT + suffix
+        self._decide_followup_system_prompt = DECIDE_FOLLOWUP_SYSTEM_PROMPT + suffix
         # Defaults on (see STRUCTURED_OUTPUT_SCHEMA above for why) - a
         # real constructor flag rather than a separate class, since every
         # other piece of state (client/model/rules) is identical either
@@ -953,7 +992,7 @@ class OllamaNarrator:
             prompt += f"World state:\n{world_summary}\n\n"
         prompt += f"Player action: {action_text}"
         base_messages: list[dict] = [
-            {"role": "system", "content": self._structured_system_prompt},
+            {"role": "system", "content": self._decide_system_prompt},
             *history,
             {"role": "user", "content": prompt},
         ]
@@ -980,7 +1019,7 @@ class OllamaNarrator:
             roll_result_text = request_roll(roll_update)
             followup_schema = _with_scene_fields(_with_world_fields(DECIDE_FOLLOWUP_SCHEMA, self._world_updates))
             followup_messages = [
-                {"role": "system", "content": self._structured_followup_system_prompt},
+                {"role": "system", "content": self._decide_followup_system_prompt},
                 *history,
                 {"role": "user", "content": f"{prompt}\n\nReal dice result: {roll_result_text}\nDecide the outcome now."},
             ]
