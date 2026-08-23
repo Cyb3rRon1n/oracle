@@ -8,7 +8,7 @@ If you'd like to send a pull request anyway:
 
 1. Fork the repo and create a branch off `main`.
 2. `pip install -e ".[dev]"` and make sure `pytest -v` passes before and after
-   your change.
+   your change. For `web/` changes, `npm ci && npm run build` must also pass.
 3. Keep changes scoped — a bug fix doesn't need surrounding refactors.
 4. Open a PR using the template; describe what changed and why.
 

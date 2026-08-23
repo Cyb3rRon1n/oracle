@@ -11,247 +11,91 @@
 </p>
 
 <p align="center">
-  📖 <a href="ROADMAP.md">Roadmap</a> · <a href="docs/protocol.md">Protocol</a> · <a href="https://cyb3rron1n.github.io/">Sibling Projects</a> · <a href="docs/images/favicon.svg">Favicon</a>
+  📖 <a href="ROADMAP.md">Roadmap</a> · <a href="docs/protocol.md">Protocol</a> · <a href="docs/REBUILD_PLAN.md">v2 rebuild notes</a>
 </p>
 
-An AI Dungeon Master that runs a real-time tabletop RPG session over a terminal UI — an LLM sitting in the GM seat, adjudicating rules, narrating the world, and managing campaign state.
+An AI Dungeon Master that runs a real-time tabletop RPG session in your browser — an LLM sitting in the GM seat, adjudicating rules, narrating the world, and managing campaign state.
 
-A solo engineering project built around one central, unglamorous question: when you hand an LLM a real tool to change game state, how often does it actually use it, and why not? The [README status](#status) and [ROADMAP.md](ROADMAP.md) log that investigation — including a live, reproducible tool-call reliability harness, real percentages across two local models, a candidate fix that was tried and reverted after it didn't hold up under real-engine testing, and a genuine correctness bug the harness itself surfaced — rather than smoothing it into a simple "it works" claim.
+A solo engineering project built around one central, unglamorous question: when you hand an LLM a real tool to change game state, how often does it actually use it, and why not? The [README status](#the-tool-call-reliability-investigation) and [ROADMAP.md](ROADMAP.md) log that investigation — including a live, reproducible tool-call reliability harness, real percentages across local models, and a genuine correctness bug the harness itself surfaced — rather than smoothing it into a simple "it works" claim.
 
-## Screenshots
-
-All captures render the real client in the dark-dungeon theme. The two formerly live-Ollama captures (opening scene, mid-story turn) now use a scripted stand-in DM like the rest — the engine mechanics shown (real `update_world` setting the Map tab, the turn prompt) are 100% real; only the narration prose is scripted, so they stay deterministic and reproducible. The narrative log sits full-width on top; the character sheet (with its tab bar — Overview/Map/Abilities/Inventory/Spells/Features & Notes, whichever apply) is a compact scrollable band underneath.
-
-**A fresh session's DM-generated opening scene:**
-
-![Opening scene — full-width streamed DM narration on top, the character sheet's tab bar and compact HP/AC band underneath, ending on a turn prompt](docs/screenshots/opening-scene.svg)
-
-**After submitting a player action, mid-story:**
-
-![A player action echoed into the log followed by the DM's narrated response and the next turn prompt](docs/screenshots/turn-in-progress.svg)
-
-**The welcome screen's character-import field** — real UI, no DM/narration involved at all:
-
-![Welcome screen showing the name/session/class fields plus the new "Import character .json" field for loading a previously exported character](docs/screenshots/welcome-import.svg)
-
-**A real level-up** — the engine-driven XP award and HP growth are exactly what a live model would trigger too; only the narration line ("Your blade finds its mark...") is a scripted stand-in, kept that way deliberately so this one stays deterministic and reproducible rather than depending on a live model call:
-
-![Character sheet showing Lv 2, full HP after a level-up, real AC, and real ability scores with modifiers, with the log showing "Thrain defeats dire wolf and gains 300 XP! Thrain reaches level 2!"](docs/screenshots/xp-level-up.svg)
-
-**Casting a real leveled spell** — a wizard's known spells and real 5e spell-slot bookkeeping (2/2 → 1/2 after casting), computed by the engine off `update_character`'s `cast_spell` field, not guessed at by the model; only the narration line is a scripted stand-in:
-
-![Character sheet showing Elowen's known spells and "Slots: 1 1/2" after casting Magic Missile, with the log showing the cast narrated and the spent slot reflected on the sheet](docs/screenshots/spellcasting.svg)
-
-`scripts/generate_screenshots.py` (`python -m scripts.generate_screenshots`) regenerates all five deterministic screenshots above after a TUI change. `scripts/record_demo.sh` (see below) records a short animated demo instead.
-
-### Recording a demo
-
-`scripts/record_demo.sh [output.svg]` records a short animated demo (via [asciinema](https://asciinema.org) → [svg-term](https://github.com/marionebl/svg-term-cli)) showing narration actually streaming in, and writes `docs/screenshots/demo.svg`. It needs both tools (`pip install asciinema`, `npm install -g svg-term-cli`) and a server already running on `SERVER_URI` (default `ws://localhost:8765`) — against a real Ollama/Anthropic backend for genuine streaming narration, or any backend just to record the UI. It records the real terminal, so just play a few turns by hand and quit the client (Ctrl-D) when done.
-
-## Concept
+## What makes it Oracle
 
 Instead of a single-player chatbot, Oracle is a game engine with an LLM in the GM seat:
 
-- **Multiplayer, two ways**: players share one terminal and take turns (hotseat), or connect from their own terminals over the network — same engine underneath, different transport. Networked play with 2+ real clients trading turns, presence, and chat has been verified live end-to-end (see [ROADMAP.md](ROADMAP.md)); hotseat mode is architecturally supported but not separately exercised.
-- **Persistent character view**: each player's client always shows two regions — their character sheet, and a scrolling log of turn actions, DM narration, and prompts.
-- **LLM as adjudicator/narrator**: the server owns the source of truth (character sheets, world state, turn order, session log) and calls the LLM to resolve actions and narrate outcomes.
-- **A real setting, not a blank page**: every fresh campaign opens on the same premise — your character nearly died in their own ordinary world, and the Veil pulled them through into Aetherfall instead, greeted by Ashwren, the Warden of the Veil. Free-roam from there, but grounded: the setting's own facts (the Guardian, its regions, the real cost of finding a way home) are deterministic data (`server/lore/`), not something the DM has to reinvent — and can't be relied on to reinvent *consistently* — every session. Swappable for a different setting later; ships with this one by default.
-- **Grounded in real rules, not just vibes**: the DM can look up official D&D 5e SRD data (monster stats, spells, conditions) before improvising mechanics, and can reach for general web search when it needs outside inspiration.
-- **Real D&D-style XP and leveling, awarded deterministically**: defeating a tracked NPC/monster awards real XP (automatically, from the SRD's own Challenge Rating table, whenever the NPC's name matches a known monster) and levels a character up against the SRD's real Character Advancement thresholds — the award itself is triggered by the engine observing an NPC's HP hit 0, not by depending on the DM model reliably calling a dedicated tool, so it works the same regardless of which model is narrating.
-- **Character export/import**: `/export` saves your full character (progression included — XP, level, inventory, notes) to a local file at any point; import it back in on a future Join to pick up exactly where you left off, instead of losing progress once a session ends.
-- **Real ability scores (STR/DEX/CON/INT/WIS/CHA)**, assigned deterministically from the SRD's own real Standard Array per class, driving real HP growth (a genuine CON modifier, not just a flat hit-die roll) and real modifiers on DM-requested rolls — the engine computes and applies the modifier itself rather than trusting the model to do that arithmetic correctly.
-- **Rest and recovery**: a long rest fully heals, a short rest heals about half of what's missing — the DM tells the engine a character rested, the engine does the actual math, instead of the model guessing an HP number itself.
-- **Structured equipment**: real AC (armor + DEX modifier, computed automatically at character creation) and real weapon damage dice on attack rolls — the SRD's own equipment data (a longsword's real `1d8 slashing`, leather armor's real `11 + Dex modifier`) drives the engine, not the model inventing numbers.
-- **Mechanical conditions**: being poisoned, frightened, or prone genuinely rolls your next d20 with disadvantage (roll twice, keep the worse) — automatically, straight from your tracked condition list, no tool call needed to make it happen.
-- **Player-side sheet bookkeeping**: `/note` and `/item add`/`/item remove` let you edit your own notes and inventory directly, any time, with no DM adjudication and no waiting for your turn — reserved for pure bookkeeping, never HP/conditions/stats, which stay DM- or engine-only.
-- **Session-transcript export**: `/transcript [filename]` saves the running narration log to a plain text file, so a solo player has a real record of their story to keep — entirely client-side, no server round trip needed.
-- **Death saves**: hitting 0 HP doesn't end a character outright — real 5e death-save rolls (success/failure tracking, a natural 20 reviving with 1 HP, three failures meaning death) make "downed" an actual stake instead of a stat that quietly bottoms out.
-- **Ability-score improvements and real skill checks**: leveling up at the SRD's real ASI thresholds lets a player raise ability scores instead of just piling on HP, and DM-requested rolls apply real per-class skill proficiency bonuses (and a real proficiency-driven save DC for spells) rather than a flat, undifferentiated d20.
-- **Formal initiative order**: combat rolls real initiative (DEX modifier included) for every participant and enforces whose turn it actually is, instead of turns just being "whoever the DM narrates next."
-- **Spellcasting for wizard and cleric**, with real known-spell lists and 5e's own spell-slot table by level — casting a spell spends a real slot the engine tracks (shown on the character sheet), the same "engine owns the number" approach already applied to HP, AC, and damage dice.
+- **The server owns all truth.** Character sheets, world state, turn order, the campaign clock — every mechanical number is computed by the Python engine. The model narrates and adjudicates through tool calls (`update_character`, `update_world`, `request_roll`, `lookup_rule`); it never gets trusted with arithmetic.
+- **Multiplayer, two ways**: players share one browser tab and take turns (hotseat), or open their own tabs/windows over the network — same WebSocket protocol underneath.
+- **Two-phase turns** (v2): a schema-constrained *decide* call makes every structured decision — rolls, sheet deltas, world deltas, scene facts — then a separate unconstrained call writes the actual prose. Constrained JSON can't malform; unconstrained prose doesn't flatten. On the Ollama backend the decide phase runs under llama.cpp structured output; malformed tool calls are physically impossible, not merely discouraged.
+- **Grounded in real rules**: the DM looks up official D&D 5e SRD data before improvising mechanics, and the engine computes real AC, spell-slot bookkeeping, ability modifiers, proficiency bonuses, disadvantage from tracked conditions, death saves, and initiative.
+- **Real XP and leveling, awarded deterministically**: defeating a tracked NPC awards XP automatically from the SRD's Challenge Rating table when the engine observes its HP hit 0 — no dependence on the model reliably calling a dedicated tool.
+- **Keyword-triggered lorebook** (v2, SillyTavern World Info pattern): drop campaign files into `world_context/`, toggle them per session, and only entries whose keywords appear in recent play get injected — under a hard character budget with priority eviction.
+- **Campaign memory** (v2): a rolling summary rebuilt every ten resolved turns keeps early-session plot alive after the sliding history window scrolls past it.
+- **Progress clocks** (v2): Blades-style segmented tension meters as server state, ticked by the DM via tool; filling one announces itself.
+- **Structured scenes** (v2): each turn resolves into a `scene_update` — NPCs present, points of interest, up to four suggested actions rendered as clickable chips.
+- **Coordinate map** (v2): the DM places locations (with emoji hints) through its world-update tool; clients render the graph with the current location highlighted.
+- **Multi-provider AI** (v2): Ollama (local), Anthropic, or any OpenAI-compatible endpoint (Deepseek, Kimi, Grok, OpenAI).
+- **Character export/import** and transcript download, entirely client-side.
+- **FR / EN interface**, switchable live from either screen.
 
-## Planned (later)
+## Running it
 
-- Image generation for scene/character art, triggered off narration beats.
-- Text-to-speech for DM narration, for a more immersive session.
-
-The narrator sits behind a swappable interface from the start (see Architecture below) specifically so these can slot in without restructuring the engine.
-
-## Architecture
-
-- **Engine/server** (`server/`): owns game state (character sheets, world/campaign state, turn order, session log), enforces a strict turn queue, and calls the LLM for rule adjudication and narration.
-- **Narrator** (`server/narrator.py`): the LLM call sits behind a `NarratorBackend` interface, selected via `DM_BACKEND`. Two implementations exist:
-  - `AnthropicNarrator` (`DM_BACKEND=anthropic`) — hosted Claude, streams narration and can call five tools mid-turn: `request_roll` to resolve a genuinely uncertain action (dice notation plus an optional DC, returning a real result and success/failure verdict to narrate against — rolls aren't just decorative), a local `lookup_rule` tool backed by a small SRD dataset (`server/rules/`, CC-BY-4.0-licensed — see `server/rules/ATTRIBUTION.md`), `update_character` to apply real HP/inventory/condition changes to the acting character's sheet *or a named NPC/monster's own tracked sheet* (and give it a persistent memory note), `update_world` to track the campaign's persistent objectives/plot threads/location beyond any single scene, and Anthropic's hosted `web_search` for general inspiration only.
-  - `OllamaNarrator` (`server/narrator_ollama.py`, `DM_BACKEND=ollama`) — a free, local backend against a running [Ollama](https://ollama.com) server. Same `lookup_rule`/`update_character` tools (including the NPC-memory note); no `web_search` (Anthropic-hosted, no local equivalent) and, for now, neither `request_roll` nor `update_world` — deliberately withheld, not just weaker, since live testing found local models already miss the existing tools on most clearly-warranted turns (see Status below).
-- **Persistence** (`server/persistence.py`): session state is saved to disk via a swappable `SessionStore`, same pattern as the narrator.
-- **Clients** (`client/`, Textual TUI): thin — render the character sheet pane (including level, XP, and active objectives) + narrative/input log, send player actions to the engine. Hotseat and networked play are the same client/engine pair with different transports (local I/O vs. sockets).
-- **Protocol** (`docs/protocol.md`): the client/server event contract — this and the networked-from-day-one split exist so multiplayer, image generation, and TTS can be added later without a rewrite.
-
-## Tech stack
-
-- **Python** + **[Textual](https://textual.textualize.io/)** for the terminal UI.
-- **[websockets](https://websockets.readthedocs.io/)** for the client/server transport.
-- **[Anthropic Claude](https://www.anthropic.com/claude)** (`claude-sonnet-5`) or a local **[Ollama](https://ollama.com)** model as the narrator, with tool use for grounded rules lookups and real character-state changes.
-
-## Running
-
-A full session is two long-running programs talking to each other over a local network connection — the **server** (the game engine + DM) and the **client** (the terminal UI you actually type into). You'll need two separate terminal windows/tabs open at the same time: one stays running the server the whole session, the other runs the client you interact with. Closing either one ends that half of the session; the server can keep running with nobody connected, and you can reconnect a client to it later.
-
-### 0. Before you start
-
-You need:
-
-- **Python 3.11 or newer** already installed (check with `python3 --version`).
-- A terminal you're comfortable opening two windows/tabs of.
-- Either a free [Ollama](https://ollama.com) install (no account, no cost, runs the AI locally on your own machine — slower, see the note below) **or** an [Anthropic API key](https://console.anthropic.com/) with billing set up (faster, hosted, costs real money per session). You only need one of these, not both.
-
-### 1. Get the code and set up a virtual environment
-
-If you haven't already cloned it:
+Requirements: Python 3.11+, Node 20+ (build only).
 
 ```bash
-git clone https://github.com/Cyb3rRon1n/oracle.git
-cd oracle
+# server
+pip install -e ".[ollama]"          # or ".[dev]" for API-only backends
+cp .env.example .env                 # set DM_BACKEND / keys
+python -m server.main                # ws://localhost:8765
+
+# web client (development)
+cd web && npm ci && npm run dev      # http://localhost:5173
+
+# web client (production build)
+cd web && npm run build && npm run preview
 ```
 
-A [virtual environment](https://docs.python.org/3/library/venv.html) keeps this project's Python packages separate from everything else on your system — create and activate one:
+Open two browser windows pointed at the same session id and you're playing together. Character `.json` exports from a previous session import on the join screen.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate   # on Windows: .venv\Scripts\activate
+### Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DM_BACKEND` | `anthropic` | `anthropic` \| `ollama` \| `openai` |
+| `ANTHROPIC_API_KEY` | — | Anthropic backend |
+| `OLLAMA_MODEL` / `OLLAMA_HOST` | `qwen2.5:7b` / localhost | Ollama backend |
+| `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL` | api.openai.com | Any `/chat/completions` provider |
+| `WORLD_CONTEXT_DIR` | `world_context/` | Lorebook source files |
+| `SESSION_STORE_DIR` | `sessions/` | Session persistence |
+| `OLLAMA_TWO_PHASE` | `true` | `"0"` restores the single-call path (kept for A/B measurement) |
+
+## Repository layout
+
+```
+├── server/            # authoritative engine (this is the game)
+│   ├── engine.py      #   turn loop, tools, broadcasts
+│   ├── state.py       #   sheets, world, clocks, map, session
+│   ├── narrator*.py   #   anthropic / ollama / openai-compatible backends
+│   ├── lorebook.py    #   keyword-triggered context injection
+│   ├── rules/srd.json #   D&D 5e SRD data
+│   └── lore/          #   default campaign premise (Aetherfall)
+├── shared/protocol.py #   event envelope + types (single source of truth)
+├── web/               # React 18 + Vite + Tailwind client
+│   └── src/
+│       ├── state/store.jsx    # one reducer per protocol event
+│       ├── lib/{ws,protocol,storage}.js
+│       ├── i18n.jsx           # FR/EN
+│       └── components/        # join, log, sheet tabs, scene, map, dice
+├── tests/             # pytest: engine/state/narrators + live WS transport e2e
+└── docs/              # protocol spec (incl. v2 additions), rebuild plan
 ```
 
-You'll know it worked if your terminal prompt now starts with `(.venv)`. You'll need to run that `source`/`activate` line again any time you open a new terminal to work in this project.
+## The tool-call reliability investigation
 
-### 2. Choose how the DM will think, and install accordingly
-
-**Option A — Ollama (free, runs on your own computer, recommended for just trying it out):**
-
-```bash
-pip install -e ".[ollama]"
-```
-
-Then, separately, install Ollama itself from [ollama.com](https://ollama.com) if you don't have it yet, and pull the model Oracle defaults to:
-
-```bash
-ollama pull qwen2.5:7b
-```
-
-**Option B — Anthropic Claude (hosted, needs a paid API key):**
-
-```bash
-pip install -e .
-```
-
-You'll need an `ANTHROPIC_API_KEY` from [console.anthropic.com](https://console.anthropic.com/) with billing/credits set up — Oracle never generates or stores this key for you, you provide your own.
-
-### 3. Configure
-
-```bash
-cp .env.example .env
-```
-
-Then open the new `.env` file in any text editor and fill in the one or two lines that matter for the option you picked in step 2:
-
-- **Ollama**: set `DM_BACKEND=ollama`. `OLLAMA_MODEL` already defaults to `qwen2.5:7b`, matching what you pulled above — leave it as-is unless you want to try a different model.
-- **Anthropic**: set `DM_BACKEND=anthropic` and put your real key on the `ANTHROPIC_API_KEY=` line.
-
-Everything else in `.env` (`SESSION_STORE_DIR`) can stay at its default for a first run.
-
-### 4. Start it — two terminals
-
-**Terminal 1** — start the server and leave it running (this is the game engine; it won't print much beyond a startup line, that's normal):
-
-```bash
-python -m server.main
-```
-
-**Terminal 2** — start the client, which is what you'll actually see and type into:
-
-```bash
-python -m client.main
-```
-
-A full-screen terminal interface opens straight into a welcome screen — your pre-game menu:
-
-- **Character name** — a plain text field.
-- **Solo game / Multiplayer** — a choice, Solo by default. Solo mints a session just for you, derived from your own local player identity, so you're always seated first in turn order and never waiting on anyone else's turn — no Session ID to type or think about. Multiplayer reveals a **Session ID** field instead (blank for `default`); everyone who wants to be in the same game types the same ID.
-- **Class** (`fighter`/`wizard`/`rogue`/`cleric`, blank to skip) — only shown for a brand-new character, not on reconnect. Picks a real starting HP (from the class's SRD hit die) and a starting item or two, so your sheet isn't just a name and 10 HP with nothing else. Leave it blank for that old blank-sheet behavior instead. Not sure which to pick? A "Not sure? Get a class recommendation" button reveals a quick 3-question quiz that pre-fills this field with a suggestion — still just a suggestion, edit or clear it freely either way.
-- **Import character .json** (optional, also brand-new-character only) — path to a file previously written by `/export` (see Play, below). When filled in, it wins over the name/class fields above entirely — your saved name, class, HP, XP, level, inventory, and notes all carry over, picking up your progression instead of starting fresh.
-
-Press **Join** (or Enter) and you land in the **lobby**: your character sheet (review it before things kick off), a chat log, and a **Start Adventure** button. This is where you can chat with anyone else who's joined, and see them show up in the **Party** list on your sheet, before anything happens in the story. Any joined player can hit Start Adventure — there's no separate host — and everyone's client moves into the real session view together, where the DM narrates the opening scene live.
-
-Reconnecting mid-game (the client remembers you via `.player_id`, see below) skips the lobby entirely and drops you straight back into the session.
-
-### 5. Play
-
-Once the adventure starts, the interface is a full-width scrolling narrative log on top, your character sheet (with its own tab bar) as a compact band underneath, and an input bar at the bottom. The DM opens with a short scene as everyone watches it stream in — no blank prompt to stare at. From there, type what your character does in plain English and press Enter — e.g. `I open the door` or `I attack the goblin with my sword`. The DM (Ollama or Claude, whichever you configured) responds with narration, streamed in as it's generated.
-
-A couple of special commands, typed into that same input bar:
-
-- `/roll 1d20` (or `/roll 2d6+3 stealth check`) — roll dice yourself, outside the DM's narration.
-- `/chat hello` — out-of-character chat, doesn't affect the story.
-- `/note <text>` — jot a note on your own sheet, no DM adjudication needed.
-- `/item add <name>` / `/item remove <name>` — manage your own inventory directly, same as `/note`.
-- `/export [filename]` — save your current character (name, class, HP, XP, level, inventory, notes — everything on your sheet) to a local `.json` file, `character.json` by default. Also works in the lobby's chat input, before the adventure even starts. Use the saved file with **Import character .json** on a future Join to pick up right where you left off, on this session or a new one.
-- `/transcript [filename]` — save the running narration log (everything you've seen this session) to a local `.txt` file, `transcript.txt` by default. Also works in the lobby's chat input (exports the lobby chat itself, `lobby-chat.txt` by default) — each screen only ever exports its own log.
-
-**If you're using Ollama on CPU (no dedicated GPU), be patient** — each DM response can genuinely take 30-90 seconds to generate. This is normal, not a hang; the client will show the response streaming in once it starts.
-
-To quit, close the client terminal (`Ctrl+C` works) — the server can stay running for next time, or you can stop it the same way.
-
-### Stopping and picking back up later
-
-Game state (characters, world, turn order, log) is saved to `sessions/<Session ID>.json` after every join and every resolved action, so stopping and restarting the server resumes where you left off. One running server can host any number of these side by side — each is created the first time a client actually joins that Session ID and lives independently of the others, so a second, unrelated game on the same server never sees the first one's players or story. The client remembers its own player ID in a local `.player_id` file, so restarting the client reconnects you to the same character rather than creating a new one — delete that file to start as a fresh character. Delete a session's JSON file under `sessions/` to reset that world.
-
-## Testing
-
-```bash
-pip install -e ".[dev]"
-pytest -v
-```
-
-CI (`.github/workflows/ci.yml`) runs the same suite on every push/PR.
-
-### Live tool-call reliability check
-
-`scripts/live_reliability_check.py` runs a fixed 8-turn combat scenario through the real engine against a real, live narrator backend — not mocked — and reports whether `update_character` fired when it should have, whether it targeted the right sheet, and whether the model leaked pseudo-tool-call text into narration instead of actually invoking the tool:
-
-```bash
-python -m scripts.live_reliability_check --backend ollama --model qwen2.5:7b
-python -m scripts.live_reliability_check --backend anthropic --out results.json
-```
-
-`scripts/compare_reliability_reports.py` diffs two or more saved `--out` reports (single-run or `--repeat`) into one comparison table instead of eyeballing printed summaries by hand — the "is this new model worth switching to" question the reliability investigation kept re-asking one model at a time:
-
-```bash
-python -m scripts.live_reliability_check --backend ollama --model qwen2.5:7b --repeat 5 --out qwen25.json
-python -m scripts.live_reliability_check --backend ollama --model qwen3:8b --repeat 5 --out qwen3.json
-python -m scripts.compare_reliability_reports qwen25.json qwen3.json
-```
-
-See [ROADMAP.md](ROADMAP.md) item 6 for why this exists and what it's found so far.
-
-## Status
-
-**TL;DR**: the game engine, persistence, and both narrator backends work end-to-end and are covered by CI. Local-model tool-call reliability was a genuine open question for most of this project's life — a live, reproducible harness found small models plateauing around 29% correctness on the acting tool call, regardless of model size, native tool-use training, or prompt tuning. That finally broke: switching the local backend from free-form tool-calling to constrained JSON output (Ollama's `format` parameter) roughly doubled real correctness (66% vs. 29% pooled, `qwen2.5:7b`, 5-repeat comparison) and is now `OllamaNarrator`'s default. Not a claim that reliability is solved — per-run correctness still ranges 57%-86% — but the first genuine fix across seven experiments, not just a mitigation. See below and [ROADMAP.md](ROADMAP.md) for the full log.
-
-Working single-player game, verified live end-to-end across multiple real turns. Join, character sheet rendering, turn prompts, action submission, chat (`/chat`) and dice rolls (`/roll`), graceful error handling on API failures, full-restart persistence, and streamed narration with real `update_character` tool calls have all been observed working against live local models via Ollama. Two models were compared head to head early on: `llama3.1:8b` made a real tool call on turn 1 but lapsed into narrating a fake tool call as plain text on turn 2 (breaking character in the process); `qwen2.5:7b`, tried afterward, looked cleaner in that first short session (3 clean turns) and became the default local model on that basis. **A much bigger live sample since then found that impression didn't hold up**: `update_character` can now also target a named NPC/monster instead of only the acting character, so a wounded goblin's HP persists turn to turn instead of only existing in that turn's prose — the *mechanism* works (verified end-to-end), but across 13 total live turns spanning three sessions, only 2 of the clearly-warranted tool calls actually happened, including an 8-turn run with real, unambiguous, eventually-lethal combat that produced *zero* calls. Logged in full in [ROADMAP.md](ROADMAP.md) rather than smoothed over — this is a real, unresolved reliability question about the current default local model, not a rigorous benchmark either way yet. A follow-up investigation ruled out streaming as the cause (confirmed empirically against this project's real installed `ollama` version — the same drop happens with `stream=False` too) and confirmed accumulated conversation history as the real driver; a candidate prompt-level fix for a related mistargeting bug looked promising in isolated testing but, tested for real against the identical 8-turn scenario through the actual engine, didn't improve the real success rate and introduced a new visible defect (leaked pseudo-tool-call text in the narration) — so it was reverted rather than shipped. Root cause is narrowed, not solved. The hosted Claude backend shares the exact same engine/tool-loop code path and is structurally verified against mocked responses, but hasn't been run live yet — pending Anthropic account credits. Image generation and TTS are deliberately not built yet; multiplayer, by contrast, has since been built and verified end-to-end with two real clients trading real turns over a real websocket (see [ROADMAP.md](ROADMAP.md)).
-
-That investigation is now backed by a reusable, version-controlled harness (`scripts/live_reliability_check.py`) instead of one-off scratchpad scripts. Re-running it against `llama3.1:8b` found the same-size-class "bigger model" didn't help (14% vs. `qwen2.5:7b`'s 29% on the identical scenario) and surfaced a genuine, independent correctness bug along the way — the model sometimes echoed its own `player_id` back as `target` instead of `"self"`, which the engine misrouted into creating a phantom NPC sheet. That's now fixed and regression-tested. Six more experiments followed the same pattern — scale, native tool-use training, prompt reminders, and history-window tuning were all tried, and none moved the ~29% ceiling in a way that reproduced under `--repeat`. The seventh did: switching from free-form tool-calling to Ollama's constrained JSON `format` mode changes the problem shape from "decide whether to call a tool" to "fill in a field" and roughly doubled real correctness (66% vs. 29% pooled, corrected for a casefold scoring bug the harness itself had — see [ROADMAP.md](ROADMAP.md) item 6 for the full accounting, including what the new schema doesn't cover yet). It's now `OllamaNarrator`'s default, with `OLLAMA_STRUCTURED_OUTPUT=0` as an escape hatch back to the legacy path. Full numbers and detail in [ROADMAP.md](ROADMAP.md) item 6.
-
-Beyond reliability, a research-informed pass added the pieces that make a session feel like a story worth following rather than a chatbot answering one prompt at a time: a real `update_world` tool tracking persistent objectives/plot threads/location (Claude-only, same reliability reasoning as `request_roll`), NPC memory via a `notes` field the DM now actually uses (both backends), and a DM-generated opening scene on a fresh session instead of silence until the player acts first (both backends). Also not yet verified live for the same reason as `request_roll` above.
-
-Then: real D&D-style XP and leveling, awarded deterministically off engine-observed state (an NPC's HP hitting 0) rather than a DM tool call, so it doesn't inherit the tool-call reliability question above; character export/import, so a character's progression survives across sessions; real ability scores, with the engine — not the DM model — computing modifiers and applying them to HP growth and requested rolls; rest/recovery, the same "engine computes the number" reasoning applied to healing; structured equipment, with real AC and weapon damage dice pulled from the SRD's own equipment data instead of invented; mechanical conditions, with poisoned/frightened/prone genuinely imposing disadvantage rather than staying decorative tags; `character_edit`, letting a player manage their own notes/inventory directly with no DM adjudication and no turn-order wait; session-transcript export (`/transcript`), a plain-text record of the running narration log with no server involved at all; a distinct yellow-styled treatment for the missed-change heuristic's own advisory, so it no longer blends in with an ordinary system message; real objective expiry/failure, so a quest can genuinely go stale or fail outright instead of only ever completing or staying open forever; a lightweight NPC disposition field (hostile/neutral/friendly), a structured value the DM can stay consistent against instead of only free-text notes; `/transcript` in the lobby too, exporting the pre-adventure chat log alongside the existing in-session one; and a real, persistent NPC status panel replacing the original dim-log-line approach, closing a real staleness bug where NPC state was never actually kept live between updates.
-
-Most recently: death saves, so hitting 0 HP is a genuine stake (real success/failure tracking, a natural 20 reviving with 1 HP, three failures meaning death) instead of a number that just bottoms out; ability-score improvements on level-up at the SRD's real thresholds; real per-class skill proficiency bonuses and a real proficiency-driven spell save DC on requested rolls, instead of a flat undifferentiated d20; a formal initiative order, rolling real DEX-modified initiative for every combat participant and enforcing turn order instead of the DM just narrating whoever's next; and spellcasting for wizard and cleric, with real known-spell lists and 5e's own spell-slot table — casting spends a real slot the engine tracks, shown live on the character sheet. All fully verified end-to-end, including over a real websocket connection; see [ROADMAP.md](ROADMAP.md).
-
-See [ROADMAP.md](ROADMAP.md) for what's next and why, in priority order.
+The [ROADMAP](ROADMAP.md) documents a repeatable harness (`scripts/live_reliability_check.py`) measuring whether small local models actually fire `update_character` when narration demands it — baseline percentages across models, a two-request split tried and reverted, and what moved the needle (structured output roughly doubled real tool-call correctness). The v2 narrator changes (two-phase turns, lorebook injection, campaign summaries) change the prompt context those baselines were measured against; treat pre/post numbers as separate eras until the harness has been re-run against the current pipeline.
 
 ## Contributing
 
-Solo portfolio project, not actively seeking contributions, but issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Solo portfolio project — issues and ideas welcome via the issue templates; see [CONTRIBUTING.md](CONTRIBUTING.md) for PR expectations.
 
 ## License
 
-[MIT](LICENSE), except the SRD game data under `server/rules/`, which is CC-BY-4.0 — see [server/rules/ATTRIBUTION.md](server/rules/ATTRIBUTION.md).
+[MIT](LICENSE)
