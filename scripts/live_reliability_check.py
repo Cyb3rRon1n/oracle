@@ -38,6 +38,7 @@ Two scenarios, selected via --scenario, never mixed together:
 Usage:
     python -m scripts.live_reliability_check --backend ollama --model qwen2.5:7b
     python -m scripts.live_reliability_check --backend anthropic --out results.json
+    python -m scripts.live_reliability_check --backend openai --out results.json
     python -m scripts.live_reliability_check --model qwen3:8b --repeat 3  # aggregate over 3 runs
     python -m scripts.live_reliability_check --tool-calling  # reproduce the legacy pre-structured-output baseline
     python -m scripts.live_reliability_check --scenario field-parity --repeat 5  # rest/notes/disposition/cast_spell
@@ -48,6 +49,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -550,11 +552,17 @@ async def main_async(args: argparse.Namespace) -> None:
             model=model_label, host=args.host, rules=RulesIndex.load_default(),
             structured_output=not args.tool_calling, few_shot_example=args.few_shot,
             hardened_rules=args.hardened_rules,
-            # Two of the persuasion scenario's scored turns are meaningless
-            # without DM-requested rolls - normal play keeps them opt-in
-            # (OLLAMA_ROLL_REQUESTS), this scenario can't score without them.
+
+
+
             roll_requests=args.scenario == "persuasion",
         )
+    elif args.backend == "openai":
+        from server.narrator_openai import OpenAINarrator
+        from server.rules import RulesIndex
+
+        model_label = args.model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        narrator = OpenAINarrator(model=model_label, rules=RulesIndex.load_default())
     else:
         from server.narrator import AnthropicNarrator
 
@@ -591,7 +599,7 @@ async def main_async(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--backend", choices=["ollama", "anthropic"], default="ollama")
+    parser.add_argument("--backend", choices=["ollama", "anthropic", "openai"], default="ollama")
     parser.add_argument("--model", default=None, help="Override the backend's default model.")
     parser.add_argument("--host", default=None, help="Ollama host URL, if not the default.")
     parser.add_argument("--out", default=None, help="Write a JSON report to this path for later diffing.")
