@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import ollama
 
@@ -309,11 +309,51 @@ STRUCTURED_OUTPUT_ROLL_SCHEMA = {
 # - same outcome shape as pass one, just without the roll-deciding fields
 # (a roll already happened; this call only narrates and applies its
 # consequences).
+# v2 scene facts (docs/protocol.md "Protocol v2 additions - Scene envelope"):
+# structured fields the DM decides alongside mechanics; the engine turns them
+# into a scene_update broadcast. Decided, never parsed out of prose.
+SCENE_PROPERTIES = {
+    "npcs_present": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Names of NPCs/monsters present in this scene right now.",
+    },
+    "points_of_interest": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Interactable things in the scene worth examining.",
+    },
+    "suggested_actions": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Up to 4 concrete things the acting player might do next.",
+    },
+}
+
+
+def _with_scene_fields(schema: dict) -> dict:
+    return {**schema, "properties": {**schema["properties"], **SCENE_PROPERTIES}}
+
+
+def _strip_narration(schema: dict) -> dict:
+    """The two-phase decide call decides everything EXCEPT prose - forced-JSON
+    narration measurably flattens it, so narration is written in a separate
+    unconstrained call (docs/REBUILD_PLAN.md two-phase turn)."""
+    props = {k: v for k, v in schema["properties"].items() if k != "narration"}
+    required = [r for r in schema.get("required", []) if r != "narration"]
+    return {**schema, "properties": props, "required": required}
+
+
+
 STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA = {
     "type": "object",
     "properties": dict(_OUTCOME_PROPERTIES),
     "required": ["narration", "mechanical_change"],
 }
+
+
+DECIDE_SCHEMA = _strip_narration(STRUCTURED_OUTPUT_ROLL_SCHEMA)
+DECIDE_FOLLOWUP_SCHEMA = _strip_narration(STRUCTURED_OUTPUT_FOLLOWUP_SCHEMA)
 
 # A second, independent extension alongside the roll fields above - unlike
 # a roll, a world-state change (location, a new/completed objective, a
@@ -582,6 +622,7 @@ class OllamaNarrator:
         host: str | None = None,
         rules: RulesIndex | None = None,
         structured_output: bool = True,
+        two_phase: bool = True,
         roll_requests: bool = False,
         world_updates: bool = False,
         world_bible: WorldBible | None = None,
@@ -623,6 +664,19 @@ class OllamaNarrator:
         # cast_spell might prefer full update_character parity over the
         # higher correctness rate on the fields structured mode does cover.
         self._structured_output = structured_output
+        # Two-phase turns (docs/REBUILD_PLAN.md): a schema-constrained decide
+        # call makes every structured decision (roll, sheet deltas, world
+        # deltas, scene facts) and a separate UNCONSTRAINED streaming call
+        # writes the prose - constrained JSON is reliability, but constraining
+        # narration measurably flattens it, so prose never lives in the
+        # schema on this path. Default ON; OLLAMA_TWO_PHASE=0 is the escape
+        # hatch back to the single-call structured path (kept intact for
+        # A/B measurement, this project's standard practice).
+        self._two_phase = two_phase
+        # Scene facts ride the two-phase decide schema; the single-call path
+        # keeps its exact shape (and the legacy tool-calling path never had
+        # them). Engine reads this via getattr before passing scene_sink.
+        self.supports_scene_facts = structured_output and two_phase
         # Defaults OFF, unlike structured_output above - see
         # STRUCTURED_OUTPUT_ROLL_SCHEMA's own docstring for why: real
         # signal from live spot-checks, but not yet validated at the same
@@ -648,12 +702,41 @@ class OllamaNarrator:
         request_roll: RequestRoll | None = None,
         update_world: UpdateWorld | None = None,
         world_summary: str | None = None,
+        scene_sink: Callable[[dict], None] | None = None,
     ) -> AsyncIterator[str]:
         if self._structured_output:
+            if self._two_phase:
+                return self._narrate_two_phase(
+                    history, character_summary, action_text, apply_update, request_roll, update_world, world_summary, scene_sink
+                )
             return self._narrate_structured(
                 history, character_summary, action_text, apply_update, request_roll, update_world, world_summary
             )
         return self._narrate_tool_calling(history, character_summary, action_text, apply_update)
+
+    async def summarize(self, prior_summary: str, turns: list[dict]) -> str:
+        prior = f"Summary so far:\n{prior_summary}\n\n" if prior_summary else ""
+        from .narrator import _turns_to_text
+
+        response = await self._client.chat(
+            model=self._model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You maintain a running campaign summary for a tabletop RPG "
+                        "session. Compress the recent events into a durable recap: "
+                        "who the characters and recurring NPCs are, what happened, "
+                        "what was promised or owed, and every unresolved thread. Keep "
+                        "proper names exactly. At most ~180 words. Output only the "
+                        "summary text."
+                    ),
+                },
+                {"role": "user", "content": f"{prior}Recent turns:\n{_turns_to_text(turns)}"},
+            ],
+            stream=False,
+        )
+        return (response.message.content or "").strip()
 
     async def check_missed_change(
         self, narration: str, character_summary: str, apply_update: ApplyUpdate
@@ -846,6 +929,103 @@ class OllamaNarrator:
             if world_update:
                 update_world(world_update)
 
+    async def _narrate_two_phase(
+        self,
+        history: list[dict],
+        character_summary: str,
+        action_text: str,
+        apply_update: ApplyUpdate,
+        request_roll: RequestRoll | None = None,
+        update_world: UpdateWorld | None = None,
+        world_summary: str | None = None,
+        scene_sink: Callable[[dict], None] | None = None,
+    ) -> AsyncIterator[str]:
+        """Two-phase turn (see the _two_phase constructor note). Phase 1: a
+        narration-free decide call under DECIDE_SCHEMA (+world/scene fields);
+        when it requests a roll, the engine rolls for real and a follow-up
+        decide call re-decides knowing the result - the same ordering
+        discipline _narrate_structured already documents. Structured changes
+        land BEFORE prose streams so sheet/world updates resolve as the
+        narration describing them starts. Phase 2: unconstrained streaming
+        prose told what was decided, so it cannot contradict the record."""
+        prompt = f"Character:\n{character_summary}\n\n"
+        if world_summary:
+            prompt += f"World state:\n{world_summary}\n\n"
+        prompt += f"Player action: {action_text}"
+        base_messages: list[dict] = [
+            {"role": "system", "content": self._structured_system_prompt},
+            *history,
+            {"role": "user", "content": prompt},
+        ]
+
+        schema = _with_scene_fields(_with_world_fields(DECIDE_SCHEMA, self._world_updates))
+
+        response = await self._client.chat(model=self._model, messages=base_messages, format=schema, stream=False)
+        try:
+            data = json.loads(response.message.content or "")
+        except json.JSONDecodeError:
+            yield response.message.content or ""
+            return
+
+        if request_roll is not None and data.get("roll_requested"):
+            roll_update: dict = {}
+            if data.get("roll_skill"):
+                roll_update["skill"] = data["roll_skill"]
+            if data.get("roll_ability"):
+                roll_update["ability"] = data["roll_ability"]
+            if data.get("roll_dc") is not None:
+                roll_update["dc"] = data["roll_dc"]
+            if data.get("roll_kind"):
+                roll_update["roll_kind"] = data["roll_kind"]
+            roll_result_text = request_roll(roll_update)
+            followup_schema = _with_scene_fields(_with_world_fields(DECIDE_FOLLOWUP_SCHEMA, self._world_updates))
+            followup_messages = [
+                {"role": "system", "content": self._structured_followup_system_prompt},
+                *history,
+                {"role": "user", "content": f"{prompt}\n\nReal dice result: {roll_result_text}\nDecide the outcome now."},
+            ]
+            response = await self._client.chat(model=self._model, messages=followup_messages, format=followup_schema, stream=False)
+            try:
+                data = json.loads(response.message.content or "")
+            except json.JSONDecodeError:
+                yield response.message.content or ""
+                return
+
+        if data.get("mechanical_change") or any(data.get(field) for field in ("rest", "notes", "disposition", "cast_spell")):
+            apply_update(_outcome_update(data))
+        if self._world_updates and data.get("world_change") and update_world is not None:
+            world_delta: dict = {}
+            for field in ("location", "mood", "add_objective", "complete_objective", "add_location"):
+                if data.get(field):
+                    world_delta[field] = data[field]
+            if world_delta:
+                update_world(world_delta)
+        if scene_sink is not None:
+            facts = {key: data.get(key) or [] for key in ("npcs_present", "points_of_interest", "suggested_actions")}
+            facts["suggested_actions"] = facts["suggested_actions"][:4]
+            scene_sink(facts)
+
+        decided = {k: v for k, v in data.items() if k not in SCENE_PROPERTIES}
+        narrate_messages: list[dict] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are the Dungeon Master. Narrate the outcome in vivid, "
+                    "concise open-ended prose (3-5 sentences). Never break "
+                    "character. Output prose only."
+                ),
+            },
+            *history,
+            {
+                "role": "user",
+                "content": f"{prompt}\n\nDecided outcome (narrate exactly this): {json.dumps(decided, ensure_ascii=False)}",
+            },
+        ]
+        stream = await self._client.chat(model=self._model, messages=narrate_messages, stream=True)
+        async for chunk in stream:
+            if chunk.message.content:
+                yield chunk.message.content
+
     async def _narrate_tool_calling(
         self, history: list[dict], character_summary: str, action_text: str, apply_update: ApplyUpdate
     ) -> AsyncIterator[str]:
@@ -924,10 +1104,15 @@ def create_ollama_narrator() -> OllamaNarrator:
     # OLLAMA_WORLD_UPDATES defaults OFF, same reasoning/opt-in convention as
     # OLLAMA_ROLL_REQUESTS above - see _WORLD_PROPERTIES' own docstring.
     world_updates = os.environ.get("OLLAMA_WORLD_UPDATES", "false").strip().lower() in ("1", "true", "yes")
+    # OLLAMA_TWO_PHASE defaults ON with structured output - the two-phase
+    # decide->narrate split is docs/REBUILD_PLAN.md's headline narrator
+    # change; "0" escapes to the single-call path for A/B measurement.
+    two_phase = os.environ.get("OLLAMA_TWO_PHASE", "true").strip().lower() not in ("0", "false", "no")
     return OllamaNarrator(
         model=os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
         host=os.environ.get("OLLAMA_HOST"),
         structured_output=structured,
+        two_phase=two_phase,
         roll_requests=roll_requests,
         world_updates=world_updates,
     )

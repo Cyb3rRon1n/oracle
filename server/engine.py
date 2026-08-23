@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -16,6 +18,7 @@ from .lore import (
     load_default_world_bible,
     random_origin,
 )
+from .lorebook import MAX_LORE_CHARS, SUPPORTED_SUFFIXES, Lorebook
 from .narrator import NarratorBackend
 from .persistence import SessionStore
 from .rules import RulesIndex, slug
@@ -38,6 +41,11 @@ SendTo = Callable[[str, Envelope], Awaitable[None]]
 # player character - the safety net for an NPC introduced without a
 # real max_hp from lookup_rule, not the intended path.
 DEFAULT_NPC_HP = 10
+
+# How many resolved turns between campaign-summary rebuilds - the rolling
+# window (Session.max_history_messages) holds ~6 turns, so 10 keeps the
+# summary comfortably ahead of what would otherwise scroll out of context.
+CAMPAIGN_SUMMARY_INTERVAL = 10
 
 # Fallback XP for defeating an NPC whose name doesn't match a known SRD
 # monster (see _xp_for_npc below) and whose introduction didn't carry an
@@ -909,6 +917,86 @@ class GameEngine:
         # (background/trait/near-death) - same load-once precedent.
         self._origin_table = origin_table or load_default_origin_table()
         self._pending_proposals: dict[str, dict] = {}
+        # World-context lorebook (docs/protocol.md "Protocol v2 additions -
+        # World context -> lorebook"): empty until a client sends
+        # context_select; rebuilt from disk on every selection change and
+        # on construction when a reloaded save carries context_files.
+        self._world_context_dir = Path(os.environ.get("WORLD_CONTEXT_DIR", "world_context"))
+        self._lorebook = Lorebook()
+        if session.context_files:
+            self._rebuild_lorebook(session.context_files)
+
+    def _manifest_files(self) -> list[dict]:
+        """The world_context/ directory listing - names/types/sizes only,
+        no content (docs/protocol.md). A missing directory is an empty
+        manifest, not an error: the feature simply has nothing to offer."""
+        if not self._world_context_dir.is_dir():
+            return []
+        files = [
+            {
+                "name": p.name,
+                "type": p.suffix.lstrip(".").lower(),
+                "size_chars": len(p.read_text(encoding="utf-8", errors="replace")),
+            }
+            for p in sorted(self._world_context_dir.iterdir())
+            if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
+        ]
+        return files
+
+    def _rebuild_lorebook(self, names: list[str]) -> None:
+        known = {f["name"] for f in self._manifest_files()}
+        safe_names = [n for n in names if n in known]
+        paths = [self._world_context_dir / n for n in safe_names]
+        self._lorebook = Lorebook.from_files(paths)
+
+    async def _on_context_manifest_request(self, envelope: Envelope) -> None:
+        await self._send_to(
+            envelope.sender_id,
+            Envelope(
+                type="context_manifest",
+                session_id=self._session.session_id,
+                sender_id="server",
+                payload={"files": self._manifest_files(), "selected": self._session.context_files},
+            ),
+        )
+
+    async def _on_context_select(self, envelope: Envelope) -> None:
+        names = envelope.payload.get("files")
+        if not isinstance(names, list):
+            await self._send_to(
+                envelope.sender_id,
+                self._system_envelope("Invalid world-context selection.", level="error"),
+            )
+            return
+        known = {f["name"] for f in self._manifest_files()}
+        selected = [n for n in names if isinstance(n, str) and n in known]
+        dropped = [n for n in names if n not in selected]
+        self._session.context_files = selected
+        self._rebuild_lorebook(selected)
+        oversized = [
+            e.title or "(untitled)"
+            for e in self._lorebook.entries
+            if len(e.injection_text()) + 32 > MAX_LORE_CHARS
+        ]
+        if dropped:
+            await self._send_to(
+                envelope.sender_id,
+                self._system_envelope(
+                    "Ignored unknown world-context file(s): " + ", ".join(map(str, dropped)),
+                    level="warning",
+                ),
+            )
+        if oversized:
+            await self._send_to(
+                envelope.sender_id,
+                self._system_envelope(
+                    "Too large to ever inject under the lore budget: "
+                    + ", ".join(oversized)
+                    + ". Split it into smaller sections.",
+                    level="warning",
+                ),
+            )
+        await self._save(envelope.sender_id)
 
     async def _save(self, notify_player_id: str | None = None) -> None:
         """Persists session state - best-effort, not fatal. Previously a
@@ -1459,6 +1547,7 @@ class GameEngine:
 
         self._session.log.append({"kind": "narration", "text": buffer})
         self._session.append_turn(text, buffer)
+        await self._maybe_update_campaign_summary()
         self._session.advance_turn()
         await self._save(player_id)
         await self._broadcast(self._turn_prompt_envelope())
@@ -1858,11 +1947,38 @@ class GameEngine:
                 result = delta_result
             return result + xp_note
 
+        # Scene-facts snapshot for this turn (docs/protocol.md "Protocol v2
+        # additions - Scene envelope"): the narrator's decide phase reports
+        # them through the scene_sink closure below; broadcast after narration
+        # finishes so the client renders them as the turn's resolution.
+        scene_facts: dict = {}
+
+        def scene_sink(facts: dict) -> None:
+            nonlocal scene_facts
+            # The 4-action cap is a protocol guarantee (docs/protocol.md),
+            # enforced here server-side rather than trusted to each backend.
+            trimmed = dict(facts)
+            trimmed["suggested_actions"] = list(facts.get("suggested_actions", []))[:4]
+            scene_facts = trimmed
+
+        full_clocks_before = {c.name for c in self._session.world.clocks if c.filled >= c.segments}
+        # (text) - one entry per progress clock this turn's update_world
+        # calls filled to its last segment (docs/protocol.md "Clocks"),
+        # announced as a system_message after narration finishes streaming,
+        # the same deferred-broadcast shape outcomes/xp_awards already use -
+        # apply_update/update_world are synchronous tool callbacks, so
+        # nothing here can await a broadcast directly.
+        clocks_filled: list[str] = []
+
         def update_world(update: dict) -> str:
             nonlocal world_changed
             result = self._session.world.apply_update(update)
             if not result.startswith("No changes applied"):
                 world_changed = True
+                for clock in self._session.world.clocks:
+                    if clock.name not in full_clocks_before and clock.filled >= clock.segments:
+                        clocks_filled.append(f"The clock '{clock.name}' fills - its consequence arrives.")
+                        full_clocks_before.add(clock.name)
             return result
 
         # Prepended here rather than baked into the DM's system prompt -
@@ -1887,9 +2003,26 @@ class GameEngine:
 
         buffer = ""
         world_summary = self._session.world.narrator_context()
+        if self._session.campaign_summary:
+            recap = f"Campaign so far: {self._session.campaign_summary}"
+            world_summary = f"{recap}\n{world_summary}" if world_summary else recap
         npc_roster = _npc_roster(self._session)
         if npc_roster:
             world_summary = f"{world_summary}\n{npc_roster}" if world_summary else npc_roster
+        # Lorebook injection (docs/protocol.md "World context -> lorebook"):
+        # keyword hits from the recent play window under a character budget,
+        # appended to the same grounding region of the prompt world state
+        # and the NPC roster already occupy. Empty selection -> empty block,
+        # so sessions that never touch world_context are byte-identical to
+        # before.
+        window_text = "\n".join(
+            str(message.get("content", "")) for message in self._session.history[-6:]
+        )
+        lore_block = self._lorebook.injection_block(f"{window_text}\n{npc_roster}\n{world_summary}")
+        if not lore_block:
+            lore_block = self._lorebook.injection_block(narrate_action_text)
+        if lore_block:
+            world_summary = f"{world_summary}\n\n{lore_block}" if world_summary else lore_block
         async for chunk in self._dm.narrate(
             history=self._session.history,
             character_summary=character.model_dump_json(),
@@ -1898,10 +2031,29 @@ class GameEngine:
             request_roll=request_roll,
             update_world=update_world,
             world_summary=world_summary,
+            **(
+                # Optional-capability convention (same getattr pattern
+                # check_missed_change uses): only backends that decide scene
+                # facts accept scene_sink - test doubles and legacy paths
+                # keep their exact narrate() signature untouched.
+                {"scene_sink": scene_sink}
+                if getattr(self._dm, "supports_scene_facts", False)
+                else {}
+            ),
         ):
             buffer += chunk
             await self._broadcast(self._log_envelope("narration", chunk, done=False))
         await self._broadcast(self._log_envelope("narration", "", done=True))
+
+        if scene_facts:
+            await self._broadcast(
+                Envelope(
+                    type="scene_update",
+                    session_id=self._session.session_id,
+                    sender_id="server",
+                    payload={"narration_id": f"{player_id}:{len(self._session.log)}", **scene_facts},
+                )
+            )
 
         # A real chance for the DM to self-correct, not just a passive
         # warning - see check_for_missed_changes's own comment further
@@ -1941,6 +2093,12 @@ class GameEngine:
         # player_update/npc_update already are.
         for text, category in outcomes:
             await self._broadcast(self._log_envelope("outcome", text, category=category))
+
+        # A filled clock is a stakes milestone, not narration - announced as
+        # a system_message (docs/protocol.md "Clocks") so clients can render
+        # it distinctly and react.
+        for clock_text in clocks_filled:
+            await self._broadcast(self._system_envelope(clock_text, level="info"))
 
         if xp_award_members:
             for _pid, _member in xp_award_members.items():
@@ -2034,6 +2192,30 @@ class GameEngine:
             )
 
         return buffer
+
+    async def _maybe_update_campaign_summary(self) -> None:
+        """Best-effort rolling campaign summary (docs/REBUILD_PLAN.md): every
+        CAMPAIGN_SUMMARY_INTERVAL resolved turns, hand the backend the current
+        summary plus the history window and let it compress. Failure never
+        blocks the turn - the same report-don't-block convention _save()
+        already established; a stale/absent summary degrades to exactly the
+        pre-summarizer behavior."""
+        session = self._session
+        if not session.history:
+            return
+        session.turns_since_summary += 1
+        if session.turns_since_summary < CAMPAIGN_SUMMARY_INTERVAL:
+            return
+        session.turns_since_summary = 0
+        summarize = getattr(self._dm, "summarize", None)
+        if summarize is None:
+            return
+        try:
+            summary = await summarize(session.campaign_summary, session.history)
+            if summary:
+                session.campaign_summary = summary
+        except Exception:
+            logger.exception("Campaign summary update failed for session %s", session.session_id)
 
     async def _on_chat_message(self, envelope: Envelope) -> None:
         await self._broadcast(self._log_envelope("chat", envelope.payload.get("text", "")))

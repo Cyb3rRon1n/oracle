@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 EventType = Literal[
-    # client -> server
+
     "join_session",
     "player_action",
     "chat_message",
@@ -17,7 +17,7 @@ EventType = Literal[
     "start_session",
     "start_combat",
     "end_combat",
-    # server -> client
+
     "state_sync",
     "log_entry",
     "character_update",
@@ -31,6 +31,12 @@ EventType = Literal[
     "session_started",
     "system_message",
     "apply_proposed_change",
+
+    # Protocol v2 (docs/protocol.md "Protocol v2 additions")
+    "context_manifest_request",
+    "context_manifest",
+    "context_select",
+    "scene_update",
 ]
 
 

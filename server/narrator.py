@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 from collections.abc import AsyncIterator, Callable
 from typing import Protocol
 
 import anthropic
 
+logger = logging.getLogger(__name__)
+
 from .lore import WorldBible, load_default_world_bible
 from .rules import RulesIndex
 from .state import ABILITY_KEYS, SKILL_ABILITIES
+
+def _turns_to_text(turns: list[dict]) -> str:
+    return "\n".join(f"{'Player' if m.get('role') == 'user' else 'DM'}: {m.get('content', '')}" for m in turns)
+
 
 DM_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 Narrate outcomes vividly but concisely (3-5 sentences per turn). Track consequences
@@ -466,6 +474,11 @@ class NarratorBackend(Protocol):
         returns a description of what changed, which becomes that tool
         call's result.
 
+        `scene_sink`, when given, is called once per resolved turn with the
+        scene-facts dict (npcs_present/points_of_interest/suggested_actions)
+        for the engine's scene_update broadcast (docs/protocol.md) - decided
+        by the model's structured output, never parsed out of prose.
+
         `world_summary` is the current location and active objectives
         (WorldState.narrator_context(), server/state.py), given directly
         rather than left for the DM to infer from `history` alone. Built
@@ -520,6 +533,11 @@ class NarratorBackend(Protocol):
 
 
 class AnthropicNarrator:
+    # Optional-capability flag (engine reads it via getattr): this backend
+    # extracts scene facts in a post-turn call and therefore takes the
+    # scene_sink argument.
+    supports_scene_facts = True
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -546,6 +564,7 @@ class AnthropicNarrator:
         request_roll: RequestRoll | None = None,
         update_world: UpdateWorld | None = None,
         world_summary: str | None = None,
+        scene_sink=None,
     ) -> AsyncIterator[str]:
         prompt = f"Character:\n{character_summary}\n\n"
         if world_summary:
@@ -588,6 +607,67 @@ class AnthropicNarrator:
             if not tool_results:
                 return
             messages.append({"role": "user", "content": tool_results})
+
+        # Scene facts (docs/protocol.md "Protocol v2 additions - Scene
+        # envelope"). This backend's tool loop already interleaved decisions
+        # with prose, so the facts come from one small post-turn structured
+        # call over what actually streamed - best-effort, never fatal, and
+        # skipped entirely when nobody is listening.
+        if scene_sink is not None:
+            try:
+                response = await self._client.messages.create(
+                    model=self._model,
+                    max_tokens=300,
+                    system=(
+                        "Extract scene facts from this D&D turn as a single JSON object with "
+                        'keys "npcs_present", "points_of_interest", "suggested_actions" '
+                        "(each an array of short strings; suggested_actions has at most 4 "
+                        "items). Output only the JSON."
+                    ),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Character:\n{character_summary}\n\nPlayer action: {action_text}\n\n"
+                                f"DM narration:\n{buffer}"
+                            ),
+                        }
+                    ],
+                )
+                text = response.content[0].text
+                start, end = text.find("{"), text.rfind("}")
+                if start >= 0 and end > start:
+                    facts = json.loads(text[start : end + 1])
+                    scene_sink({key: facts.get(key) or [] for key in ("npcs_present", "points_of_interest", "suggested_actions")})
+            except Exception:
+                logger.exception("Scene-fact extraction failed")
+
+    async def summarize(self, prior_summary: str, turns: list[dict]) -> str:
+        """Optional (getattr at the call site) - the rolling campaign-summary
+        hook behind docs/REBUILD_PLAN.md's memory summarizer. Called by the
+        engine roughly every CAMPAIGN_SUMMARY_INTERVAL resolved turns with
+        the summary so far plus the history window that's about to age out;
+        returns a compressed durable recap (names, debts, unresolved
+        threads). A backend without it simply never updates the summary -
+        the same optional-capability convention as check_missed_change."""
+        raise NotImplementedError
+
+    async def summarize(self, prior_summary: str, turns: list[dict]) -> str:
+        prior = f"Summary so far:\n{prior_summary}\n\n" if prior_summary else ""
+        response = await self._client.messages.create(
+            model=self._model,
+            max_tokens=400,
+            system=(
+                "You maintain a running campaign summary for a tabletop RPG "
+                "session. Compress the recent events into a durable recap: "
+                "who the characters and recurring NPCs are, what happened, "
+                "what was promised or owed, and every unresolved thread. Keep "
+                "proper names exactly. At most ~180 words. Output only the "
+                "summary text."
+            ),
+            messages=[{"role": "user", "content": f"{prior}Recent turns:\n{_turns_to_text(turns)}"}],
+        )
+        return response.content[0].text.strip()
 
     async def check_missed_change(
         self, narration: str, character_summary: str, apply_update: ApplyUpdate
@@ -658,4 +738,8 @@ def create_narrator(backend: str | None = None) -> NarratorBackend:
         from .narrator_ollama import create_ollama_narrator  # optional dependency
 
         return create_ollama_narrator()
-    raise ValueError(f"Unknown DM_BACKEND {backend!r}. Valid backends: 'anthropic', 'ollama'.")
+    if backend == "openai":
+        from .narrator_openai import create_openai_narrator  # optional dependency
+
+        return create_openai_narrator()
+    raise ValueError(f"Unknown DM_BACKEND {backend!r}. Valid backends: 'anthropic', 'ollama', 'openai'.")

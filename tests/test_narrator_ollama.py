@@ -251,20 +251,28 @@ def make_structured_narrator() -> OllamaNarrator:
     # tests exercise the base structured-output path, byte-identical to
     # before OLLAMA_ROLL_REQUESTS existed. Roll-specific behavior below uses
     # make_structured_roll_narrator() instead.
-    return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=True)
+    return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=True, two_phase=False)
 
 
 def make_structured_roll_narrator() -> OllamaNarrator:
-    return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=True, roll_requests=True)
+    return OllamaNarrator(
+        rules=RulesIndex.load_default(), structured_output=True, two_phase=False, roll_requests=True
+    )
 
 
 def make_structured_world_narrator() -> OllamaNarrator:
-    return OllamaNarrator(rules=RulesIndex.load_default(), structured_output=True, world_updates=True)
+    return OllamaNarrator(
+        rules=RulesIndex.load_default(), structured_output=True, two_phase=False, world_updates=True
+    )
 
 
 def make_structured_roll_and_world_narrator() -> OllamaNarrator:
     return OllamaNarrator(
-        rules=RulesIndex.load_default(), structured_output=True, roll_requests=True, world_updates=True
+        rules=RulesIndex.load_default(),
+        structured_output=True,
+        two_phase=False,
+        roll_requests=True,
+        world_updates=True,
     )
 
 
@@ -748,7 +756,7 @@ async def test_structured_narrate_includes_the_summary_even_when_world_updates_i
     # Only meaningful when world_updates is actually on - passing it
     # otherwise would describe schema fields this call doesn't even
     # expose, pure noise for a narrator that isn't tracking world state.
-    narrator = OllamaNarrator(model="m", rules=RulesIndex.load_default(), structured_output=True)
+    narrator = OllamaNarrator(model="m", rules=RulesIndex.load_default(), structured_output=True, two_phase=False)
     payload = {"narration": "Nothing changes.", "mechanical_change": False}
     narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
 
@@ -765,7 +773,7 @@ async def test_structured_narrate_includes_the_summary_even_when_world_updates_i
 
 
 async def test_structured_narrate_empty_world_summary_sends_no_world_state_section():
-    narrator = OllamaNarrator(model="m", rules=RulesIndex.load_default(), structured_output=True)
+    narrator = OllamaNarrator(model="m", rules=RulesIndex.load_default(), structured_output=True, two_phase=False)
     payload = {"narration": "Nothing changes.", "mechanical_change": False}
     narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
 

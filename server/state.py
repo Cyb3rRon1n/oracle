@@ -59,6 +59,17 @@ def proficiency_bonus_for_level(level: int) -> int:
     return 2 + (level - 1) // 4
 
 
+def _clamp_int(value: object, lo: int, hi: int) -> int | None:
+    """Best-effort coercion + clamping of a DM-tool-supplied number to
+    [lo, hi]. The model may type '3' or 3.0 where an int belongs; anything
+    unparseable degrades to None instead of raising, the same graceful-miss
+    convention every other name-based lookup in this project follows."""
+    try:
+        return min(hi, max(lo, int(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 class InventoryItem(BaseModel):
     """A single carried stack - server/rules/srd.json's own equipment
     name, a count (real 5e stacks identical items - two potions of
@@ -470,8 +481,42 @@ class CharacterSheet(BaseModel):
         )
 
 
+class MapNode(BaseModel):
+    """Layout hints for one location on the campaign map. The graph itself
+    stays in location_map (adjacency) - this only carries the presentation
+    layer (docs/protocol.md "Protocol v2 additions - Map"): optional
+    coordinates for clients that lay nodes out on a canvas, an emoji icon,
+    nothing mechanical. Coordinates are nullable so a client can auto-layout
+    any node the DM never placed."""
+
+    name: str
+    x: int | None = None
+    y: int | None = None
+    icon: str = ""
+
+
+class Clock(BaseModel):
+    """A Blades-in-the-Dark-style progress clock - named, segmented tension
+    tracker the DM ticks via update_world as events warrant (docs/protocol.md
+    "Protocol v2 additions - Clocks"). Server state, not model memory: the
+    engine clamps every mutation and narrator_context() surfaces the current
+    fill to the DM each turn, so stakes can't silently drift the way they do
+    when a prompt is trusted to remember them."""
+
+    name: str
+    segments: int
+    filled: int = 0
+
+    def tick(self, ticks: int = 1) -> None:
+        self.filled = min(self.segments, max(0, self.filled + ticks))
+
+
 class Objective(BaseModel):
     text: str
+
+
+
+
     # expired/failed close a real, previously-named gap: only active/
     # completed existed, so nothing could represent a quest going stale or
     # being failed outright - every objective either stayed open forever or
@@ -500,6 +545,37 @@ class WorldState(BaseModel):
     # of the graph's real shape, unlike a 2D grid which would need the DM
     # to supply consistent x/y positions.
     location_map: dict[str, list[str]] = Field(default_factory=dict)
+
+    # Map layout hints keyed by location name (MapNode above) - adjacency
+    # stays in location_map so old saves keep loading unchanged; this is
+    # presentation-only state layered on top of the same graph.
+    map_hints: dict[str, MapNode] = Field(default_factory=dict)
+
+    clocks: list[Clock] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def map(self) -> dict:
+        """The v2 wire shape (docs/protocol.md "Protocol v2 additions - Map"):
+        nodes from location_map's keys merged with any layout hints, edges as
+        unique undirected pairs derived from the adjacency lists. Computed,
+        not stored - the graph has exactly one source of truth."""
+        hints = self.map_hints
+        nodes = [
+            {
+                "name": name,
+                "x": hints[name].x if name in hints else None,
+                "y": hints[name].y if name in hints else None,
+                "icon": hints[name].icon if name in hints else "",
+            }
+            for name in sorted(set(self.location_map) | set(hints))
+        ]
+        edges: set[tuple[str, str]] = set()
+        for a, neighbors in self.location_map.items():
+            for b in neighbors:
+                if a != b:
+                    edges.add(tuple(sorted((a, b))))
+        return {"nodes": nodes, "edges": sorted(list(e) for e in edges)}
 
     def apply_update(self, update: dict) -> str:
         """Apply a DM-issued world-state update (the update_world tool).
@@ -597,6 +673,80 @@ class WorldState(BaseModel):
                 self.location_map[b].append(a)
                 changes.append(f"connected '{a}' and '{b}'")
 
+        # v2 map layout hints (docs/protocol.md "Protocol v2 additions - Map").
+        # Upsert by exact name match; a field absent from the entry keeps its
+        # current value, an explicit null clears it (so the DM can un-place a
+        # node it previously placed). Also creates the node in location_map
+        # when new, so hints can never reference a location the graph
+        # doesn't have.
+        map_nodes = update.get("map_nodes")
+        if isinstance(map_nodes, list):
+            for entry in map_nodes:
+                if not isinstance(entry, dict) or not entry.get("name"):
+                    continue
+                name = str(entry["name"])
+                node = self.map_hints.get(name)
+                if node is None:
+                    node = MapNode(name=name)
+                    self.map_hints[name] = node
+                    changes.append(f"mapped: '{name}'")
+                self.location_map.setdefault(name, [])
+                if "x" in entry or "y" in entry:
+                    node.x = _clamp_int(entry.get("x"), -1000, 1000) if "x" in entry else node.x
+                    node.y = _clamp_int(entry.get("y"), -1000, 1000) if "y" in entry else node.y
+                    changes.append(f"positioned: '{name}'")
+                if "icon" in entry:
+                    icon = str(entry["icon"] or "")[:8]
+                    if icon != node.icon:
+                        node.icon = icon
+                        changes.append(f"icon for '{name}': {icon}")
+
+        # v2 progress clocks (docs/protocol.md "Protocol v2 additions -
+        # Clocks"). Every mutation clamps server-side; the DM never sets raw
+        # state that could escape [0, segments].
+        add_clock = update.get("add_clock")
+        if isinstance(add_clock, dict) and add_clock.get("name"):
+            name = str(add_clock["name"])
+            if not any(c.name == name for c in self.clocks):
+                segments = _clamp_int(add_clock.get("segments", 6), 2, 12) or 6
+                self.clocks.append(Clock(name=name, segments=segments))
+                changes.append(f"new clock: '{name}' ({segments} segments)")
+
+        tick_clock = update.get("tick_clock")
+        if isinstance(tick_clock, dict) and tick_clock.get("name"):
+            name = str(tick_clock["name"])
+            ticks = _clamp_int(tick_clock.get("ticks", 1), 1, 12) or 1
+            for clock in self.clocks:
+                if clock.name == name:
+                    was_full = clock.filled >= clock.segments
+                    clock.tick(ticks)
+                    now_full = clock.filled >= clock.segments
+                    verb = (
+                        "filled completely"
+                        if now_full and not was_full
+                        else f"ticked to {clock.filled}/{clock.segments}"
+                    )
+                    changes.append(f"clock '{name}' {verb}")
+                    break
+
+        set_clock = update.get("set_clock")
+        if isinstance(set_clock, dict) and set_clock.get("name"):
+            name = str(set_clock["name"])
+            for clock in self.clocks:
+                if clock.name == name:
+                    filled = _clamp_int(set_clock.get("filled"), 0, clock.segments)
+                    if filled is not None:
+                        clock.filled = filled
+                        changes.append(f"clock '{name}' set to {clock.filled}/{clock.segments}")
+                    break
+
+        remove_clock = update.get("remove_clock")
+        if isinstance(remove_clock, str):
+            before = len(self.clocks)
+            self.clocks = [c for c in self.clocks if c.name != remove_clock]
+            if len(self.clocks) < before:
+                changes.append(f"removed clock: '{remove_clock}'")
+
         if not changes:
             return "No changes applied (nothing matched, or all deltas were zero)."
         return "Applied: " + "; ".join(changes) + "."
@@ -638,6 +788,11 @@ class WorldState(BaseModel):
         active_objectives = [o.text for o in self.objectives if o.status == "active"]
         if active_objectives:
             parts.append("Active objectives:\n" + "\n".join(f"- {text}" for text in active_objectives))
+        if self.clocks:
+            parts.append(
+                "Progress clocks:\n"
+                + "\n".join(f"- {c.name}: {c.filled}/{c.segments}" for c in self.clocks)
+            )
         return "\n".join(parts)
 
 
@@ -710,6 +865,20 @@ class Session(BaseModel):
     # varied experimentally (see scripts/live_reliability_check.py's
     # --max-history-messages) without changing the shipped default here.
     max_history_messages: int = MAX_HISTORY_MESSAGES
+
+    # World-context selection (docs/protocol.md "Protocol v2 additions -
+    # World context -> lorebook"): file NAMES only, persisted so a saved
+    # session reloads with its own lore still toggled on. Content never
+    # lives here - the engine re-parses the named files into a Lorebook.
+    context_files: list[str] = Field(default_factory=list)
+
+    # Rolling campaign summary (docs/REBUILD_PLAN.md): rebuilt by the engine
+    # every CAMPAIGN_SUMMARY_INTERVAL resolved turns from the prior summary
+    # plus what's about to scroll out of the history window, so a long
+    # session's early plot survives the sliding window. Persisted with the
+    # session like every other DM-facing state.
+    campaign_summary: str = ""
+    turns_since_summary: int = 0
 
     @property
     def current_turn(self) -> str | None:
