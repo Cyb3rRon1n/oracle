@@ -15,6 +15,10 @@ build/
 .vscode/
 .idea/
 
+# Web client
+node_modules/
+web/dist/
+
 # OS
 .DS_Store
 
@@ -24,3 +28,6 @@ sessions/
 
 # Raw reliability-benchmark evidence (kept out of version control per ROADMAP item 6)
 evidence/
+
+# Visual brainstorming companion mockups (superpowers:brainstorming skill)
+.superpowers/
