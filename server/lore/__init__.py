@@ -19,6 +19,8 @@ class Guardian(BaseModel):
 class Region(BaseModel):
     name: str
     description: str
+    borders: list[str] = []
+    landmarks: list[str] = []
 
 
 class WhoWhatWhereWhenWhy(BaseModel):
@@ -27,6 +29,33 @@ class WhoWhatWhereWhenWhy(BaseModel):
     where: str
     when: str
     why: str
+
+
+class HistoryEvent(BaseModel):
+    """One entry in the world's timeline, oldest first - the layered-past
+    structure that makes a setting feel deep rather than assembled: places
+    and factions can reference eras, and the DM can date anything a player
+    asks about without improvising contradictions."""
+
+    era: str
+    name: str
+    description: str
+
+
+class Faction(BaseModel):
+    name: str
+    kind: str
+    description: str
+
+
+class GlossaryEntry(BaseModel):
+    """Naming-convention rules rather than a dictionary - the structural
+    trick behind worlds whose invented names feel coherent instead of
+    random: consistent patterns per culture/place-class, so anything the
+    DM makes up on the fly sounds like it belongs to the same world."""
+
+    term: str
+    meaning: str
 
 
 class WorldBible(BaseModel):
@@ -47,6 +76,11 @@ class WorldBible(BaseModel):
     central_tension: str
     who_what_where_when_why: WhoWhatWhereWhenWhy
     tone_guidance: str
+    history: list[HistoryEvent] = []
+    factions: list[Faction] = []
+    peoples: list[Region] = []
+    glossary: list[GlossaryEntry] = []
+    geography_notes: str = ""
 
     def system_prompt_block(self) -> str:
         """Rendered once and appended to a NarratorBackend's system prompt
@@ -54,17 +88,41 @@ class WorldBible(BaseModel):
         call regardless of the rolling history window's own size, so the
         world's facts can't scroll out of context and get reinvented
         inconsistently on a long session the way turn-to-turn narration
-        detail eventually does."""
-        regions_text = "\n".join(f"- {r.name}: {r.description}" for r in self.regions)
-        return (
+        detail eventually does. The depth sections (history/factions/
+        peoples/glossary/geography) render only when populated, so a
+        minimal custom bible costs no extra prompt tokens."""
+        regions_text = "\n".join(
+            f"- {r.name}: {r.description}"
+            + (f" Borders: {'; '.join(r.borders)}." if r.borders else "")
+            + (f" Landmarks: {'; '.join(r.landmarks)}." if r.landmarks else "")
+            for r in self.regions
+        )
+        block = (
             f"\n\nSETTING: {self.setting_name} - {self.tagline}\n{self.cosmology}\n\n"
             f"THE GUARDIAN: {self.guardian.name}, {self.guardian.title}. {self.guardian.persona}\n\n"
             f"KNOWN REGIONS:\n{regions_text}\n\n"
+        )
+        if self.history:
+            events = "\n".join(f"- [{h.era}] {h.name}: {h.description}" for h in self.history)
+            block += f"HISTORY (oldest first):\n{events}\n\n"
+        if self.factions:
+            facs = "\n".join(f"- {f.name} ({f.kind}): {f.description}" for f in self.factions)
+            block += f"FACTIONS:\n{facs}\n\n"
+        if self.peoples:
+            peps = "\n".join(f"- {p.name}: {p.description}" for p in self.peoples)
+            block += f"PEOPLES:\n{peps}\n\n"
+        if self.glossary:
+            terms = "\n".join(f"- {g.term}: {g.meaning}" for g in self.glossary)
+            block += f"NAMING & PLACES - invent new names within these patterns:\n{terms}\n\n"
+        if self.geography_notes:
+            block += f"GEOGRAPHY: {self.geography_notes}\n\n"
+        block += (
             f"CENTRAL TENSION: {self.central_tension}\n\n"
             f"TONE: {self.tone_guidance}\n\n"
             "These are fixed, durable facts about the world - stay consistent with them always, "
             "but you are not limited to only what's listed here; invent freely within this frame."
         )
+        return block
 
     def opening_scene_prompt(self, present_description: str, plural: bool, origin_detail: str = "") -> str:
         """A deterministically-composed action_text for a genuinely fresh

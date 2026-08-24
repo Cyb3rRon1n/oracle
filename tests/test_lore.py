@@ -3,7 +3,10 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from server.lore import (
+    Faction,
+    GlossaryEntry,
     Guardian,
+    HistoryEvent,
     Origin,
     OriginTable,
     Region,
@@ -41,6 +44,55 @@ def test_load_default_world_bible_parses_the_bundled_file():
     assert bible.setting_name == "Aetherfall"
     assert bible.guardian.name == "Ashwren"
     assert len(bible.regions) >= 1
+
+
+def test_default_world_bible_carries_depth_sections():
+    bible = load_default_world_bible()
+    assert len(bible.history) >= 3, "a layered past is the point"
+    assert len(bible.factions) >= 3
+    assert len(bible.peoples) >= 3
+    assert len(bible.glossary) >= 3
+    assert bible.geography_notes
+
+
+def test_system_prompt_block_renders_depth_sections_when_populated():
+    bible = make_world_bible(
+        history=[HistoryEvent(era="old", name="The Founding", description="Testonia was founded.")],
+        factions=[Faction(name="The Testers", kind="guild", description="They test things.")],
+        peoples=[Region(name="The Testfolk", description="They live here.")],
+        glossary=[GlossaryEntry(term="Plain compounds", meaning="name old places plainly.")],
+        geography_notes="Every road leads to the test.",
+    )
+    block = bible.system_prompt_block()
+
+    assert "HISTORY (oldest first):" in block
+    assert "[old] The Founding: Testonia was founded." in block
+    assert "FACTIONS:" in block
+    assert "- The Testers (guild): They test things." in block
+    assert "PEOPLES:" in block
+    assert "NAMING & PLACES" in block
+    assert "GEOGRAPHY: Every road leads to the test." in block
+
+
+def test_system_prompt_block_omits_empty_depth_sections():
+    block = make_world_bible().system_prompt_block()
+
+    assert "HISTORY" not in block
+    assert "FACTIONS" not in block
+    assert "PEOPLES" not in block
+    assert "NAMING" not in block
+    assert "GEOGRAPHY" not in block
+
+
+def test_region_borders_and_landmarks_render_in_the_regions_list():
+    bible = make_world_bible()
+    bible.regions[0].borders = ["the edge of the map"]
+    bible.regions[0].landmarks = ["the fixture stone"]
+
+    block = bible.system_prompt_block()
+
+    assert "Borders: the edge of the map." in block
+    assert "Landmarks: the fixture stone." in block
 
 
 def test_system_prompt_block_includes_every_field():
