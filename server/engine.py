@@ -1361,7 +1361,11 @@ class GameEngine:
             self._session.content_preference = content_preference
 
         self._session.started = True
-        self._seed_world_map()
+        if self._seed_world_map():
+            # Push the seeded known world immediately - session_started is a
+            # bare lifecycle signal, and without this the map only reached a
+            # client on its next full state_sync (i.e. after a reconnect).
+            await self._broadcast(self._world_update_envelope())
         await self._save(envelope.sender_id)
 
         player_id = envelope.sender_id
