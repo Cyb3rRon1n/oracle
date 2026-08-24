@@ -1301,6 +1301,33 @@ class GameEngine:
 
         return " ".join(parts)
 
+    def _seed_world_map(self) -> str:
+        """Seed the campaign map with the world bible's known regions at
+        session start (docs/protocol.md "Protocol v2 additions - Map").
+        The bible describes the world as common knowledge - every arrival
+        walks the same six-day road - so a fresh session's Map tab shows
+        the known regions immediately instead of an empty canvas that only
+        fills as the DM happens to narrate. Only bible regions carrying
+        coordinates seed anything; edges derive from border text naming a
+        sibling region. Returns the apply_update summary ('' when nothing
+        seeded)."""
+        placed = [r for r in self._world_bible.regions if r.x is not None and r.y is not None]
+        if not placed:
+            return ""
+        summary = self._session.world.apply_update({
+            "map_nodes": [{"name": r.name, "x": r.x, "y": r.y} for r in placed],
+        })
+        by_name = {r.name: r for r in placed}
+        edges: set[tuple[str, str]] = set()
+        for region in placed:
+            borders_text = " ".join(region.borders).casefold()
+            for name in by_name:
+                if name != region.name and name.casefold() in borders_text:
+                    edges.add(tuple(sorted((region.name, name))))
+        for a, b in sorted(edges):
+            self._session.world.apply_update({"connect_locations": [a, b]})
+        return summary
+
     async def _on_start_session(self, envelope: Envelope) -> None:
         """The lobby's "Start Adventure" trigger - any joined player may
         send this (Oracle has no separate host/GM role - turn order and
@@ -1334,6 +1361,7 @@ class GameEngine:
             self._session.content_preference = content_preference
 
         self._session.started = True
+        self._seed_world_map()
         await self._save(envelope.sender_id)
 
         player_id = envelope.sender_id

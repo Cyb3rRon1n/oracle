@@ -12,26 +12,62 @@
     {
       "name": "The Hollow March",
       "description": "Where every Veil-Touched arrival first lands - a quiet, liminal borderland of standing stones and old, half-forgotten roads. Safe, strange, and the last place in Aetherfall that still feels like nowhere in particular.",
-      "borders": ["the Elderwood along its eastern eaves", "Emberreach by six days' south road", "the grey hills beyond which no map agrees"],
-      "landmarks": ["the Standing Stones circle that marks the crossing site", "Ashwren's cottage at the stones' edge", "the Milestone Road running south, older than any kingdom"]
+      "borders": [
+        "the Greywood along its eastern eaves",
+        "Emberreach by six days' south road",
+        "the grey hills beyond which no map agrees"
+      ],
+      "landmarks": [
+        "the Standing Stones circle that marks the crossing site",
+        "Ashwren's cottage at the stones' edge",
+        "the Milestone Road running south, older than any kingdom"
+      ],
+      "x": 500,
+      "y": 100
     },
     {
       "name": "Emberreach",
       "description": "A sprawling free city built around a fault where the Veil bleeds warmth into the world. The closest thing Aetherfall has to a capital - a haven for the desperate, the curious, and the opportunistic in roughly equal measure.",
-      "borders": ["the Hollow March to the north", "the Drowned Fields west of the lowland dike", "the trade-lakes east"],
-      "landmarks": ["the Fault-Gates, old forge-districts built over warm fissures", "the Council Hall on its river bluff", "the Nightmarket, where the Unmarked trade unregistered goods"]
+      "borders": [
+        "the Hollow March to the north",
+        "the Drowned Fields west of the lowland dike",
+        "the trade-lakes east"
+      ],
+      "landmarks": [
+        "the Fault-Gates, old forge-districts built over warm fissures",
+        "the Council Hall on its river bluff",
+        "the Nightmarket, where the Unmarked trade unregistered goods"
+      ],
+      "x": 560,
+      "y": 550
     },
     {
       "name": "The Sunken Vale",
       "description": "Once fertile lowlands, half-drowned decades ago by a Veil-storm that never fully receded. Dangerous, resource-rich, and largely unclaimed by anyone willing to say so out loud.",
-      "borders": ["Emberreach east of the dike", "open water south, where charts simply stop"],
-      "landmarks": ["the drowned town's Belltower, still rung by storms", "the Reedroads, passable only by flatboat or by those who know the paths"]
+      "borders": [
+        "Emberreach east of the dike",
+        "open water south, where charts simply stop"
+      ],
+      "landmarks": [
+        "the drowned town's Belltower, still rung by storms",
+        "the Reedroads, passable only by flatboat or by those who know the paths"
+      ],
+      "x": 180,
+      "y": 700
     },
     {
       "name": "The Greywood",
       "description": "An old, watchful forest that remembers more of the world's true age than anyone currently living does. Home to things that were never quite human to begin with, and were here long before Aetherfall had a name.",
-      "borders": ["the Hollow March west of the eaves", "no mapped southern or eastern edge - travelers who push on report the forest simply continues"],
-      "landmarks": ["the Nameless Door, a bare stone slab that predates the forest and matches no known Veil site", "the Eaves-towns, where wood-folk trade with outsiders without quite inviting them in"]
+      "borders": [
+        "the Hollow March west of the eaves",
+        "no mapped southern or eastern edge - travelers who push on report the forest simply continues"
+      ],
+      "landmarks": [
+        "the Nameless Door, a bare stone slab that predates the forest and matches no known Veil site",
+        "the Eaves-towns, where wood-folk trade with outsiders without quite inviting them in"
+      ],
+      "x": 850,
+      "y": 220
     }
   ],
   "history": [
@@ -107,14 +143,32 @@
     }
   ],
   "glossary": [
-    {"term": "Native names favor soft sounds", "meaning": "open syllables and soft endings - Ashwren, Halveth, Emberreach, Wrenlow. Avoid hard k/x/z sounds; they mark a name as foreign."},
-    {"term": "Veil-Touched keep their own-world names", "meaning": "Torvin, Rowan, anything from home - unchanged, which is exactly how natives spot them. The foreignness is the identity."},
-    {"term": "Places are named for what happened there", "meaning": "never for owners or founders: the Hollow March marches hollowly, the Sunken Vale sank, Emberreach reached for embers. Follow this rule for new places."},
-    {"term": "Old things get plain compound names", "meaning": "Standing Stones, Nameless Door, Fault-Gates, Milestone Road - solid, functional, Anglo-saxon-flavored compounds."},
-    {"term": "New things get founder or trade names", "meaning": "the Council Hall, the Nightmarket, Reedroads - named by whoever built or used them, practically."},
-    {"term": "Faction titles are plain and slightly bureaucratic", "meaning": "Warden, Council, Guild, Choir - no grandiose self-styling except the cults, who do style themselves grandly."}
+    {
+      "term": "Native names favor soft sounds",
+      "meaning": "open syllables and soft endings - Ashwren, Halveth, Emberreach, Wrenlow. Avoid hard k/x/z sounds; they mark a name as foreign."
+    },
+    {
+      "term": "Veil-Touched keep their own-world names",
+      "meaning": "Torvin, Rowan, anything from home - unchanged, which is exactly how natives spot them. The foreignness is the identity."
+    },
+    {
+      "term": "Places are named for what happened there",
+      "meaning": "never for owners or founders: the Hollow March marches hollowly, the Sunken Vale sank, Emberreach reached for embers. Follow this rule for new places."
+    },
+    {
+      "term": "Old things get plain compound names",
+      "meaning": "Standing Stones, Nameless Door, Fault-Gates, Milestone Road - solid, functional, Anglo-saxon-flavored compounds."
+    },
+    {
+      "term": "New things get founder or trade names",
+      "meaning": "the Council Hall, the Nightmarket, Reedroads - named by whoever built or used them, practically."
+    },
+    {
+      "term": "Faction titles are plain and slightly bureaucratic",
+      "meaning": "Warden, Council, Guild, Choir - no grandiose self-styling except the cults, who do style themselves grandly."
+    }
   ],
-  "geography_notes": "The Hollow March sits at the world's northern edge, six days' south road from Emberreach - the only reliable route, walked by every arrival before you. The Elderwood borders the March eastward without a clear edge; the Drowned Fields lie west beyond Emberreach's dike, and south of them the maps stop pretending. Distances are measured in days on foot, rivers run toward Emberreach from everywhere, and nobody has ever charted the world's far side - the Veil-edge country wraps around the known lands like a shoreline with no ocean.",
+  "geography_notes": "The Hollow March sits at the world's northern edge, six days' south road from Emberreach - the only reliable route, walked by every arrival before you. The Greywood borders the March eastward without a clear edge; the Drowned Fields lie west beyond Emberreach's dike, and south of them the maps stop pretending. Distances are measured in days on foot, rivers run toward Emberreach from everywhere, and nobody has ever charted the world's far side - the Veil-edge country wraps around the known lands like a shoreline with no ocean.",
   "central_tension": "The way home is not a secret - the Veil genuinely does open again, on its own uncertain rhythm, at sites Ashwren can name outright. But stepping through costs something real: a memory, a name, a piece of who you were before you arrived, chosen unknowing by the Veil itself, never by the one crossing it. Every Veil-Touched eventually has to decide, honestly, whether going home is worth what it takes - or whether Aetherfall has already become home enough to stay.",
   "who_what_where_when_why": {
     "who": "You were, until moments ago, living an entirely ordinary life - whatever it was that nearly ended it, an accident, an illness, a violence you didn't choose, doesn't matter anymore. Only that it nearly did.",

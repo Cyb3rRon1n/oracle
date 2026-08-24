@@ -141,8 +141,7 @@ class OpeningSceneDM:
         yield "Scene."
 
 
-def make_engine(dm, enable_opening_scene=False):
-    # enable_opening_scene defaults off here so the many existing tests that
+def make_engine(dm, enable_opening_scene=False):    # enable_opening_scene defaults off here so the many existing tests that
     # just call join() and don't care about the opening-scene feature keep
     # their original "join() has no narration side effect" semantics
     # unchanged. Tests for the feature itself opt in explicitly.
@@ -165,7 +164,6 @@ async def join(engine, player_id, name="Thrain"):
         payload={"player_name": name},
     ))
 
-
 async def test_join_seats_player_and_starts_their_turn():
     engine, session, _ = make_engine(StubDM())
     player_id = str(uuid.uuid4())
@@ -173,6 +171,47 @@ async def test_join_seats_player_and_starts_their_turn():
     await join(engine, player_id)
 
     assert session.current_turn == player_id
+
+
+def test_seed_world_map_places_the_default_bible_regions_with_edges():
+
+    engine, session, _ = make_engine(StubDM())
+
+    engine._seed_world_map()
+
+    world = session.world
+    nodes = {n["name"]: n for n in world.map["nodes"]}
+    assert set(nodes) == {"The Hollow March", "Emberreach", "The Greywood", "The Sunken Vale"}
+    assert nodes["The Hollow March"]["x"] == 500 and nodes["The Hollow March"]["y"] == 100
+    edges = {tuple(e) for e in world.map["edges"]}
+    assert ("Emberreach", "The Hollow March") in edges
+    assert ("The Greywood", "The Hollow March") in edges
+    assert ("Emberreach", "The Sunken Vale") in edges
+
+
+def test_seed_world_map_is_a_no_op_for_a_bible_without_coordinates():
+    from server.lore import Guardian, WhoWhatWhereWhenWhy, WorldBible
+
+    bible = WorldBible(
+        setting_name="Flatland",
+        tagline="No map.",
+        cosmology="It is flat.",
+        guardian=Guardian(name="Warden", title="the Flat", persona="Steady."),
+        regions=[Region(name="One Place", description="Just the one.")],
+        central_tension="None.",
+        who_what_where_when_why=WhoWhatWhereWhenWhy(
+            who="w", what="a", where="p", when="t", why="y"
+        ),
+        tone_guidance="Flat.",
+    )
+    dm = StubDM()
+    session = Session(session_id="test-session")
+    engine = GameEngine(session, dm, lambda e: None, lambda p, e: None, world_bible=bible)
+
+    summary = engine._seed_world_map()
+
+    assert summary == ""
+    assert session.world.map == {"nodes": [], "edges": []}
 
 
 @pytest.mark.parametrize(

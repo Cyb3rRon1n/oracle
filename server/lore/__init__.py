@@ -21,6 +21,12 @@ class Region(BaseModel):
     description: str
     borders: list[str] = []
     landmarks: list[str] = []
+    # Optional canvas coordinates (0-1000) - present on the default bible's
+    # regions so the engine can seed the campaign map with the known world
+    # at session start; absent (None) means "no placement", and a custom
+    # bible without coords simply seeds nothing.
+    x: int | None = None
+    y: int | None = None
 
 
 class WhoWhatWhereWhenWhy(BaseModel):
