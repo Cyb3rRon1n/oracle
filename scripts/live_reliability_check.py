@@ -55,6 +55,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from server.engine import GameEngine
 from server.state import Session
 from shared.protocol import Envelope
@@ -598,6 +600,11 @@ async def main_async(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # Same .env loading server/main.py does - the anthropic/openai backends
+    # read their keys from the environment and this entrypoint used to skip
+    # it (first live Anthropic run failed with "could not resolve
+    # authentication method" before this line existed).
+    load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--backend", choices=["ollama", "anthropic", "openai"], default="ollama")
     parser.add_argument("--model", default=None, help="Override the backend's default model.")
