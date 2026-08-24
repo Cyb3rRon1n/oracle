@@ -395,6 +395,17 @@ class CharacterSheet(BaseModel):
             self.death_save_failures = 0
             changes.append(f"{self.name} is healed above 0 HP and stabilizes")
 
+        # Revival (revivify and friends): healing a dead character above 0 HP
+        # brings them back. Real 5e's own window (died within the last minute)
+        # is DM-adjudicated - no timer is tracked here, so whether a given
+        # raise attempt is in time is the DM's call to narrate or refuse.
+        if self.hp > 0 and self.dead:
+            self.dead = False
+            self.dying = False
+            self.death_save_successes = 0
+            self.death_save_failures = 0
+            changes.append(f"{self.name} is brought back from death (now {self.hp}/{self.max_hp})")
+
         add_item = update.get("add_item")
         if add_item:
             # magic_bonus only ever comes from the DM's own tool call, never

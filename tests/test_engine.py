@@ -240,7 +240,7 @@ def test_build_starting_character_gives_wizard_real_known_spells_and_slots():
     assert sheet.known_spells == [
         "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
         "burning_hands", "misty_step", "sleep", "charm_person", "thunderwave",
-        "hold_person", "web",
+        "hold_person", "web", "fly",
     ]
     assert sheet.spell_slots == {"1": 2}
     assert sheet.max_spell_slots == {"1": 2}
@@ -253,7 +253,8 @@ def test_build_starting_character_gives_cleric_real_known_spells_and_slots():
 
     assert sheet.known_spells == [
         "sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon",
-        "inflict_wounds", "shield_of_faith", "guiding_bolt", "hold_person",
+        "inflict_wounds", "shield_of_faith", "guiding_bolt", "hold_person", "lesser_restoration",
+        "revivify",
     ]
     assert sheet.spell_slots == {"1": 2}
 
@@ -281,14 +282,24 @@ def test_expanded_monster_entries_resolve_to_real_xp_and_ac():
 
 
 def test_third_srd_monster_batch_resolves_to_real_xp_and_ac():
-    # The 2026-08-22 batch (giant_spider/bugbear/wight/basilisk) - same
-    # real-lookup-path lock as the 2026-08-21 batch above.
+
+
     rules = RulesIndex.load_default()
     for name in ("giant_spider", "bugbear", "wight", "basilisk"):
         entry = rules.get_entry("monster", name)
         assert entry is not None, f"missing monster {name}"
         assert "ac" in entry, name
         assert rules.xp_for_cr(entry["cr"]), f"{name}: CR '{entry['cr']}' has no XP"
+
+
+def test_fourth_srd_monster_batch_resolves_to_real_xp_and_ac():
+    rules = RulesIndex.load_default()
+    for name in ("dire_wolf", "cult_fanatic", "mimic", "rust_monster"):
+        entry = rules.get_entry("monster", name)
+        assert entry is not None, f"missing monster {name}"
+        assert "ac" in entry, name
+        assert rules.xp_for_cr(entry["cr"]), f"{name}: CR '{entry['cr']}' has no XP"
+
 
 
 def test_build_starting_character_applies_race_ability_bonus_and_display_name():
@@ -2630,6 +2641,40 @@ async def test_cast_spell_consumes_a_slot_for_a_third_batch_second_level_spell()
     character = session.characters[player_id]
     assert character.spell_slots["2"] == 0
     assert dm.tool_result is not None and "Hold Person" in dm.tool_result
+
+
+async def test_cast_spell_consumes_a_slot_for_a_fourth_batch_third_level_wizard_spell():
+    dm = UpdateCharacterDM({"cast_spell": "Fly"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await _join_as(engine, player_id, "wizard", name="Gandalf")
+    session.characters[player_id].spell_slots["3"] = 1
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I cast fly on myself"},
+    ))
+
+    character = session.characters[player_id]
+    assert character.spell_slots["3"] == 0
+    assert dm.tool_result is not None and "Fly" in dm.tool_result
+
+
+async def test_cast_spell_consumes_a_slot_for_fourth_batch_cleric_spells():
+    for spell, level in (("Lesser Restoration", "2"), ("Revivify", "3")):
+        dm = UpdateCharacterDM({"cast_spell": spell})
+        engine, session, received = make_engine(dm)
+        player_id = str(uuid.uuid4())
+        await _join_as(engine, player_id, "cleric", name="Fenwick")
+        session.characters[player_id].spell_slots[level] = 1
+
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": f"I cast {spell.lower()}"},
+        ))
+
+        assert session.characters[player_id].spell_slots[level] == 0, spell
+        assert dm.tool_result is not None and spell in dm.tool_result, spell
 
 
 async def test_cast_spell_cantrip_does_not_consume_a_slot():

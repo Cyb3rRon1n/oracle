@@ -161,11 +161,12 @@ CLASS_KNOWN_SPELLS: dict[str, list[str]] = {
     "wizard": [
         "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
         "burning_hands", "misty_step", "sleep", "charm_person", "thunderwave",
-        "hold_person", "web",
+        "hold_person", "web", "fly",
     ],
     "cleric": [
         "sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon",
-        "inflict_wounds", "shield_of_faith", "guiding_bolt", "hold_person",
+        "inflict_wounds", "shield_of_faith", "guiding_bolt", "hold_person", "lesser_restoration",
+        "revivify",
     ],
 }
 

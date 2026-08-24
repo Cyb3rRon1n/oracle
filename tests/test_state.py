@@ -289,10 +289,31 @@ def test_apply_update_inventory_add_and_remove():
     character.apply_update({"remove_item": "rusty key"})
     assert character.find_item("rusty key") is None
 
-    # removing something not present is a no-op, not an error
+
     result = character.apply_update({"remove_item": "nonexistent"})
     assert character.find_item("nonexistent") is None
     assert result.startswith("No changes applied")
+
+
+def test_apply_update_heals_a_dead_character_back_to_life():
+    character = make_character(hp=0, max_hp=10, dead=True)
+
+    result = character.apply_update({"hp_delta": 5})
+
+    assert character.dead is False
+    assert character.dying is False
+    assert character.death_save_failures == 0
+    assert character.hp == 5
+    assert "brought back from death" in result
+
+
+def test_apply_update_without_healing_leaves_a_dead_character_dead():
+    character = make_character(hp=0, max_hp=10, dead=True)
+
+    result = character.apply_update({"notes": "still dead"})
+
+    assert character.dead is True
+    assert "brought back" not in result
 
 
 def test_apply_update_add_item_with_magic_bonus():

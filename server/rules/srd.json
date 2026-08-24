@@ -366,6 +366,85 @@
       "actions": [
         "Bite: Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 10 (2d6+3) piercing damage, and the target must succeed on a DC 12 Constitution saving throw against the basilisk's Petrifying Gaze."
       ]
+    },
+    "dire_wolf": {
+      "name": "Dire Wolf",
+      "size": "Large",
+      "type": "beast",
+      "ac": 14,
+      "hp": "37 (5d10+10)",
+      "speed": "50 ft.",
+      "stats": {"str": 17, "dex": 15, "con": 15, "int": 3, "wis": 12, "cha": 7},
+      "skills": "Perception +3, Stealth +4",
+      "senses": "passive Perception 13",
+      "cr": "1",
+      "traits": [
+        "Pack Tactics: The wolf has advantage on an attack roll against a creature if at least one of the wolf's allies is within 5 feet of the creature and the ally isn't incapacitated.",
+        "Keen Hearing and Smell: The wolf has advantage on Wisdom (Perception) checks that rely on hearing or smell."
+      ],
+      "actions": [
+        "Bite: Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 8 (1d8+3) piercing damage. If the target is a creature, it must succeed on a DC 13 Strength saving throw or be knocked prone."
+      ]
+    },
+    "cult_fanatic": {
+      "name": "Cult Fanatic",
+      "size": "Medium",
+      "type": "humanoid",
+      "ac": 12,
+      "hp": "33 (6d8+6)",
+      "speed": "30 ft.",
+      "stats": {"str": 11, "dex": 12, "con": 12, "int": 10, "wis": 13, "cha": 14},
+      "skills": "Deception +4, Persuasion +4, Religion +2",
+      "senses": "passive Perception 11",
+      "cr": "2",
+      "traits": [
+        "Dark Devotion: The fanatic has advantage on saving throws against being charmed or frightened."
+      ],
+      "actions": [
+        "Multiattack: The fanatic makes two attacks with its dagger.",
+        "Dagger: Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 4 (1d4+1) piercing damage.",
+        "Spellcasting: The fanatic is a 4th-level spellcaster. Its spellcasting ability is Wisdom (spell save DC 11, +3 to hit with spell attacks). The fanatic has the following cleric spells prepared: command, inflict wounds, shield of faith (1st level, 3 slots); hold person, spiritual weapon (2nd level, 2 slots)."
+      ]
+    },
+    "mimic": {
+      "name": "Mimic",
+      "size": "Medium",
+      "type": "monstrosity",
+      "ac": 12,
+      "hp": "58 (9d8+18)",
+      "speed": "15 ft.",
+      "stats": {"str": 17, "dex": 12, "con": 15, "int": 5, "wis": 13, "cha": 8},
+      "skills": "Stealth +5",
+      "senses": "darkvision 60 ft., passive Perception 11",
+      "cr": "2",
+      "traits": [
+        "Shapechanger: The mimic can use its action to polymorph into an object or back into its true, amorphous form. Its statistics are the same in each form. Any equipment it is wearing or carrying isn't transformed. It reverts to its true form if it dies.",
+        "Adhesive: The mimic adheres to anything that touches it. A Huge or smaller creature adhered to the mimic is also grappled by it. Ability checks made to escape this grapple have disadvantage.",
+        "False Appearance: While the mimic remains motionless, it is indistinguishable from an ordinary object."
+      ],
+      "actions": [
+        "Pseudopod: Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 7 (1d8+3) bludgeoning damage, and the target is subjected to the mimic's Adhesive trait.",
+        "Bite: Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 7 (1d8+3) piercing damage plus 4 (1d8) acid damage."
+      ]
+    },
+    "rust_monster": {
+      "name": "Rust Monster",
+      "size": "Medium",
+      "type": "monstrosity",
+      "ac": 14,
+      "hp": "27 (5d8+5)",
+      "speed": "40 ft.",
+      "stats": {"str": 13, "dex": 12, "con": 13, "int": 2, "wis": 13, "cha": 6},
+      "senses": "darkvision 60 ft., passive Perception 11",
+      "cr": "1/2",
+      "traits": [
+        "Iron Scent: The rust monster can pinpoint, by scent, the location of ferrous metal within 30 feet of it.",
+        "Corrosive Form: A creature that touches the rust monster or hits it with a melee attack while within 5 feet takes 5 (1d8) acid damage. Any nonmagical weapon made of metal that hits the rust monster corrodes and takes a permanent -1 penalty to damage rolls."
+      ],
+      "actions": [
+        "Bite: Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d8+1) piercing damage.",
+        "Antennae: Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: The target's nonmagical ferrous metal armor or weapon takes a permanent -1 penalty to the AC it offers or to its damage rolls. If the penalty reduces the item's bonus to 0 or it already had none, the item is destroyed."
+      ]
     }
   },
   "spells": {
@@ -643,6 +722,40 @@
       "description": "You conjure a mass of thick, sticky webbing at a point within range. The webs fill a 20-foot cube for the duration. The webs are difficult terrain and lightly obscure their area. Each creature that starts its turn in the webs or that enters them during its turn must make a Dexterity saving throw, becoming restrained on a failure until the webs are burned away or the spell ends.",
       "classes": ["wizard"],
       "save_ability": "dex"
+    },
+    "revivify": {
+      "name": "Revivify",
+      "level": 3,
+      "school": "Necromancy",
+      "casting_time": "1 action",
+      "range": "Touch",
+      "components": "V, S, M (diamonds worth 300 gp, which the spell consumes)",
+      "duration": "Instantaneous",
+      "description": "You touch a creature that has died within the last minute. That creature returns to life with 1 hit point. This spell can't return to life a creature that has died of old age, nor can it restore any missing body parts.",
+      "classes": ["cleric"]
+    },
+    "lesser_restoration": {
+      "name": "Lesser Restoration",
+      "level": 2,
+      "school": "Abjuration",
+      "casting_time": "1 action",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "Instantaneous",
+      "description": "You touch a creature and can end either one disease or one condition afflicting it. The condition can be blinded, deafened, paralyzed, or poisoned.",
+      "classes": ["cleric"]
+    },
+    "fly": {
+      "name": "Fly",
+      "level": 3,
+      "school": "Transmutation",
+      "casting_time": "1 action",
+      "range": "Touch",
+      "components": "V, S, M (a wing feather from any bird)",
+      "duration": "Concentration, up to 10 minutes",
+      "description": "This spell gives the target a flying speed of 60 feet for the duration. When the spell ends, the target falls if it is still in the air, unless it can stop the fall.",
+      "at_higher_levels": "When you cast this spell using a spell slot of 4th level or higher, you can target one additional creature for each slot level above 3rd.",
+      "classes": ["wizard"]
     }
   },
   "conditions": {
