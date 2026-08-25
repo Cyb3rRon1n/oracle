@@ -29,6 +29,7 @@ Instead of a single-player chatbot, Oracle is a game engine with an LLM in the G
 - **Real XP and leveling, awarded deterministically**: defeating a tracked NPC awards XP automatically from the SRD's Challenge Rating table when the engine observes its HP hit 0 — no dependence on the model reliably calling a dedicated tool.
 - **Keyword-triggered lorebook** (v2, SillyTavern World Info pattern): drop campaign files into `world_context/`, toggle them per session, and only entries whose keywords appear in recent play get injected — under a hard character budget with priority eviction.
 - **Campaign memory** (v2): a rolling summary rebuilt every ten resolved turns keeps early-session plot alive after the sliding history window scrolls past it.
+- **Fact ledger** (v2): each turn the DM also records up to three short durable facts — promises made, debts, discoveries — deduped into a persistent per-session list injected back into later turns' context, newest-first with older facts resurfacing when named. A promise from turn 3 still reaches the DM on turn 40; no extra LLM calls spent capturing or recalling it.
 - **Progress clocks** (v2): Blades-style segmented tension meters as server state, ticked by the DM via tool; filling one announces itself.
 - **Structured scenes** (v2): each turn resolves into a `scene_update` — NPCs present, points of interest, up to four suggested actions rendered as clickable chips.
 - **Coordinate map** (v2): the DM places locations (with emoji hints) through its world-update tool; clients render the graph with the current location highlighted.
@@ -66,6 +67,7 @@ Open two browser windows pointed at the same session id and you're playing toget
 | `WORLD_CONTEXT_DIR` | `world_context/` | Lorebook source files |
 | `SESSION_STORE_DIR` | `sessions/` | Session persistence |
 | `OLLAMA_TWO_PHASE` | `true` | `"0"` restores the single-call path (kept for A/B measurement) |
+| `OLLAMA_FACT_LEDGER` | `false` | `"1"` opts the decide call into recording durable session facts (measured reliability cost on qwen2.5:7b — see ROADMAP item 36); hosted backends always have it |
 
 ## Repository layout
 

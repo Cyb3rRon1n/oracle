@@ -96,6 +96,8 @@ localStorage saves); Oracle stays server-authoritative — OpenArcana's ideas ar
 | Graph-of-locations map + layout hints (existing `location_map` extended) | 1 (schema) + 5 (UI) |
 | Watchlist / later: fact ledger (AriGraph-lite), narrator+archivist agent split with per-agent model routing, proactive director ticks, TTS/scene-image sidecars | post-v2 |
 
+The fact ledger is done (ROADMAP item 36, 2026-08-24): `Session.fact_ledger` + `add_facts()` dedupe/cap, captured via a `new_facts` field on the existing decide-call schemas (Ollama two-phase / OpenAI) and Anthropic's existing post-turn extraction - zero extra LLM calls - and injected into `world_summary` newest-first with word-overlap resurfacing of older facts. On Ollama it's opt-in (`OLLAMA_FACT_LEDGER`, off by default after the same-day harness re-run measured pooled 7/21 vs the 63% parity baseline - the added decide-schema field degraded qwen2.5:7b's targeting discipline); hosted backends keep it on since their capture path never touches a decide schema. The archivist split, director ticks, and TTS/image sidecars remain open.
+
 Sources and full briefing: task-observer log, 2026-08-23 session. Key refs:
 SillyTavern World Info docs; AriGraph (arXiv:2407.04363); Zep/Graphiti (arXiv:2501.13956);
 agentic GM study (arXiv:2502.19519); Talemate; constrained-decoding surveys.
