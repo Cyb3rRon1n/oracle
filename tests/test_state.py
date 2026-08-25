@@ -727,3 +727,54 @@ def test_append_turn_with_zero_max_history_keeps_no_history():
     session.append_turn("action 0", "narration 0")
 
     assert session.history == []
+
+
+def test_add_facts_appends_and_reports_count():
+    session = Session(session_id="s")
+
+    added = session.add_facts(["The innkeeper owes Rook 10 gold.", "A hidden door sits behind the bar."])
+
+    assert added == 2
+    assert session.fact_ledger == ["The innkeeper owes Rook 10 gold.", "A hidden door sits behind the bar."]
+
+
+def test_add_facts_normalizes_whitespace_and_skips_empty():
+    session = Session(session_id="s")
+
+    added = session.add_facts(["  The   innkeeper owes   Rook 10 gold. ", "", "   "])
+
+    assert added == 1
+    assert session.fact_ledger == ["The innkeeper owes Rook 10 gold."]
+
+
+def test_add_facts_dedupes_exact_match_case_insensitive():
+    session = Session(session_id="s")
+    session.add_facts(["The innkeeper owes Rook 10 gold."])
+
+    added = session.add_facts(["the innkeeper owes rook 10 gold."])
+
+    assert added == 0
+    assert len(session.fact_ledger) == 1
+
+
+def test_add_facts_dedupes_containment_in_both_directions():
+    session = Session(session_id="s")
+    session.add_facts(["The innkeeper of the Drowned Mermaid owes Rook 10 gold from the wager."])
+
+    shorter = session.add_facts(["The innkeeper of the Drowned Mermaid owes Rook 10 gold"])
+    longer = session.add_facts(["Rook remembers that the innkeeper of the Drowned Mermaid owes Rook 10 gold from the wager"])
+
+    assert shorter == 0
+    assert longer == 0
+    assert len(session.fact_ledger) == 1
+
+
+def test_add_facts_caps_at_the_limit_dropping_oldest_first():
+    session = Session(session_id="s")
+
+    for i in range(12):
+        session.add_facts([f"Fact number {i} about thing {i}"], cap=10)
+
+    assert len(session.fact_ledger) == 10
+    assert session.fact_ledger[0] == "Fact number 2 about thing 2"
+    assert session.fact_ledger[-1] == "Fact number 11 about thing 11"

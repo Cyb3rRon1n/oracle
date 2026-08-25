@@ -809,6 +809,12 @@ class WorldState(BaseModel):
 
 MAX_HISTORY_MESSAGES = 12  # 6 player-action/DM-narration exchanges
 
+# The fact ledger's hard size cap. Oldest facts fall off first; the campaign
+# summarizer sees the history window, not the ledger, so a fact that ages out
+# of the ledger is genuinely gone - hence a generous cap and cheap containment
+# dedupe rather than a tight one.
+FACT_LEDGER_CAP = 100
+
 
 class Session(BaseModel):
     session_id: str
@@ -891,6 +897,8 @@ class Session(BaseModel):
     campaign_summary: str = ""
     turns_since_summary: int = 0
 
+    fact_ledger: list[str] = Field(default_factory=list)
+
     @property
     def current_turn(self) -> str | None:
         if not self.turn_order:
@@ -907,3 +915,29 @@ class Session(BaseModel):
         self.history.append({"role": "assistant", "content": narration_text})
         if len(self.history) > self.max_history_messages:
             self.history = self.history[-self.max_history_messages :] if self.max_history_messages > 0 else []
+
+    def add_facts(self, facts: list[str], cap: int = FACT_LEDGER_CAP) -> int:
+        """Append durable session facts to the ledger, deduped and capped.
+
+        A fact is skipped when it's a near-duplicate of one already stored:
+        same normalized text, or fully contained in / containing an existing
+        entry (the extractor restating "the innkeeper owes you 10 gold" as
+        "you are owed 10 gold by the innkeeper" should not grow the ledger).
+        Oldest facts fall off past `cap`. Returns how many facts were added.
+        """
+        added = 0
+        for raw in facts:
+            text = " ".join(str(raw).split())
+            if not text:
+                continue
+            folded = text.casefold().rstrip(".")
+            if any(
+                folded in existing or existing in folded
+                for existing in (f.casefold().rstrip(".") for f in self.fact_ledger)
+            ):
+                continue
+            self.fact_ledger.append(text)
+            added += 1
+        if len(self.fact_ledger) > cap:
+            self.fact_ledger = self.fact_ledger[-cap:]
+        return added
