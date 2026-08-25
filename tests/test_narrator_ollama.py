@@ -896,6 +896,92 @@ async def test_structured_narrate_roll_and_world_together_no_roll_fired_uses_fir
     assert len(narrator._client.calls) == 1
 
 
+def make_two_phase_narrator(fact_ledger: bool = True) -> OllamaNarrator:
+    return OllamaNarrator(
+        rules=RulesIndex.load_default(),
+        structured_output=True,
+        two_phase=True,
+        fact_ledger=fact_ledger,
+    )
+
+
+def _decide_payload(**overrides) -> str:
+    payload = {"mechanical_change": False}
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+async def test_two_phase_fact_ledger_adds_new_facts_to_schema_and_prompt():
+    narrator = make_two_phase_narrator()
+    narrator._client = FakeOllamaClient([
+        FakeChatResponse(_decide_payload()),
+        [FakeChunk("Decided prose.")],
+    ])
+
+    _ = [c async for c in narrator.narrate([], "{}", "I wait", noop_apply_update)]
+
+    call = narrator._client.calls[0]
+    assert "new_facts" in call["format"]["properties"]
+    assert "new_facts" in call["messages"][0]["content"]
+
+
+async def test_two_phase_fact_ledger_sinks_new_facts_and_keeps_them_out_of_prose_context():
+    narrator = make_two_phase_narrator()
+    narrator._client = FakeOllamaClient([
+        FakeChatResponse(_decide_payload(new_facts=["Marta the innkeeper owes Rook 10 gold."])),
+        [FakeChunk("Decided prose.")],
+    ])
+    sunk: list[list[str]] = []
+
+    _ = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I wait", noop_apply_update, fact_sink=sunk.append
+        )
+    ]
+
+    assert sunk == [["Marta the innkeeper owes Rook 10 gold."]]
+    narrate_call = narrator._client.calls[1]
+    assert "new_facts" not in narrate_call["messages"][-1]["content"]
+    assert "Marta" not in narrate_call["messages"][-1]["content"]
+
+
+async def test_two_phase_fact_ledger_off_omits_field_prompt_and_sink():
+    narrator = make_two_phase_narrator(fact_ledger=False)
+    narrator._client = FakeOllamaClient([
+        FakeChatResponse(_decide_payload(new_facts=["Should be ignored."])),
+        [FakeChunk("Decided prose.")],
+    ])
+    sunk: list[list[str]] = []
+
+    _ = [
+        c
+        async for c in narrator.narrate(
+            [], "{}", "I wait", noop_apply_update, fact_sink=sunk.append
+        )
+    ]
+
+    call = narrator._client.calls[0]
+    assert "new_facts" not in call["format"]["properties"]
+    assert "new_facts" not in call["messages"][0]["content"]
+    assert narrator.supports_fact_ledger is False
+    assert sunk == []
+
+
+def test_create_ollama_narrator_defaults_fact_ledger_off(monkeypatch):
+    monkeypatch.delenv("OLLAMA_FACT_LEDGER", raising=False)
+    narrator = create_ollama_narrator()
+
+    assert narrator.supports_fact_ledger is False
+
+
+def test_create_ollama_narrator_respects_fact_ledger_opt_in(monkeypatch):
+    monkeypatch.setenv("OLLAMA_FACT_LEDGER", "1")
+    narrator = create_ollama_narrator()
+
+    assert narrator.supports_fact_ledger is True
+
+
 def test_default_structured_output_is_true():
     # A live 5-repeat qwen2.5:7b comparison found this roughly doubles
     # real tool-call correctness over native tool-calling - see

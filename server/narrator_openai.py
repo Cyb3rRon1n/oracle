@@ -24,9 +24,11 @@ from .narrator_ollama import (
     DECIDE_FOLLOWUP_SCHEMA as _DECIDE_FOLLOWUP_SCHEMA,
     DECIDE_SCHEMA as _DECIDE_SCHEMA,
     DECIDE_SYSTEM_PROMPT as _DECIDE_SYSTEM_PROMPT,
+    FACT_LEDGER_PROMPT_ADDENDUM,
     WORLD_UPDATE_PROMPT_ADDENDUM,
     _outcome_update,
     _strip_narration,
+    _with_fact_fields,
     _with_scene_fields,
     _with_world_fields,
     _with_world_prompt,
@@ -39,6 +41,7 @@ SceneSink = Callable[[dict], None]
 
 class OpenAINarrator:
     supports_scene_facts = True
+    supports_fact_ledger = True
 
     def __init__(
         self,
@@ -48,6 +51,7 @@ class OpenAINarrator:
         rules: RulesIndex | None = None,
         world_bible: WorldBible | None = None,
         world_updates: bool = True,
+        fact_ledger: bool = True,
     ):
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self._base_url = (base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
@@ -60,8 +64,10 @@ class OpenAINarrator:
             _with_world_prompt(_DECIDE_SYSTEM_PROMPT, world_updates)
             + lore_block
             + (WORLD_UPDATE_PROMPT_ADDENDUM if world_updates else "")
+            + (FACT_LEDGER_PROMPT_ADDENDUM if fact_ledger else "")
         )
         self._world_updates = world_updates
+        self._fact_ledger = fact_ledger
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             headers={"Authorization": f"Bearer {self._api_key}"},
@@ -106,9 +112,10 @@ class OpenAINarrator:
         update_world: UpdateWorld | None = None,
         world_summary: str | None = None,
         scene_sink: SceneSink | None = None,
+        fact_sink: Callable[[list[str]], None] | None = None,
     ) -> AsyncIterator[str]:
         return self._narrate(
-            history, character_summary, action_text, apply_update, request_roll, update_world, world_summary, scene_sink
+            history, character_summary, action_text, apply_update, request_roll, update_world, world_summary, scene_sink, fact_sink
         )
 
     async def _decide(self, messages: list[dict], schema: dict) -> tuple[dict, list[dict]]:
@@ -147,6 +154,7 @@ class OpenAINarrator:
         update_world: UpdateWorld | None,
         world_summary: str | None,
         scene_sink: SceneSink | None,
+        fact_sink: Callable[[list[str]], None] | None = None,
     ) -> AsyncIterator[str]:
         base_messages = [
             {"role": "system", "content": self._system_prompt},
@@ -154,8 +162,11 @@ class OpenAINarrator:
             {"role": "user", "content": self._prompt(character_summary, world_summary, action_text)},
         ]
 
-        # Phase 1 - decide. Schema-constrained, no prose anywhere in scope.
-        data, _ = await self._decide(base_messages, _with_scene_fields(_with_world_fields(_DECIDE_SCHEMA, self._world_updates)))
+
+        data, _ = await self._decide(
+            base_messages,
+            _with_fact_fields(_with_scene_fields(_with_world_fields(_DECIDE_SCHEMA, self._world_updates)), self._fact_ledger),
+        )
 
         roll_update: dict = {}
         if request_roll is not None and data.get("roll_requested"):
@@ -178,7 +189,7 @@ class OpenAINarrator:
                         "content": f"Real dice result: {roll_result_text}\nDecide the outcome now.",
                     },
                 ],
-                _with_scene_fields(_with_world_fields(_DECIDE_FOLLOWUP_SCHEMA, self._world_updates)),
+                _with_fact_fields(_with_scene_fields(_with_world_fields(_DECIDE_FOLLOWUP_SCHEMA, self._world_updates)), self._fact_ledger),
             )
 
         # Structured changes land BEFORE narration streams - the client sees
@@ -196,10 +207,12 @@ class OpenAINarrator:
             facts = {key: data.get(key) or [] for key in ("npcs_present", "points_of_interest", "suggested_actions")}
             facts["suggested_actions"] = facts["suggested_actions"][:4]
             scene_sink(facts)
+        if self._fact_ledger and fact_sink is not None and data.get("new_facts"):
+            fact_sink([str(f) for f in data["new_facts"]][:3])
 
         # Phase 2 - narrate. Unconstrained streaming prose, told what was
         # decided so it can't contradict the record.
-        decided = {k: v for k, v in data.items() if k not in ("npcs_present", "points_of_interest", "suggested_actions")}
+        decided = {k: v for k, v in data.items() if k not in ("npcs_present", "points_of_interest", "suggested_actions", "new_facts")}
         narrate_messages = [
             {"role": "system", "content": "You are the Dungeon Master. Narrate the outcome in vivid, concise open-ended prose (3-5 sentences). Never break character. Output prose only."},
             *history,

@@ -335,6 +335,27 @@ def _with_scene_fields(schema: dict) -> dict:
     return {**schema, "properties": {**schema["properties"], **SCENE_PROPERTIES}}
 
 
+FACT_LEDGER_PROPERTIES = {
+    "new_facts": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": (
+            "Durable facts from this turn worth remembering long after this scene ends - a "
+            "promise made or owed, a debt, a discovery, who-knows-whom, where something "
+            "important is hidden. Short plain-language sentences with names spelled out. At "
+            "most 3; empty when nothing durable happened - passing scene detail does not "
+            "belong here."
+        ),
+    },
+}
+
+
+def _with_fact_fields(schema: dict, include_facts: bool) -> dict:
+    if not include_facts:
+        return schema
+    return {**schema, "properties": {**schema["properties"], **FACT_LEDGER_PROPERTIES}}
+
+
 def _strip_narration(schema: dict) -> dict:
     """The two-phase decide call decides everything EXCEPT prose - forced-JSON
     narration measurably flattens it, so narration is written in a separate
@@ -522,6 +543,15 @@ def _with_world_prompt(prompt: str, include_world: bool) -> str:
     return prompt + WORLD_UPDATE_PROMPT_ADDENDUM if include_world else prompt
 
 
+FACT_LEDGER_PROMPT_ADDENDUM = """
+
+Also fill `new_facts`: at most 3 short plain-language sentences recording what happened this
+turn that must still be true much later - a promise made or owed, a debt, a discovery (a hidden
+door, where something valuable is), who-knows-whom or how someone reacted, a name learned.
+Names spelled out exactly. Leave it empty for passing scene detail, ordinary combat, or anything
+already captured by mechanical_change/world_change/scene fields - most turns add nothing here."""
+
+
 STRUCTURED_OUTPUT_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 Respond with a single JSON object matching the given schema - never prose outside that JSON,
 never a tool call. `narration` is your in-character response (3-5 sentences, open-ended prose,
@@ -660,6 +690,7 @@ class OllamaNarrator:
         two_phase: bool = True,
         roll_requests: bool = False,
         world_updates: bool = False,
+        fact_ledger: bool = False,
         world_bible: WorldBible | None = None,
         few_shot_example: bool = False,
         hardened_rules: bool = False,
@@ -691,6 +722,13 @@ class OllamaNarrator:
         # narration-free DECIDE schemas (see the constants' own comment).
         self._decide_system_prompt = DECIDE_SYSTEM_PROMPT + suffix
         self._decide_followup_system_prompt = DECIDE_FOLLOWUP_SYSTEM_PROMPT + suffix
+        # Fact ledger rides both decide prompts when on - flag-off keeps
+        # the parity-verified item-32 prompts byte-identical.
+        if fact_ledger:
+            self._decide_system_prompt += FACT_LEDGER_PROMPT_ADDENDUM
+            self._decide_followup_system_prompt += FACT_LEDGER_PROMPT_ADDENDUM
+
+        self._structured_output = structured_output
         # Defaults on (see STRUCTURED_OUTPUT_SCHEMA above for why) - a
         # real constructor flag rather than a separate class, since every
         # other piece of state (client/model/rules) is identical either
@@ -716,6 +754,10 @@ class OllamaNarrator:
         # keeps its exact shape (and the legacy tool-calling path never had
         # them). Engine reads this via getattr before passing scene_sink.
         self.supports_scene_facts = structured_output and two_phase
+        # Same gate for the fact ledger - engine reads it via getattr
+        # before passing fact_sink.
+        self.supports_fact_ledger = structured_output and two_phase and fact_ledger
+        self._fact_ledger = fact_ledger
         # Defaults OFF, unlike structured_output above - see
         # STRUCTURED_OUTPUT_ROLL_SCHEMA's own docstring for why: real
         # signal from live spot-checks, but not yet validated at the same
@@ -742,11 +784,12 @@ class OllamaNarrator:
         update_world: UpdateWorld | None = None,
         world_summary: str | None = None,
         scene_sink: Callable[[dict], None] | None = None,
+        fact_sink: Callable[[list[str]], None] | None = None,
     ) -> AsyncIterator[str]:
         if self._structured_output:
             if self._two_phase:
                 return self._narrate_two_phase(
-                    history, character_summary, action_text, apply_update, request_roll, update_world, world_summary, scene_sink
+                    history, character_summary, action_text, apply_update, request_roll, update_world, world_summary, scene_sink, fact_sink
                 )
             return self._narrate_structured(
                 history, character_summary, action_text, apply_update, request_roll, update_world, world_summary
@@ -978,6 +1021,7 @@ class OllamaNarrator:
         update_world: UpdateWorld | None = None,
         world_summary: str | None = None,
         scene_sink: Callable[[dict], None] | None = None,
+        fact_sink: Callable[[list[str]], None] | None = None,
     ) -> AsyncIterator[str]:
         """Two-phase turn (see the _two_phase constructor note). Phase 1: a
         narration-free decide call under DECIDE_SCHEMA (+world/scene fields);
@@ -997,7 +1041,7 @@ class OllamaNarrator:
             {"role": "user", "content": prompt},
         ]
 
-        schema = _with_scene_fields(_with_world_fields(DECIDE_SCHEMA, self._world_updates))
+        schema = _with_fact_fields(_with_scene_fields(_with_world_fields(DECIDE_SCHEMA, self._world_updates)), self._fact_ledger)
 
         response = await self._client.chat(model=self._model, messages=base_messages, format=schema, stream=False)
         try:
@@ -1017,7 +1061,7 @@ class OllamaNarrator:
             if data.get("roll_kind"):
                 roll_update["roll_kind"] = data["roll_kind"]
             roll_result_text = request_roll(roll_update)
-            followup_schema = _with_scene_fields(_with_world_fields(DECIDE_FOLLOWUP_SCHEMA, self._world_updates))
+            followup_schema = _with_fact_fields(_with_scene_fields(_with_world_fields(DECIDE_FOLLOWUP_SCHEMA, self._world_updates)), self._fact_ledger)
             followup_messages = [
                 {"role": "system", "content": self._decide_followup_system_prompt},
                 *history,
@@ -1043,8 +1087,10 @@ class OllamaNarrator:
             facts = {key: data.get(key) or [] for key in ("npcs_present", "points_of_interest", "suggested_actions")}
             facts["suggested_actions"] = facts["suggested_actions"][:4]
             scene_sink(facts)
+        if self._fact_ledger and fact_sink is not None and data.get("new_facts"):
+            fact_sink([str(f) for f in data["new_facts"]][:3])
 
-        decided = {k: v for k, v in data.items() if k not in SCENE_PROPERTIES}
+        decided = {k: v for k, v in data.items() if k not in SCENE_PROPERTIES and k != "new_facts"}
         narrate_messages: list[dict] = [
             {
                 "role": "system",
@@ -1147,6 +1193,7 @@ def create_ollama_narrator() -> OllamaNarrator:
     # decide->narrate split is docs/REBUILD_PLAN.md's headline narrator
     # change; "0" escapes to the single-call path for A/B measurement.
     two_phase = os.environ.get("OLLAMA_TWO_PHASE", "true").strip().lower() not in ("0", "false", "no")
+    fact_ledger = os.environ.get("OLLAMA_FACT_LEDGER", "false").strip().lower() in ("1", "true", "yes")
     return OllamaNarrator(
         model=os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
         host=os.environ.get("OLLAMA_HOST"),
@@ -1154,4 +1201,5 @@ def create_ollama_narrator() -> OllamaNarrator:
         two_phase=two_phase,
         roll_requests=roll_requests,
         world_updates=world_updates,
+        fact_ledger=fact_ledger,
     )

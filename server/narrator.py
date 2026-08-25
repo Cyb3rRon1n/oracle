@@ -479,6 +479,12 @@ class NarratorBackend(Protocol):
         for the engine's scene_update broadcast (docs/protocol.md) - decided
         by the model's structured output, never parsed out of prose.
 
+        `fact_sink`, when given, is called once per resolved turn with any
+        durable session facts worth keeping in the ledger beyond this scene
+        (promises, debts, discoveries) - the same "decided by structured
+        output, never parsed from prose" discipline, feeding
+        Session.add_facts for injection into later turns' world_summary.
+
         `world_summary` is the current location and active objectives
         (WorldState.narrator_context(), server/state.py), given directly
         rather than left for the DM to infer from `history` alone. Built
@@ -538,6 +544,8 @@ class AnthropicNarrator:
     # scene_sink argument.
     supports_scene_facts = True
 
+    supports_fact_ledger = True
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -565,6 +573,7 @@ class AnthropicNarrator:
         update_world: UpdateWorld | None = None,
         world_summary: str | None = None,
         scene_sink=None,
+        fact_sink=None,
     ) -> AsyncIterator[str]:
         prompt = f"Character:\n{character_summary}\n\n"
         if world_summary:
@@ -617,12 +626,16 @@ class AnthropicNarrator:
             try:
                 response = await self._client.messages.create(
                     model=self._model,
-                    max_tokens=300,
+                    max_tokens=400,
                     system=(
-                        "Extract scene facts from this D&D turn as a single JSON object with "
+                        "Extract facts from this D&D turn as a single JSON object with "
                         'keys "npcs_present", "points_of_interest", "suggested_actions" '
                         "(each an array of short strings; suggested_actions has at most 4 "
-                        "items). Output only the JSON."
+                        'items) and "new_facts" (an array of at most 3 short plain-language '
+                        "sentences recording durable developments worth remembering long "
+                        "after this scene ends - a promise made or owed, a debt, a discovery, "
+                        "who-knows-whom, a name learned; empty when nothing durable happened). "
+                        "Output only the JSON."
                     ),
                     messages=[
                         {
@@ -639,6 +652,8 @@ class AnthropicNarrator:
                 if start >= 0 and end > start:
                     facts = json.loads(text[start : end + 1])
                     scene_sink({key: facts.get(key) or [] for key in ("npcs_present", "points_of_interest", "suggested_actions")})
+                    if fact_sink is not None and facts.get("new_facts"):
+                        fact_sink([str(f) for f in facts["new_facts"]][:3])
             except Exception:
                 logger.exception("Scene-fact extraction failed")
 
