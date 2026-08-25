@@ -741,6 +741,94 @@ async def test_action_updates_history_and_passes_it_to_next_narrate_call():
     ]
 
 
+class FactSinkDM:
+    """A supports_fact_ledger backend that calls fact_sink mid-turn exactly
+    like the real decide-call backends (Ollama two-phase / OpenAI) and the
+    Anthropic post-turn extraction do, and records every world_summary."""
+
+    supports_scene_facts = False
+    supports_fact_ledger = True
+
+    def __init__(self, facts: list[str]):
+        self._facts = facts
+        self.world_summaries: list[str | None] = []
+        self.got_fact_sink = False
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None, update_world=None, world_summary=None, scene_sink=None, fact_sink=None):
+        self.world_summaries.append(world_summary)
+        if fact_sink is not None:
+            self.got_fact_sink = True
+            fact_sink(self._facts)
+        yield "Noted."
+
+
+async def test_fact_sink_facts_land_in_the_session_ledger():
+    dm = FactSinkDM(["The innkeeper owes Rook 10 gold."])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I settle my tab"},
+    ))
+
+    assert dm.got_fact_sink
+    assert session.fact_ledger == ["The innkeeper owes Rook 10 gold."]
+
+
+async def test_ledger_block_reaches_the_dm_world_summary():
+    dm = FactSinkDM([])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.fact_ledger = ["A hidden door sits behind the tavern's bar."]
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    summary = dm.world_summaries[-1] or ""
+    assert "Session facts worth remembering" in summary
+    assert "hidden door" in summary
+
+
+async def test_no_facts_means_no_ledger_block():
+    dm = FactSinkDM([])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert "Session facts worth remembering" not in (dm.world_summaries[-1] or "")
+
+
+async def test_old_facts_resurface_only_when_named_in_the_action():
+    dm = FactSinkDM([])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.fact_ledger = [
+        "Old promise: Marta the innkeeper owes Rook a room.",
+        "Old grudge: the blacksmith of Emberreach hates the party.",
+        *(f"Filler fact {i} about nothing in particular" for i in range(12)),
+    ]
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I find Marta and ask about the room she promised me"},
+    ))
+
+    summary = dm.world_summaries[-1] or ""
+    assert "innkeeper owes Rook a room" in summary
+    assert "blacksmith" not in summary
+
+
 async def test_update_character_tool_call_applies_and_pushes_character_update():
     dm = UpdateCharacterDM({"hp_delta": -4, "add_item": "torch"})
     engine, session, received = make_engine(dm)

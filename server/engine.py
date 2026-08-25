@@ -47,6 +47,13 @@ DEFAULT_NPC_HP = 10
 # summary comfortably ahead of what would otherwise scroll out of context.
 CAMPAIGN_SUMMARY_INTERVAL = 10
 
+# Fact-ledger injection: the newest facts always reach the DM; anything older
+# only when one of its words (5+ chars) appears in the current action text or
+# location - crude entity retrieval, enough to resurface an old promise when
+# it's named again without paying for every fact on every call.
+LEDGER_RECENT_LIMIT = 12
+LEDGER_RELEVANT_LIMIT = 8
+
 # Fallback XP for defeating an NPC whose name doesn't match a known SRD
 # monster (see _xp_for_npc below) and whose introduction didn't carry an
 # explicit "xp" override - CR 1/4's real SRD value (server/rules/srd.json's
@@ -1997,6 +2004,9 @@ class GameEngine:
             trimmed["suggested_actions"] = list(facts.get("suggested_actions", []))[:4]
             scene_facts = trimmed
 
+        def fact_sink(facts: list) -> None:
+            self._session.add_facts(facts)
+
         full_clocks_before = {c.name for c in self._session.world.clocks if c.filled >= c.segments}
         # (text) - one entry per progress clock this turn's update_world
         # calls filled to its last segment (docs/protocol.md "Clocks"),
@@ -2059,6 +2069,14 @@ class GameEngine:
             lore_block = self._lorebook.injection_block(narrate_action_text)
         if lore_block:
             world_summary = f"{world_summary}\n\n{lore_block}" if world_summary else lore_block
+        ledger_block = self._ledger_context(narrate_action_text)
+        if ledger_block:
+            world_summary = f"{world_summary}\n\n{ledger_block}" if world_summary else ledger_block
+        sink_kwargs: dict = {}
+        if getattr(self._dm, "supports_scene_facts", False):
+            sink_kwargs["scene_sink"] = scene_sink
+        if getattr(self._dm, "supports_fact_ledger", False):
+            sink_kwargs["fact_sink"] = fact_sink
         async for chunk in self._dm.narrate(
             history=self._session.history,
             character_summary=character.model_dump_json(),
@@ -2067,15 +2085,7 @@ class GameEngine:
             request_roll=request_roll,
             update_world=update_world,
             world_summary=world_summary,
-            **(
-                # Optional-capability convention (same getattr pattern
-                # check_missed_change uses): only backends that decide scene
-                # facts accept scene_sink - test doubles and legacy paths
-                # keep their exact narrate() signature untouched.
-                {"scene_sink": scene_sink}
-                if getattr(self._dm, "supports_scene_facts", False)
-                else {}
-            ),
+            **sink_kwargs,
         ):
             buffer += chunk
             await self._broadcast(self._log_envelope("narration", chunk, done=False))
@@ -2228,6 +2238,34 @@ class GameEngine:
             )
 
         return buffer
+
+    def _ledger_context(self, action_text: str) -> str:
+        """Render the fact ledger as a world_summary block (docs/REBUILD_PLAN.md
+        watchlist: AriGraph-lite). Newest LEDGER_RECENT_LIMIT facts always go;
+        older ones only when a 5+-char word of theirs appears in the current
+        action text or location - an old promise resurfaces when it's named,
+        not on every turn. Empty string when there's nothing to say."""
+        facts = self._session.fact_ledger
+        if not facts:
+            return ""
+        recent = facts[-LEDGER_RECENT_LIMIT:]
+        older = facts[:-LEDGER_RECENT_LIMIT]
+        probe = f"{action_text}\n{self._session.world.location or ''}".casefold()
+        relevant: list[str] = []
+        for fact in reversed(older):
+            words = {
+                w.strip(".,;:!?'\"")
+                for w in fact.casefold().split()
+                if len(w.strip(".,;:!?'\"")) >= 5
+            }
+            if any(w in probe for w in words):
+                relevant.insert(0, fact)
+                if len(relevant) >= LEDGER_RELEVANT_LIMIT:
+                    break
+        lines = relevant + [f for f in recent]
+        if not lines:
+            return ""
+        return "Session facts worth remembering:\n" + "\n".join(f"- {line}" for line in lines)
 
     async def _maybe_update_campaign_summary(self) -> None:
         """Best-effort rolling campaign summary (docs/REBUILD_PLAN.md): every
