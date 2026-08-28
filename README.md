@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  📖 <a href="ROADMAP.md">Roadmap</a> · <a href="docs/protocol.md">Protocol</a> · <a href="docs/REBUILD_PLAN.md">v2 rebuild notes</a>
+  📖 <a href="ROADMAP.md">Roadmap</a> · <a href="docs/walkthrough.md">Setup walkthrough</a> · <a href="docs/protocol.md">Protocol</a> · <a href="docs/REBUILD_PLAN.md">v2 rebuild notes</a>
 </p>
 
 An AI Dungeon Master that runs a real-time tabletop RPG session in your browser — an LLM sitting in the GM seat, adjudicating rules, narrating the world, and managing campaign state.
@@ -39,22 +39,50 @@ Instead of a single-player chatbot, Oracle is a game engine with an LLM in the G
 
 ## Running it
 
+A session is two halves: a Python **server** (the engine + LLM narrator — the
+source of truth for every mechanical number) and the **web client** (React, the
+browser app you play in). The server runs on one machine; everyone else just
+opens a browser at it. Below is the quick start — [docs/walkthrough.md](docs/walkthrough.md)
+is the same thing step by step.
+
 Requirements: Python 3.11+, Node 20+ (build only).
 
 ```bash
-# server
+# ── server (one machine) ─────────────────────────────────────────────
 pip install -e ".[ollama]"          # or ".[dev]" for API-only backends
-cp .env.example .env                 # set DM_BACKEND / keys
-python -m server.main                # ws://localhost:8765
+cp .env.example .env                # set DM_BACKEND / keys
+python -m server.main               # ws://localhost:8765
 
-# web client (development)
-cd web && npm ci && npm run dev      # http://localhost:5173
+# ── web client (dev, hot reload) ─────────────────────────────────────
+cd web && npm ci && npm run dev     # http://localhost:5173
 
-# web client (production build)
+# ── web client (production build) ────────────────────────────────────
 cd web && npm run build && npm run preview
 ```
 
-Open two browser windows pointed at the same session id and you're playing together. Character `.json` exports from a previous session import on the join screen.
+Open two browser windows/tabs pointed at the same session id and you're playing
+together. Character `.json` exports from a previous session import on the join
+screen.
+
+### Playing from another machine
+
+The server and the web client don't have to be on the same machine. The web
+client only ever needs to reach `ws://<server>:8765`; who serves the page is
+separate. Clients just need a browser — no clone, no Python, no install.
+
+- **Server machine** — set `SERVER_HOST=0.0.0.0` in `.env` (the default
+  `localhost` keeps it single-machine), note the machine's LAN IP (`ip -4 addr`
+  / `ipconfig`), and open port 8765 if a firewall is on.
+- **Clients** — point the web client at the server *before* it builds, since
+  `VITE_SERVER_URI` is baked in at dev/build time (`web/src/config.js`):
+  - dev: `VITE_SERVER_URI=ws://<server-ip>:8765 npm run dev -- --host`
+  - production: `VITE_SERVER_URI=ws://<server-ip>:8765 npm run build`, then
+    serve `web/dist/` (or `npm run preview -- --host`)
+  - `--host` is what lets vite's dev/preview server answer browsers on *other*
+    machines instead of only this one.
+- Every player then opens `http://<server-ip>:5173` in their browser. Same
+  session id in every window = same game; the server hosts any number of
+  independent sessions side by side.
 
 ### Configuration
 
@@ -66,6 +94,7 @@ Open two browser windows pointed at the same session id and you're playing toget
 | `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL` | api.openai.com | Any `/chat/completions` provider |
 | `WORLD_CONTEXT_DIR` | `world_context/` | Lorebook source files |
 | `SESSION_STORE_DIR` | `sessions/` | Session persistence |
+| `SERVER_HOST` / `SERVER_PORT` | `localhost` / `8765` | Server bind address/port — `SERVER_HOST=0.0.0.0` accepts clients from other machines |
 | `OLLAMA_TWO_PHASE` | `true` | `"0"` restores the single-call path (kept for A/B measurement) |
 | `OLLAMA_FACT_LEDGER` | `false` | `"1"` opts the decide call into recording durable session facts (measured reliability cost on qwen2.5:7b — see ROADMAP item 36); hosted backends always have it |
 
