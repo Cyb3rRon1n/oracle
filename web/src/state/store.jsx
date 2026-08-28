@@ -159,7 +159,7 @@ export function StoreProvider({ children }) {
     const conn = createConnection({
       sessionId: identity.sessionId,
       senderId: identity.playerId,
-      onEvent: (envelope) => dispatch({ type: envelope.type, envelope }),
+      onEvent: (envelope) => dispatch({ type: envelope.type, ...envelope }),
       onStatus: (status) => dispatch({ type: "ws_status", status }),
     });
     connRef.current = conn;
@@ -179,7 +179,7 @@ export function StoreProvider({ children }) {
         const conn = createConnection({
           sessionId,
           senderId: playerId,
-          onEvent: (envelope) => dispatch({ type: envelope.type, envelope }),
+          onEvent: (envelope) => dispatch({ type: envelope.type, ...envelope }),
           onStatus: (status) => dispatch({ type: "ws_status", status }),
         });
         connRef.current = conn;
