@@ -32,14 +32,15 @@ function initial() {
 
 function appendLog(log, entry) {
   const seq = ++logSeq;
-  if (entry.chunk) {
-    // Streaming DM narration: grow the open tail entry.
-    const tail = log[log.length - 1];
-    if (tail && tail.streaming) {
-      const next = [...log];
-      next[next.length - 1] = { ...tail, text: tail.text + entry.text };
-      return next;
-    }
+  const tail = log[log.length - 1];
+  if (tail && tail.streaming && entry.kind === "narration") {
+    // Live DM narration streams one chunk per log_entry, done:false, closed
+    // by an empty done:true chunk (server/engine.py _log_envelope) - grow
+    // the open tail until that terminator lands, so a narration renders as
+    // one paragraph instead of one entry per token.
+    const next = [...log];
+    next[next.length - 1] = { ...tail, text: tail.text + entry.text, streaming: entry.done === false };
+    return next;
   }
   return [...log, { id: seq, ...entry }];
 }

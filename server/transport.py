@@ -5,6 +5,7 @@ import logging
 from collections.abc import Callable
 
 from websockets.asyncio.server import ServerConnection, serve
+from websockets.exceptions import ConnectionClosed
 
 from shared.protocol import Envelope
 
@@ -76,6 +77,10 @@ class Transport:
                     self._connections[player_id] = (session_id, connection)
                 engine = self._get_or_create_engine(envelope.session_id)
                 await engine.handle(envelope)
+        except ConnectionClosed:
+            # Every client drop (refresh, network blip, kill) lands here - a
+            # routine disconnect, not an error; seat cleanup is in finally.
+            logger.info("Client disconnected: %s", player_id or connection.remote_address)
         finally:
             if player_id is not None:
                 self._connections.pop(player_id, None)
