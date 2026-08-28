@@ -34,7 +34,7 @@ export default function CharacterSheet() {
 
   return (
     <aside className="panel flex flex-col min-h-[240px]">
-      <div className="flex border-b border-dungeon-edge">
+      <div className="flex flex-wrap border-b border-dungeon-edge">
         {TABS.map((t0) => (
           <button
             key={t0}
@@ -43,7 +43,7 @@ export default function CharacterSheet() {
               tab === t0 ? "text-dungeon-gold border-b-2 border-dungeon-gold" : "text-dungeon-ink/60 hover:text-dungeon-ink"
             }`}
           >
-            {tr(tab)}
+            {tr(t0)}
           </button>
         ))}
       </div>
