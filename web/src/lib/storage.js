@@ -20,5 +20,13 @@ export function clearIdentity() {
 }
 
 export function newId() {
-  return crypto.randomUUID();
+  if (crypto.randomUUID) return crypto.randomUUID();
+  // crypto.randomUUID needs a secure context (https/localhost) — LAN/Tailscale http isn't one
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  return [...b]
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("")
+    .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
 }
