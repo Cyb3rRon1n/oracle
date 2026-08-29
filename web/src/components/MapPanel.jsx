@@ -49,12 +49,11 @@ export default function MapPanel() {
   const { state } = useStore();
   const { t } = useLang();
   const map = state.world.map;
+  const { positions } = useMemo(() => layout(map?.nodes ?? [], map?.edges ?? []), [map]);
 
   if (!map?.nodes?.length) {
     return <p className="italic text-dungeon-ink/50 text-sm">{t("The map has not been charted yet.")}</p>;
   }
-
-  const { positions } = useMemo(() => layout(map.nodes, map.edges), [map]);
   const here = (state.world.location || "").toLowerCase();
 
   return (

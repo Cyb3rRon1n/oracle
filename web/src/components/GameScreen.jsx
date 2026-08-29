@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import CharacterSheet from "./CharacterSheet.jsx";
 import DiceTray from "./DiceTray.jsx";
 import ExportButtons from "./ExportButtons.jsx";
+import MapPanel from "./MapPanel.jsx";
 import ScenePanel from "./ScenePanel.jsx";
 import { LangFlags, useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
@@ -34,6 +35,7 @@ export default function GameScreen() {
   const { state, actions } = useStore();
   const { t } = useLang();
   const [draft, setDraft] = useState("");
+  const [showMap, setShowMap] = useState(true);
   const logEndRef = useRef(null);
 
   const isMyTurn = state.currentTurn && state.currentTurn === state.me;
@@ -124,6 +126,28 @@ export default function GameScreen() {
           {t("Send")}
         </button>
       </form>
+
+      {showMap ? (
+        <div className="fixed bottom-4 right-4 z-30 w-64 panel p-2 shadow-lg">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-display tracking-wide text-dungeon-gold">{t("Map")}</span>
+            <button
+              className="text-xs text-dungeon-ink/60 hover:text-dungeon-ink"
+              onClick={() => setShowMap(false)}
+            >
+              {t("Hide")}
+            </button>
+          </div>
+          <MapPanel />
+        </div>
+      ) : (
+        <button
+          className="fixed bottom-4 right-4 z-30 btn-gold !py-1 !px-2 text-xs shadow-lg"
+          onClick={() => setShowMap(true)}
+        >
+          🗺 {t("Map")}
+        </button>
+      )}
 
     </div>
   );

@@ -54,6 +54,7 @@ const FR = {
   // Sheet tabs
   "Overview": "Résumé",
   "Map": "Carte",
+  "Hide": "Masquer",
   "Abilities": "Caractéristiques",
   "Inventory": "Inventaire",
   "Spells": "Sorts",
