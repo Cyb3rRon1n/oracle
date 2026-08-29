@@ -40,7 +40,7 @@ SendTo = Callable[[str, Envelope], Awaitable[None]]
 # The safety net for an NPC introduced without a real max_hp from
 # lookup_rule, not the intended path. Deliberately separate from player
 # characters, who start at a flat 100 max HP (see build_starting_character).
-DEFAULT_NPC_HP = 10
+DEFAULT_NPC_HP = 100
 
 # How many resolved turns between campaign-summary rebuilds - the rolling
 # window (Session.max_history_messages) holds ~6 turns, so 10 keeps the

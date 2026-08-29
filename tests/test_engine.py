@@ -949,8 +949,8 @@ async def test_update_character_npc_target_defaults_max_hp_when_omitted():
     ))
 
     rat = session.npcs["rat"]
-    assert rat.max_hp == 10  # DEFAULT_NPC_HP - NPCs keep their own 10, players start at 100
-    assert rat.hp == 8
+    assert rat.max_hp == 100  # DEFAULT_NPC_HP - NPCs default to the same flat-100 pool players start at
+    assert rat.hp == 98
 
 
 async def test_update_character_npc_target_disposition_persists_and_updates():
@@ -1889,7 +1889,7 @@ async def test_sheet_change_broadcasts_public_player_update_alongside_private_ch
     assert public_updates, "a sheet change should also broadcast the public view to everyone else"
     payload = public_updates[-1][2]
     assert payload["player_id"] == player_id
-    assert payload["hp"] == 7
+    assert payload["hp"] == 97
     assert "inventory" not in payload
 
 
@@ -3741,7 +3741,7 @@ async def test_tracked_npc_roster_excludes_the_dead_and_omits_neutral_dispositio
     summary = recorder.world_summaries[-1]
     assert "bandit" not in summary, "a dead NPC has left active play"
     assert "- guard: HP 6/8, poisoned" in summary
-    assert "- innkeeper: HP 10/10, friendly" in summary
+    assert "- innkeeper: HP 100/100, friendly" in summary
     assert "w" * 100 not in summary, "notes are truncated in the roster"
 
 
@@ -4682,7 +4682,7 @@ async def test_apply_proposed_change_applies_confirmed_npc_proposal():
         type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
     ))
 
-    assert session.npcs["bandit"].hp == 6, "DEFAULT_NPC_HP 10 - 4 once the player confirms"
+    assert session.npcs["bandit"].hp == 96, "DEFAULT_NPC_HP 100 - 4 once the player confirms"
     npc_updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
     assert npc_updates, "a confirmed proposal should broadcast like a real tool call"
     confirms = [r for r in received if r[0] == "send_to" and r[1] == player_id
@@ -4708,7 +4708,7 @@ async def test_apply_proposed_change_applies_confirmed_self_proposal():
         type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
     ))
 
-    assert session.characters[player_id].hp == 7, "default 10 - 3 once confirmed"
+    assert session.characters[player_id].hp == 97, "default 100 - 3 once confirmed"
     char_updates = [r for r in received if r[0] == "send_to" and r[1] == player_id
                     and r[2] == "character_update"]
     assert char_updates
@@ -5347,7 +5347,7 @@ async def test_player_action_is_rejected_while_stable_but_unconscious():
 
 
 async def test_narrate_and_apply_announces_entering_dying():
-    dm = UpdateCharacterDM({"hp_delta": -10})  # from full HP straight to 0
+    dm = UpdateCharacterDM({"hp_delta": -100})  # from full HP straight to 0
     engine, session, received = make_engine(dm)
     player_id = str(uuid.uuid4())
     await join(engine, player_id)
