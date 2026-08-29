@@ -57,7 +57,11 @@ export function createConnection({ sessionId, senderId, onEvent, onStatus }) {
     sendEvent,
     close() {
       closedByUser = true;
-      ws?.close();
+      // Closing a CONNECTING socket triggers "WebSocket is closed before the
+      // connection is established" (StrictMode double-invokes this effect in
+      // dev). Skip the close while still CONNECTING; the open handshake will
+      // be discarded by the closedByUser guard in onopen.
+      if (ws && ws.readyState !== WebSocket.CONNECTING) ws.close();
     },
   };
 }

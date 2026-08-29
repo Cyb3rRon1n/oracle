@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#2a2118"/>
+  <path d="M32 10 L46 26 L40 46 L24 46 L18 26 Z" fill="none" stroke="#c9a959" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M32 10 L32 46 M18 26 L46 26 M24 46 L40 46" stroke="#c9a959" stroke-width="2" opacity="0.5"/>
+  <circle cx="32" cy="22" r="2.5" fill="#c9a959"/>
+  <text x="32" y="59" font-family="Georgia,serif" font-size="9" fill="#d6cdbb" text-anchor="middle" letter-spacing="2">ORACLE</text>
+</svg>
