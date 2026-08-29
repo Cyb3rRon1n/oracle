@@ -92,7 +92,7 @@ export default function GameScreen() {
         </div>
       ) : null}
 
-      <main className="panel flex-1 min-h-[40vh] overflow-y-auto p-4 space-y-2">
+      <main className="panel flex-1 min-h-[40vh] overflow-y-auto p-4 space-y-3">
         {state.log.map((entry) => (
           <LogLine key={entry.id} entry={entry} />
         ))}
@@ -153,6 +153,20 @@ export default function GameScreen() {
   );
 }
 
+function renderProse(text) {
+  const parts = text.split(/(“[^”]*”|«[^»]*»|"[^"]*")/);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    /^(“[^”]*”|«[^»]*»|"[^"]*")$/.test(part) ? (
+      <em key={i} className="italic text-dungeon-gold/90">
+        {part}
+      </em>
+    ) : (
+      <span key={i}>{part}</span>
+    )
+  );
+}
+
 function LogLine({ entry }) {
   const style = LOG_STYLES[entry.kind] || "";
   if (entry.kind === "system") {
@@ -161,6 +175,9 @@ function LogLine({ entry }) {
         ⚠ {entry.text}
       </p>
     );
+  }
+  if (entry.kind === "narration") {
+    return <p className={`${style} leading-relaxed`}>{renderProse(entry.text)}</p>;
   }
   return (
     <p className={style}>

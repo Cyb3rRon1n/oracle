@@ -4,7 +4,6 @@
 // character_edit; everything else here is read-only projection.
 
 import { useState } from "react";
-import MapPanel from "./MapPanel.jsx";
 import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
 
@@ -17,7 +16,7 @@ const ABILITY_LABELS = {
   cha: "CHA",
 };
 
-const TABS = ["Overview", "Map", "Abilities", "Inventory", "Spells", "Notes"];
+const TABS = ["Overview", "Abilities", "Inventory", "Spells", "Notes"];
 
 export default function CharacterSheet() {
   const [tab, setTab] = useState("Overview");
@@ -49,7 +48,6 @@ export default function CharacterSheet() {
       </div>
       <div className="p-4 overflow-y-auto text-sm space-y-3">
         {tab === "Overview" && <Overview sheet={sheet} />}
-        {tab === "Map" && <MapPanel />}
         {tab === "Abilities" && <Abilities sheet={sheet} />}
         {tab === "Inventory" && <Inventory />}
         {tab === "Spells" && <Spells sheet={sheet} />}

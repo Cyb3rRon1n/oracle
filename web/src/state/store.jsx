@@ -33,6 +33,11 @@ function initial() {
 function appendLog(log, entry) {
   const seq = ++logSeq;
   const tail = log[log.length - 1];
+  if (tail && !tail.streaming && tail.kind === entry.kind && tail.text === entry.text) {
+    // Reconnect replay: state_sync's log_tail then a live log_entry for the
+    // same line would render the text twice. Skip the duplicate.
+    return log;
+  }
   if (tail && tail.streaming && entry.kind === "narration") {
     // Live DM narration streams one chunk per log_entry, done:false, closed
     // by an empty done:true chunk (server/engine.py _log_envelope) - grow
