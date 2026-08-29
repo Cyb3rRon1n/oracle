@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 Broadcast = Callable[[Envelope], Awaitable[None]]
 SendTo = Callable[[str, Envelope], Awaitable[None]]
 
-# Mirrors _on_join_session's own hp=10, max_hp=10 fallback for a fresh
-# player character - the safety net for an NPC introduced without a
-# real max_hp from lookup_rule, not the intended path.
+# The safety net for an NPC introduced without a real max_hp from
+# lookup_rule, not the intended path. Deliberately separate from player
+# characters, who start at a flat 100 max HP (see build_starting_character).
 DEFAULT_NPC_HP = 10
 
 # How many resolved turns between campaign-summary rebuilds - the rolling
@@ -140,9 +140,9 @@ def _has_disadvantage(character: CharacterSheet, roll_kind: str | None = None) -
 # name and HP, since stats/inventory otherwise only get populated if the
 # DM's update_character tool happens to fire, which this project's whole
 # reliability investigation (ROADMAP.md) has shown is unreliable. This
-# stays deliberately small: a class picks starting HP (the SRD's own
-# hit_die max, plus a real CON modifier - see _generate_stats below) and a
-# starting item or two from the SRD's existing (limited, CC-BY-4.0)
+# stays deliberately small: a class picks a flat 100 starting HP (project
+# convention - video-game-style pools instead of 5e's level-1 hit-die total)
+# and a starting item or two from the SRD's existing (limited, CC-BY-4.0)
 # equipment list. Not a full 5e character build - see ROADMAP.md for
 # what's still deliberately left for later (more classes/equipment,
 # player-chosen stat allocation instead of a fixed per-class array).
@@ -778,9 +778,9 @@ def build_starting_character(
     race: str = "",
 ) -> CharacterSheet:
     """Builds a real starting sheet from a chosen class via the SRD data,
-    or falls back to the original blank hp=10/max_hp=10 sheet for a blank
-    or unrecognized class - keeps old clients/tests that don't send
-    character_class at all working unchanged.
+    or falls back to a blank hp=100/max_hp=100 sheet for a blank or
+    unrecognized class - keeps old clients/tests that don't send
+    character_class at all working.
 
     Every new character gets a random pre-Aetherfall origin (server/lore's
     random_origin) regardless of class choice - the near-death/transport
@@ -805,16 +805,14 @@ def build_starting_character(
     class_entry = rules.get_entry("class", character_class) if character_class else None
     if class_entry is None:
         return CharacterSheet(
-            player_id=player_id, name=name, hp=10, max_hp=10, background=background, race=race_name
+            player_id=player_id, name=name, hp=100, max_hp=100, background=background, race=race_name
         )
 
     stats = _apply_race_bonus(_generate_stats(character_class, stat_priority), race_entry)
-    con_mod = ability_modifier(stats["con"]) if stats else 0
-    # Real 5e's level-1 HP formula: hit die max + CON modifier, floored at
-    # 1 (a character can't start with 0 or negative HP even from a bad
-    # CON score) - the CON-modifier half of the "no ability-score/CON
-    # system yet" gap this file used to flag is closed by this line.
-    max_hp = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod)
+    # Flat 100 starting HP for every character (deliberate project choice:
+    # video-game-style pools instead of D&D 5e's level-1 hit-die total).
+    # Level-ups still add the hit die max + CON modifier per level (see _grant_levels).
+    max_hp = 100
     inventory = [
         InventoryItem(name=item_name)
         for item_name in CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), [])
@@ -1049,10 +1047,10 @@ class GameEngine:
             if character.character_class else None
         )
         if class_entry is not None:
-            # Same real formula as level-1 HP (hit die max + CON modifier,
-            # floored at 1 per level) - a character with a negative CON
-            # modifier still gains at least 1 HP per level, never 0 or
-            # negative growth.
+            # HP gain per level: hit die max + CON modifier, floored at 1 per
+            # level. Level-1 HP is the flat 100 baseline; growth past that is
+            # class-based - a character with a negative CON modifier still
+            # gains at least 1 HP per level, never 0 or negative growth.
             con_mod = ability_modifier(character.stats["con"]) if character.stats else 0
             hp_gain = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod) * levels_gained
             character.max_hp += hp_gain
