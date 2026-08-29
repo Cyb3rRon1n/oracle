@@ -41,7 +41,11 @@ class Transport:
         self._engine_factory = engine_factory
         self._engines: dict[str, GameEngine] = {}
         # player_id -> (session_id, connection)
-        self._connections: dict[str, tuple[str, ServerConnection]] = {}
+        self._connections: dict[str, set[ServerConnection]] = {}
+        # A connection is removable when its owning player closes it. The
+        # session map is needed because the same player_id can sit in
+        # different sessions' engines only if they join multiple sessions.
+        self._connection_sessions: dict[ServerConnection, str] = {}
 
     def _get_or_create_engine(self, session_id: str) -> GameEngine:
         engine = self._engines.get(session_id)
@@ -56,14 +60,13 @@ class Transport:
 
     async def _broadcast(self, session_id: str, envelope: Envelope) -> None:
         message = envelope.to_json()
-        targets = [conn for sid, conn in self._connections.values() if sid == session_id]
+        targets = [conn for conn, sid in self._connection_sessions.items() if sid == session_id]
         await asyncio.gather(*(conn.send(message) for conn in targets), return_exceptions=True)
 
     async def _send_to(self, player_id: str, envelope: Envelope) -> None:
-        entry = self._connections.get(player_id)
-        if entry is not None:
-            _, conn = entry
-            await conn.send(envelope.to_json())
+        conns = self._connections.get(player_id)
+        if conns:
+            await asyncio.gather(*(conn.send(envelope.to_json()) for conn in conns), return_exceptions=True)
 
     async def _handler(self, connection: ServerConnection) -> None:
         player_id: str | None = None
@@ -74,24 +77,24 @@ class Transport:
                 if envelope.type == "join_session":
                     player_id = envelope.sender_id
                     session_id = envelope.session_id
-                    self._connections[player_id] = (session_id, connection)
+                    self._connection_sessions[connection] = session_id
+                    self._connections.setdefault(player_id, set()).add(connection)
                 engine = self._get_or_create_engine(envelope.session_id)
                 await engine.handle(envelope)
         except ConnectionClosed:
-            # Every client drop (refresh, network blip, kill) lands here - a
-            # routine disconnect, not an error; seat cleanup is in finally.
             logger.info("Client disconnected: %s", player_id or connection.remote_address)
         finally:
             if player_id is not None:
-                self._connections.pop(player_id, None)
-                # The counterpart to _on_join_session's player_joined
-                # broadcast - a disconnect isn't a client-sent event, so the
-                # engine can't learn about it through the normal handle()/
-                # envelope dispatch path; the transport is the only thing
-                # that actually observes the socket closing.
-                engine = self._engines.get(session_id) if session_id is not None else None
-                if engine is not None:
-                    await engine.handle_disconnect(player_id)
+                self._connection_sessions.pop(connection, None)
+                conns = self._connections.get(player_id)
+                if conns is not None:
+                    conns.discard(connection)
+                    if not conns:
+                        # Last connection gone - only then has the player left.
+                        self._connections.pop(player_id, None)
+                        engine = self._engines.get(session_id) if session_id is not None else None
+                        if engine is not None:
+                            await engine.handle_disconnect(player_id)
 
     async def _serve_one(self, host: str, port: int) -> None:
         async with serve(self._handler, host, port):

@@ -1918,6 +1918,93 @@ async def test_handle_disconnect_for_never_joined_player_falls_back_to_id_as_nam
     assert left[-1][2] == {"player_id": player_id, "name": player_id}
 
 
+async def test_handle_disconnect_advances_past_a_departed_active_player():
+    engine, session, received = make_engine(StubDM())
+    player1_id, player2_id = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, player1_id, name="Thrain")
+    await join(engine, player2_id, name="Rowan")
+    await start_session(engine, player1_id)
+    assert session.current_turn == player1_id
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player1_id,
+        payload={"text": "I scout ahead."},
+    ))
+    assert session.current_turn == player2_id
+    received.clear()
+
+    await engine.handle_disconnect(player2_id)
+
+    assert session.current_turn == player1_id, "the turn must not stall on a departed player"
+    away = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message" and "Rowan" in r[2]["text"]
+    ]
+    assert away, "the table should be told the active player's turn moved on"
+    prompts = [r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"]
+    assert prompts and prompts[-1][2]["player_id"] == player1_id
+
+
+async def test_handle_disconnect_solo_player_keeps_their_turn():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id, name="Thrain")
+    await start_session(engine, player_id)
+    received.clear()
+
+    await engine.handle_disconnect(player_id)
+
+    assert session.current_turn == player_id, "hotseat: no one else to pass it to"
+    assert not any(
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message" and "away" in r[2]["text"].lower()
+    ), "a lone player's turn should quietly wait for them to return"
+
+
+async def test_absent_player_is_passed_silently_when_the_queue_reaches_them():
+    engine, session, received = make_engine(StubDM())
+    player1_id, player2_id = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, player1_id, name="Thrain")
+    await join(engine, player2_id, name="Rowan")
+    await start_session(engine, player1_id)
+
+    await engine.handle_disconnect(player2_id)  # away before their turn comes up
+    assert session.current_turn == player1_id
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player1_id,
+        payload={"text": "I press on."},
+    ))
+
+    assert session.current_turn == player1_id, "the queue sweeps past an absent slot"
+    prompts = [r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"]
+    assert prompts and prompts[-1][2]["player_id"] == player1_id
+    assert not any(
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "system_message" and "away" in r[2]["text"].lower()
+    ), "reaching an already-absent player's slot is passed silently"
+
+
+async def test_reconnect_heals_a_turn_stuck_on_an_absent_player():
+    engine, session, received = make_engine(StubDM())
+    player1_id, player2_id = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, player1_id, name="Thrain")
+    await join(engine, player2_id, name="Rowan")
+    await start_session(engine, player1_id)
+    await engine.handle_disconnect(player2_id)
+    # Simulate the pre-fix persisted state: a saved queue pointing at the
+    # departed player, exactly what a server restart restored.
+    session.current_turn_index = 1
+    received.clear()
+
+    await join(engine, player1_id, name="Thrain")  # the reconnect
+
+    assert session.current_turn == player1_id, "a reconnect heals a queue stuck on an absent player"
+    prompts = [r for r in received if r[0] == "broadcast" and r[1] == "turn_prompt"]
+    assert prompts and prompts[-1][2]["player_id"] == player1_id
+
+
 async def test_rejoin_uses_existing_character_name_not_new_input():
     """Regression test: rejoining with a name typed differently than the
     original (e.g. a fresh client run before .player_id existed, or a stale

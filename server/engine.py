@@ -925,6 +925,13 @@ class GameEngine:
         # (background/trait/near-death) - same load-once precedent.
         self._origin_table = origin_table or load_default_origin_table()
         self._pending_proposals: dict[str, dict] = {}
+        # Players with at least one live connection - the engine's own
+        # presence view, fed by _on_join_session (add) and
+        # handle_disconnect (remove). The transport fires handle_disconnect
+        # only when a player's *last* connection closes, so this is
+        # multi-tab safe. Drives _skip_absent_players so the strict turn
+        # queue never stalls on someone who isn't at the table.
+        self._connected_players: set[str] = set()
         # World-context lorebook (docs/protocol.md "Protocol v2 additions -
         # World context -> lorebook"): empty until a client sends
         # context_select; rebuilt from disk on every selection change and
@@ -1105,6 +1112,7 @@ class GameEngine:
     async def _on_join_session(self, envelope: Envelope) -> None:
         player_id = envelope.sender_id
         is_new_character = player_id not in self._session.characters
+        self._connected_players.add(player_id)
 
         if is_new_character:
             name = envelope.payload.get("player_name", player_id)
@@ -1252,8 +1260,12 @@ class GameEngine:
         # join is a genuine reconnect into an already-started game - where
         # the returning player should still see whose turn it is - iff
         # _has_started() says so.
-        if self._has_started() and self._session.current_turn == player_id:
-            await self._broadcast(self._turn_prompt_envelope())
+        if self._has_started():
+            # A reconnect rescues a queue left stuck on an absent player -
+            # pre-fix saved state persists current_turn_index pointing at
+            # someone long gone, and nothing else would ever move it.
+            if await self._skip_absent_players() or self._session.current_turn == player_id:
+                await self._broadcast(self._turn_prompt_envelope())
 
     def _has_started(self) -> bool:
         # Session.started is the authoritative signal going forward, but a
@@ -1410,6 +1422,8 @@ class GameEngine:
             await self._narrate_opening_scene(character, action_text)
 
         if self._session.current_turn is not None:
+            # Even the first turn skips a player who's already stepped away.
+            await self._skip_absent_players()
             await self._broadcast(self._turn_prompt_envelope())
 
     async def _on_start_combat(self, envelope: Envelope) -> None:
@@ -1467,6 +1481,7 @@ class GameEngine:
         self._session.turn_order = [pid for (_, _, _, pid) in participants if pid is not None]
         self._session.current_turn_index = 0
         self._session.in_combat = True
+        await self._skip_absent_players()
 
         order_text = ", ".join(f"{name} ({roll})" for name, roll, _, _ in participants)
         await self._broadcast(self._system_envelope(f"Combat begins! Initiative order: {order_text}.", level="info"))
@@ -1493,21 +1508,54 @@ class GameEngine:
         self._session.pre_combat_turn_order = None
         self._session.current_turn_index = 0
         self._session.in_combat = False
+        await self._skip_absent_players()
 
         await self._broadcast(self._system_envelope("Combat ends.", level="info"))
         if self._session.current_turn is not None:
             await self._broadcast(self._turn_prompt_envelope())
         await self._save()
 
+    async def _skip_absent_players(self) -> bool:
+        """Advances the turn past any player with no live connection, so
+        the strict round-robin queue never stalls on someone who isn't at
+        the table - the gap found live 2026-08-29: with turn_order
+        append-only and the turn advancing only on a resolved action, a
+        disconnected active player blocked every other player indefinitely
+        ("It's not your turn"), and the stuck state even survived a server
+        restart since current_turn_index persists with the session. Bounded
+        by construction: at most one full cycle of the queue. Returns
+        whether the turn moved - handle_disconnect announces a mid-flight
+        departure; a slot the queue merely reaches is passed silently."""
+        if not self._has_started() or self._session.current_turn in self._connected_players:
+            return False
+        for _ in range(len(self._session.turn_order)):
+            self._session.advance_turn()
+            if self._session.current_turn in self._connected_players:
+                return True
+        return False
+
     async def handle_disconnect(self, player_id: str) -> None:
         """Called by the transport when a connected player's socket closes -
         the counterpart to the player_joined broadcast above, so everyone
         else's presence view drops them. Not routed through handle()/
         envelope dispatch since a disconnect isn't a client-sent event -
-        the transport is the only thing that actually observes it."""
+        the transport is the only thing that actually observes it. Fires
+        only when the player's *last* connection closes, so closing one of
+        several tabs doesn't count as leaving.
+
+        Also moves the turn along when the departing player was the active
+        one, announced once here in the moment it happens - see
+        _skip_absent_players for the silent equivalent when the queue
+        merely reaches someone who's already gone."""
+        self._connected_players.discard(player_id)
         character = self._session.characters.get(player_id)
         name = character.name if character else player_id
         await self._broadcast(self._player_left_envelope(player_id, name))
+
+        if self._session.current_turn == player_id and await self._skip_absent_players():
+            await self._broadcast(self._system_envelope(f"{name} is away - the turn passes on.", level="info"))
+            await self._broadcast(self._turn_prompt_envelope())
+            await self._save()
 
     async def _narrate_opening_scene(self, character: CharacterSheet, action_text: str) -> None:
         """Best-effort: a failed opening scene shouldn't leave the lobby
@@ -1589,6 +1637,9 @@ class GameEngine:
         self._session.append_turn(text, buffer)
         await self._maybe_update_campaign_summary()
         self._session.advance_turn()
+        # An absent player's turn slot passes silently - the queue never
+        # stalls on whoever isn't at the table.
+        await self._skip_absent_players()
         await self._save(player_id)
         await self._broadcast(self._turn_prompt_envelope())
 

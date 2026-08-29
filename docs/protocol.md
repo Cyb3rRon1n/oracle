@@ -61,6 +61,8 @@ Decided: strict turn queue, not free-for-all with DM-narrated simultaneity.
 - A `player_action` from a character at 0 HP (dying, stabilized, or dead) is also rejected, even from the player whose turn it genuinely is — see "Death saves" below.
 - On resolving an action: server applies state changes, emits `log_entry`/`character_update`/`dice_result` as needed, advances `current_turn` to the next player in `turn_order`, and broadcasts a new `turn_prompt`.
 - **`turn_order`'s own contents change during combat** — see "Formal initiative" below. The cycling mechanism itself (`current_turn_index % len(turn_order)`) is completely unaware of this; only what's *in* the list changes.
+- **A player with no live connection is passed over when the queue reaches them.** The game keeps flowing with whoever is still at the table instead of stalling on an absent player (found live: with `turn_order` append-only and the turn advancing only on a resolved action, a disconnected active player blocked every remaining player indefinitely — and the stuck state even survived a server restart, since `current_turn_index` persists with the session). The absent player's slot stays in the rotation: they resume normally on reconnect, prompted when the turn next comes around (see `_on_join_session`'s reconnect `turn_prompt`).
+- **The pass-over is announced once when it interrupts the active player's turn mid-flight** ("X is away - the turn passes on."); reaching an already-absent player's slot is skipped silently. Closing one of several tabs doesn't count as leaving — the transport reports a disconnect only when a player's last connection closes.
 
 ## Pre-game lobby and session start
 
