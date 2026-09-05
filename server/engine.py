@@ -38,9 +38,17 @@ Broadcast = Callable[[Envelope], Awaitable[None]]
 SendTo = Callable[[str, Envelope], Awaitable[None]]
 
 # The safety net for an NPC introduced without a real max_hp from
-# lookup_rule, not the intended path. Deliberately separate from player
-# characters, who start at a flat 100 max HP (see build_starting_character).
-DEFAULT_NPC_HP = 100
+# lookup_rule, not the intended path - roughly a CR-1/4 mook's SRD HP, so
+# an unnamed "rat" is a real but trivial fight, not a 100-HP sponge.
+DEFAULT_NPC_HP = 10
+
+# A flat buffer added once to every player character's level-1 HP, on top
+# of the SRD hit-die max + CON modifier. Combat keeps real stakes (a
+# goblin's 2d6+2 matters, death saves are reachable) but a single bad
+# round on turn one can't end a low-HP character outright - the failure
+# mode the earlier flat-100 experiment was over-correcting for. Level-up
+# HP growth stays pure SRD (see _grant_levels); this is level-1 only.
+STARTING_HP_CUSHION = 10
 
 # How many resolved turns between campaign-summary rebuilds - the rolling
 # window (Session.max_history_messages) holds ~6 turns, so 10 keeps the
@@ -147,9 +155,9 @@ def _has_disadvantage(character: CharacterSheet, roll_kind: str | None = None) -
 # name and HP, since stats/inventory otherwise only get populated if the
 # DM's update_character tool happens to fire, which this project's whole
 # reliability investigation (ROADMAP.md) has shown is unreliable. This
-# stays deliberately small: a class picks a flat 100 starting HP (project
-# convention - video-game-style pools instead of 5e's level-1 hit-die total)
-# and a starting item or two from the SRD's existing (limited, CC-BY-4.0)
+# stays deliberately small: a class picks starting HP (the SRD hit-die max
+# + CON modifier + STARTING_HP_CUSHION) and a starting item or two from the
+# SRD's existing (limited, CC-BY-4.0)
 # equipment list. Not a full 5e character build - see ROADMAP.md for
 # what's still deliberately left for later (more classes/equipment,
 # player-chosen stat allocation instead of a fixed per-class array).
@@ -835,16 +843,20 @@ def build_starting_character(
 
     class_entry = rules.get_entry("class", character_class) if character_class else None
     if class_entry is None:
+        # No hit die to draw from - a bare baseline (the original classless
+        # HP) plus the same cushion every character gets.
+        blank_hp = 10 + STARTING_HP_CUSHION
         return CharacterSheet(
-            player_id=player_id, name=name, hp=100, max_hp=100, background=background,
+            player_id=player_id, name=name, hp=blank_hp, max_hp=blank_hp, background=background,
             race=race_name, **rp_fields,
         )
 
     stats = _apply_race_bonus(_generate_stats(character_class, stat_priority), race_entry)
-    # Flat 100 starting HP for every character (deliberate project choice:
-    # video-game-style pools instead of D&D 5e's level-1 hit-die total).
-    # Level-ups still add the hit die max + CON modifier per level (see _grant_levels).
-    max_hp = 100
+    con_mod = ability_modifier(stats["con"]) if stats else 0
+    # SRD level-1 HP (hit die max + CON modifier) plus a flat cushion - see
+    # STARTING_HP_CUSHION. Floored at 1 so a brutal CON score can't produce
+    # a 0- or negative-HP character. Level-up growth is pure SRD (_grant_levels).
+    max_hp = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod + STARTING_HP_CUSHION)
     inventory = [
         InventoryItem(name=item_name)
         for item_name in CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), [])
@@ -1081,9 +1093,9 @@ class GameEngine:
         )
         if class_entry is not None:
             # HP gain per level: hit die max + CON modifier, floored at 1 per
-            # level. Level-1 HP is the flat 100 baseline; growth past that is
-            # class-based - a character with a negative CON modifier still
-            # gains at least 1 HP per level, never 0 or negative growth.
+            # level - pure SRD, no cushion (that's a one-time level-1 add, see
+            # STARTING_HP_CUSHION). A character with a negative CON modifier
+            # still gains at least 1 HP per level, never 0 or negative growth.
             con_mod = ability_modifier(character.stats["con"]) if character.stats else 0
             hp_gain = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod) * levels_gained
             character.max_hp += hp_gain
