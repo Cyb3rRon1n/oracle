@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import CharacterSheet from "./CharacterSheet.jsx";
+import CharacterSheetFull from "./CharacterSheetFull.jsx";
 import ExportButtons from "./ExportButtons.jsx";
 import MapPanel from "./MapPanel.jsx";
 import ScenePanel from "./ScenePanel.jsx";
@@ -35,6 +36,7 @@ export default function GameScreen() {
   const { t } = useLang();
   const [draft, setDraft] = useState("");
   const [showMap, setShowMap] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const logEndRef = useRef(null);
   const hasMap = (state.world.map?.nodes?.length ?? 0) > 0;
 
@@ -62,12 +64,21 @@ export default function GameScreen() {
       <header className="flex items-center justify-between panel px-4 py-2">
         <h1 className="text-lg">{t("Oracle")}</h1>
         <div className="flex items-center gap-3 text-sm">
+          <button
+            className="px-2 py-1 rounded border border-dungeon-edge hover:border-dungeon-gold transition text-xs"
+            onClick={() => setSheetOpen(true)}
+            disabled={!state.character}
+          >
+            📜 {t("Sheet")}
+          </button>
           <ExportButtons />
           <LangFlags />
           <Presence players={state.players} me={state.me} />
           <ConnectionBadge status={state.status} />
         </div>
       </header>
+
+      {sheetOpen && <CharacterSheetFull onClose={() => setSheetOpen(false)} />}
 
       {state.pendingProposal && (
         <div className="panel border-dungeon-gold/50 p-3 flex items-center justify-between gap-3 text-sm">

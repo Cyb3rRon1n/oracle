@@ -646,13 +646,27 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     _public_character_view already follows for the public side."""
     class_entry = rules.get_entry("class", character.character_class)
     race_entry = rules.get_entry("race", character.race) if character.race else None
+    class_key = character.character_class.strip().lower()
+    # Spell attack bonus - real 5e: proficiency + spellcasting ability
+    # modifier. The save DC (8 + those two) is already a computed field on
+    # the sheet; this is the attack-roll counterpart, sent the same way so
+    # the character sheet UI can show both. None for a non-caster.
+    spell_ability = SPELLCASTING_ABILITY.get(class_key)
+    spell_attack_bonus = (
+        character.proficiency_bonus + character.stat_modifiers[spell_ability]
+        if spell_ability and spell_ability in character.stat_modifiers
+        else None
+    )
     return {
         **character.model_dump(),
         "class_features": _class_features_for(class_entry, character.level),
         "racial_traits": list((race_entry or {}).get("traits", [])),
-        "skill_proficiencies": list(
-            CLASS_SKILL_PROFICIENCIES.get(character.character_class.strip().lower(), ())
-        ),
+        "skill_proficiencies": list(CLASS_SKILL_PROFICIENCIES.get(class_key, ())),
+        # Which two saving throws this class is proficient in - already used
+        # for real save rolls (CLASS_SAVING_THROW_PROFICIENCIES), now also
+        # surfaced so the sheet can mark them, the same as skill_proficiencies.
+        "saving_throw_proficiencies": list(CLASS_SAVING_THROW_PROFICIENCIES.get(class_key, ())),
+        "spell_attack_bonus": spell_attack_bonus,
     }
 
 

@@ -1555,6 +1555,25 @@ async def test_owner_character_view_includes_class_features_and_skill_proficienc
     view = _owner_character_view(session.characters[player_id], engine._rules)
     assert "Arcane Recovery" in " ".join(view["class_features"])
     assert view["skill_proficiencies"] == ["arcana", "investigation"]
+    # Also surfaced for the character sheet: which saves this class is
+    # proficient in, and (for a caster) the spell attack bonus.
+    assert view["saving_throw_proficiencies"] == ["int", "wis"]
+    assert view["spell_attack_bonus"] == (
+        session.characters[player_id].proficiency_bonus
+        + session.characters[player_id].stat_modifiers["int"]
+    )
+
+
+async def test_owner_character_view_spell_attack_bonus_is_none_for_a_non_caster():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Grok", "character_class": "fighter"},
+    ))
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["spell_attack_bonus"] is None
+    assert view["saving_throw_proficiencies"] == ["str", "con"]
 
 
 async def test_owner_character_view_still_includes_everything_model_dump_has():
@@ -1582,6 +1601,8 @@ async def test_owner_character_view_handles_a_blank_or_unrecognized_class():
     view = _owner_character_view(session.characters[player_id], engine._rules)
     assert view["class_features"] == []
     assert view["skill_proficiencies"] == []
+    assert view["saving_throw_proficiencies"] == []
+    assert view["spell_attack_bonus"] is None
 
 
 async def test_owner_character_view_class_features_grow_with_level():
