@@ -164,6 +164,16 @@ UPDATE_CHARACTER_TOOL = {
                 "type": "integer",
                 "description": "Change in hit points. Negative for damage, positive for healing.",
             },
+            "temp_hp": {
+                "type": "integer",
+                "description": (
+                    "Grant temporary hit points (e.g. from a spell or a potion) - a "
+                    "buffer that soaks damage before real HP and that healing never "
+                    "touches. Doesn't stack: the engine keeps the higher of the current "
+                    "and new value. Use this instead of a positive hp_delta for a temp-HP "
+                    "effect."
+                ),
+            },
             "rest": {
                 "type": "string",
                 "enum": ["short", "long"],

@@ -116,10 +116,13 @@ export default function CharacterSheetFull({ onClose }) {
               <div className="text-center py-1">
                 <span className="text-2xl font-semibold">{sheet.hp}</span>
                 <span className="text-dungeon-ink/50"> / {sheet.max_hp}</span>
+                {sheet.temp_hp > 0 && <span className="text-sky-400 text-sm"> +{sheet.temp_hp}</span>}
               </div>
               <HpBar hp={sheet.hp} max={sheet.max_hp} />
               <div className="flex justify-between mt-2 text-xs">
-                <Planned label={t("Temp HP")} />
+                <span className="text-dungeon-ink/60">
+                  {t("Temp HP")} <b className="text-dungeon-ink">{sheet.temp_hp || 0}</b>
+                </span>
                 <Planned label={t("Hit dice")} />
               </div>
             </Section>

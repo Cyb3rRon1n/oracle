@@ -100,6 +100,9 @@ class CharacterSheet(BaseModel):
     name: str
     hp: int
     max_hp: int
+    # Temp HP - a buffer drained before real HP on damage (apply_update),
+    # untouched by healing, doesn't stack. 0 for a fresh/legacy sheet.
+    temp_hp: int = 0
     character_class: str = ""
     # A real, deliberately separate concept from character_class - server/
     # rules/srd.json's own "races" table (server/engine.py's
@@ -343,13 +346,29 @@ class CharacterSheet(BaseModel):
         the DM sees back."""
         changes: list[str] = []
 
+        # Temp HP - a separate buffer real 5e drains before real HP on
+        # damage, and that healing never touches. Doesn't stack: a new
+        # source takes the higher of the two, not the sum.
+        new_temp = update.get("temp_hp")
+        if isinstance(new_temp, int) and not isinstance(new_temp, bool) and new_temp > self.temp_hp:
+            self.temp_hp = new_temp
+            changes.append(f"temp HP now {self.temp_hp}")
+
         hp_delta = update.get("hp_delta")
         if hp_delta:
             prior_hp = self.hp
             prior_dying = self.dying
-            self.hp = max(0, min(self.max_hp, self.hp + int(hp_delta)))
-            sign = "+" if hp_delta > 0 else ""
-            changes.append(f"HP {sign}{hp_delta} (now {self.hp}/{self.max_hp})")
+            delta = int(hp_delta)
+            if delta < 0 and self.temp_hp > 0:
+                absorbed = min(self.temp_hp, -delta)
+                self.temp_hp -= absorbed
+                delta += absorbed
+                if absorbed:
+                    changes.append(f"{absorbed} absorbed by temp HP ({self.temp_hp} left)")
+            self.hp = max(0, min(self.max_hp, self.hp + delta))
+            if delta:
+                sign = "+" if delta > 0 else ""
+                changes.append(f"HP {sign}{delta} (now {self.hp}/{self.max_hp})")
 
             if hp_delta < 0 and prior_hp == 0 and prior_dying and not self.dead:
                 # Already down and dying - taking more damage while at 0 HP

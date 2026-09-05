@@ -25,7 +25,7 @@ paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-firs
 
 | Field | Paper sheet | Add it |
 |---|---|---|
-| **Temp HP** | A separate pool absorbed before real HP | `CharacterSheet.temp_hp: int = 0`; `apply_update` subtracts damage from `temp_hp` first, and a source sets it to `max(temp_hp, new)` (temp HP doesn't stack). `update_character` gains a `temp_hp` field. |
+| ~~**Temp HP**~~ | A separate pool absorbed before real HP | **Done.** `CharacterSheet.temp_hp`; `apply_update` drains it before real HP on damage, healing never touches it, a new source takes `max(current, new)` (no stacking). `update_character` gains a `temp_hp` field (Anthropic tool; the Ollama structured schema doesn't cover it — legacy tool-calling path can still send it). |
 | **Speed** | Movement rate in feet | `race.speed` into `srd.json`, `CharacterSheet.speed: int`. Display-only until Oracle has any positioning/movement system — which it deliberately doesn't. Cheap to show, large to make mechanical. |
 | **Currency (CP/SP/EP/GP/PP)** | Five boxes; loot economy | `CharacterSheet.currency: dict[str,int]`; `update_character` gains `gold_delta` (or per-coin); DM system prompt gains "award/deduct coin when the fiction calls for it". Also wants a shop/price concept to be worth much. |
 

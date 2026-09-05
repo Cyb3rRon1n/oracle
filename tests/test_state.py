@@ -132,6 +132,37 @@ def test_apply_update_hp_delta_damage_and_healing():
     assert character.hp == 5
 
 
+def test_apply_update_temp_hp_absorbs_damage_before_real_hp():
+    character = make_character(hp=10, max_hp=10)
+    character.apply_update({"temp_hp": 5})
+    assert character.temp_hp == 5
+
+    # 3 damage: all soaked by temp HP, real HP untouched.
+    character.apply_update({"hp_delta": -3})
+    assert character.temp_hp == 2 and character.hp == 10
+
+    # 6 more: 2 soaked, 4 through to real HP.
+    character.apply_update({"hp_delta": -6})
+    assert character.temp_hp == 0 and character.hp == 6
+
+
+def test_apply_update_temp_hp_does_not_stack_and_healing_ignores_it():
+    character = make_character(hp=6, max_hp=10)
+    character.apply_update({"temp_hp": 8})
+    character.apply_update({"temp_hp": 3})  # lower - ignored
+    assert character.temp_hp == 8
+
+    character.apply_update({"hp_delta": 3})  # healing
+    assert character.hp == 9 and character.temp_hp == 8
+
+
+def test_apply_update_temp_hp_soak_prevents_dying():
+    character = make_character(hp=2, max_hp=10)
+    character.apply_update({"temp_hp": 10})
+    character.apply_update({"hp_delta": -5})
+    assert character.hp == 2 and not character.dying
+
+
 def test_apply_update_clamps_hp_to_valid_range():
     character = make_character(hp=2, max_hp=10)
     character.apply_update({"hp_delta": -100})
