@@ -4930,6 +4930,48 @@ async def test_character_edit_notes_updates_own_sheet_privately():
     assert not any(r[0] == "broadcast" for r in received)
 
 
+async def test_character_edit_sets_rp_fields_privately():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    for field, value in [
+        ("personality", "reckless when cornered"),
+        ("ideals", "no one gets left behind"),
+        ("bonds", "the sister I never told I was leaving"),
+        ("flaws", "I'd rather be right than kind"),
+    ]:
+        await engine.handle(Envelope(
+            type="character_edit", session_id="test-session", sender_id=player_id,
+            payload={"field": field, "value": value},
+        ))
+        assert getattr(session.characters[player_id], field) == value
+
+    # Pure fiction, like notes - private character_update only, no broadcast.
+    assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_new_character_gets_rp_fields_seeded_from_its_origin():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    sheet = session.characters[player_id]
+    assert sheet.personality  # reuses the origin's rolled trait
+    assert sheet.ideals and sheet.bonds and sheet.flaws
+
+
+async def test_update_character_never_sets_personality():
+    # The DM reads personality/ideals/bonds/flaws but never writes them -
+    # they're not update_character fields, so a stray one is a plain no-op.
+    from server.state import CharacterSheet
+
+    sheet = CharacterSheet(player_id="p", name="x", hp=10, max_hp=10, personality="cautious")
+    result = sheet.apply_update({"personality": "reckless"})
+    assert sheet.personality == "cautious"
+    assert result.startswith("No changes applied")
+
+
 async def test_character_edit_add_item_appends_to_inventory():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())

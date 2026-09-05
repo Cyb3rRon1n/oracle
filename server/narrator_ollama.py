@@ -22,6 +22,10 @@ The acting character's ability scores, real modifiers, and AC are in their sheet
 the character is good or bad at, and how easy or hard they are to hit, even though you
 have no request_roll tool to apply them to mechanically.
 
+character_summary also carries the character's personality, ideals, bonds, and flaws.
+Play to them - let them colour NPC reactions and complications - but never quote them
+back at the player.
+
 You have two tools available:
 - lookup_rule: use before improvising crunchy mechanics (monster stats, spell details,
   class features, equipment, conditions) so numbers stay consistent from turn to turn.

@@ -183,6 +183,13 @@ class Origin(BaseModel):
     background: str
     trait: str
     near_death: str
+    # The three RP anchors the paper 5e sheet has alongside a personality
+    # trait (which `trait` above already provides). Seeded here, then
+    # player-editable via character_edit like notes - see
+    # server/engine.py's build_starting_character and CHARACTER_EDIT_FIELDS.
+    ideal: str = ""
+    bond: str = ""
+    flaw: str = ""
 
     def sheet_summary(self) -> str:
         """Player/DM-facing text for the character sheet's Features &
@@ -197,6 +204,12 @@ class OriginTable(BaseModel):
     backgrounds: list[str]
     traits: list[str]
     near_death_events: list[str]
+    # Optional so an older/minimal custom origins.json still loads - a
+    # character just gets blank ideal/bond/flaw, the same graceful-miss
+    # convention the rest of this project follows.
+    ideals: list[str] = []
+    bonds: list[str] = []
+    flaws: list[str] = []
 
 
 def load_default_origin_table() -> OriginTable:
@@ -214,4 +227,7 @@ def random_origin(table: OriginTable) -> Origin:
         background=random.choice(table.backgrounds),
         trait=random.choice(table.traits),
         near_death=random.choice(table.near_death_events),
+        ideal=random.choice(table.ideals) if table.ideals else "",
+        bond=random.choice(table.bonds) if table.bonds else "",
+        flaw=random.choice(table.flaws) if table.flaws else "",
     )

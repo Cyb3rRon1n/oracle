@@ -106,7 +106,14 @@ ROLL_KIND_DISADVANTAGE_EXCLUSIONS: dict[str, frozenset[str]] = {
 # player only ever names which owned item to wear/wield, never the AC
 # number itself; _compute_ac (engine-owned, real SRD data) computes what
 # that actually means, the player never types a value into it directly.
-CHARACTER_EDIT_FIELDS = frozenset({"notes", "add_item", "remove_item", "equip", "unequip"})
+# Free-text fiction fields a player owns outright - set directly, no
+# adjudication. personality/ideals/bonds/flaws are the paper sheet's RP
+# anchors (seeded at creation, see build_starting_character); the DM reads
+# them via character_summary but never writes them.
+CHARACTER_EDIT_TEXT_FIELDS = frozenset({"notes", "personality", "ideals", "bonds", "flaws"})
+CHARACTER_EDIT_FIELDS = CHARACTER_EDIT_TEXT_FIELDS | frozenset(
+    {"add_item", "remove_item", "equip", "unequip"}
+)
 
 
 def _has_disadvantage(character: CharacterSheet, roll_kind: str | None = None) -> list[str]:
@@ -811,7 +818,17 @@ def build_starting_character(
     bonus, no racial traits) rather than blocking creation, and is still
     recorded even for a classless character, since race and class don't
     depend on each other."""
-    background = random_origin(origin_table or load_default_origin_table()).sheet_summary()
+    origin = random_origin(origin_table or load_default_origin_table())
+    background = origin.sheet_summary()
+    # The four RP anchors, seeded from the same origin roll - player-
+    # editable afterwards via character_edit (CHARACTER_EDIT_FIELDS below).
+    # personality reuses the trait the origin already rolled.
+    rp_fields = {
+        "personality": origin.trait,
+        "ideals": origin.ideal,
+        "bonds": origin.bond,
+        "flaws": origin.flaw,
+    }
 
     race_entry = rules.get_entry("race", race) if race else None
     race_name = race_entry["name"] if race_entry else ""
@@ -819,7 +836,8 @@ def build_starting_character(
     class_entry = rules.get_entry("class", character_class) if character_class else None
     if class_entry is None:
         return CharacterSheet(
-            player_id=player_id, name=name, hp=100, max_hp=100, background=background, race=race_name
+            player_id=player_id, name=name, hp=100, max_hp=100, background=background,
+            race=race_name, **rp_fields,
         )
 
     stats = _apply_race_bonus(_generate_stats(character_class, stat_priority), race_entry)
@@ -852,6 +870,7 @@ def build_starting_character(
         spell_slots=dict(spell_slots),
         max_spell_slots=dict(spell_slots),
         background=background,
+        **rp_fields,
     )
 
 
@@ -2382,15 +2401,18 @@ class GameEngine:
             await self._send_to(
                 player_id,
                 self._system_envelope(
-                    f"Can't edit '{field}' - try notes, add_item, remove_item, equip, or unequip.", level="warning"
+                    "Can't edit '{}' - try {}, add_item, remove_item, equip, or unequip.".format(
+                        field, ", ".join(sorted(CHARACTER_EDIT_TEXT_FIELDS))
+                    ),
+                    level="warning",
                 ),
             )
             return
 
         ac_changed = False
 
-        if field == "notes":
-            character.notes = str(value)
+        if field in CHARACTER_EDIT_TEXT_FIELDS:
+            setattr(character, field, str(value))
         elif field == "add_item":
             # No magic_bonus here - that's the DM tool's own optional field
             # (apply_update, server/state.py), never player-settable, the

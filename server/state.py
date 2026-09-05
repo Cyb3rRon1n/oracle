@@ -146,6 +146,17 @@ class CharacterSheet(BaseModel):
     # field - real, old sessions/*.json data, not required by
     # model_validate_json's own default.
     background: str = ""
+    # The four RP anchors from the paper 5e sheet's "Personal
+    # Characteristics" box. Seeded from the origin table at creation
+    # (server/engine.py's build_starting_character) and player-editable
+    # via character_edit, the same "pure fiction, no DM adjudication"
+    # treatment `notes` gets - the DM never sets these. They ride
+    # model_dump_json into the DM's per-turn character_summary, so
+    # narration can play to them. Blank on an NPC or a pre-field sheet.
+    personality: str = ""
+    ideals: str = ""
+    bonds: str = ""
+    flaws: str = ""
     xp: int = 0
     level: int = 1
     # Real 5e's own unarmored baseline (10 + DEX modifier), or an equipped

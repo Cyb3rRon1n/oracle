@@ -180,12 +180,19 @@ export default function CharacterSheetFull({ onClose }) {
             )}
 
             <Section title={t("Personality")}>
-              <div className="space-y-1">
-                {[t("Traits"), t("Ideals"), t("Bonds"), t("Flaws")].map((f) => (
-                  <div key={f} className="flex justify-between text-sm">
-                    <span className="text-dungeon-ink/60">{f}</span>
-                    <Planned />
-                  </div>
+              <div className="space-y-2">
+                {[
+                  ["personality", t("Personality")],
+                  ["ideals", t("Ideals")],
+                  ["bonds", t("Bonds")],
+                  ["flaws", t("Flaws")],
+                ].map(([field, label]) => (
+                  <RpField
+                    key={field}
+                    label={label}
+                    value={sheet[field] || ""}
+                    save={(v) => actions.editCharacter(field, v)}
+                  />
                 ))}
               </div>
             </Section>
@@ -404,6 +411,30 @@ function Spellcasting({ sheet, t }) {
         </div>
       )}
     </div>
+  );
+}
+
+// One RP line (personality / ideals / bonds / flaws). Seeded at character
+// creation, player-editable. Saves on blur when changed; the server
+// ignores an empty value, same as notes, so this doesn't try to clear.
+function RpField({ label, value, save }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const commit = () => {
+    const v = text.trim();
+    if (v && v !== value) save(v);
+  };
+  return (
+    <label className="block">
+      <span className="text-[10px] uppercase tracking-wide text-dungeon-ink/50">{label}</span>
+      <input
+        className="mt-0.5 w-full bg-dungeon-bg border border-dungeon-edge rounded px-2 py-1 text-sm focus:border-dungeon-gold outline-none"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      />
+    </label>
   );
 }
 
