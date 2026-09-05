@@ -850,27 +850,15 @@ def _character_from_import(player_id: str, imported: dict) -> CharacterSheet | N
     except (ValidationError, TypeError):
         return None
 
-# A visible mitigation, not a fix (ROADMAP.md's tool-call reliability
-# investigation, item 6's remaining-candidates list) - the live qwen2.5:7b/
-# llama3.1:8b runs documented there repeatedly narrated unambiguous lethal
-# damage to an NPC with zero update_character call all turn. This doesn't
-# make the model call the tool; it only tells the player their sheet may be
-# out of sync with the fiction, so a silently-stale sheet isn't mistaken for
-# a trustworthy one. Deliberately narrow and outcome-focused (confirmed
-# damage/death/condition language) rather than any attack verb, to keep
-# false positives down - a narrated *miss* shouldn't trip this. Still
-# expect both false positives (a near-miss description using "wound" in
-# passing) and false negatives (phrasing this doesn't catch) - it's a
-# signal for the player to weigh, not a verdict.
+# Outcome language in narration that suggests a mechanical change the DM
+# didn't record. Not a verdict - it flags a possibly-stale sheet for the
+# player. Deliberately narrow (confirmed damage/death/condition wording,
+# not any attack verb) to keep false positives down; false negatives on
+# phrasing it misses are expected. check_missed_change() is the real
+# second channel.
 POSSIBLE_UNTRACKED_CHANGE_PATTERN = re.compile(
     r"\b(damage|wound(?:s|ed|ing)?|bleed(?:s|ing)?|dies?|dead|death|slain|"
     r"kills?|killed|unconscious|collapses?|hp|health|"
-    # Condition language was the stated intent above ("damage/death/
-    # condition") but never actually made it into the pattern - a real
-    # gap, not a hypothetical one: live-reproduced 2026-08-07 (see
-    # ROADMAP.md), a combat turn narrated a leaked `add_condition:
-    # "frozen"` pseudo-tool-call ("chilling your skin", "numbing cold")
-    # with no real tool call, and this heuristic stayed silent on it.
     r"condition|poison(?:ed|ing)?|stun(?:s|ned|ning)?|paraly(?:zed|zing|sis)|"
     r"frozen|freez(?:e|es|ing)|chill(?:s|ed|ing)?|numb(?:s|ed|ing)?|"
     r"blind(?:ed|ing)?|burn(?:s|ed|ing)?|prone|restrained)\b",
@@ -1102,18 +1090,9 @@ class GameEngine:
         if is_new_character:
             name = envelope.payload.get("player_name", player_id)
             character_class = envelope.payload.get("character_class", "")
-            # Independent of character_class - see build_starting_character's
-            # own docstring for why a blank/unrecognized value degrades
-            # gracefully rather than blocking creation.
             race = envelope.payload.get("race", "")
-            # A player's own optional override of the class's default
-            # ability-priority order (see _generate_stats) - a list of the
-            # 6 real ability keys, e.g. ["str", "con", "dex", "wis", "cha",
-            # "int"]. Not validated here beyond the type/shape check -
-            # _generate_stats already falls back to the class default for
-            # anything that isn't exactly those 6 keys once each, the same
-            # graceful-miss convention this method's own character_class
-            # handling already relies on.
+            # Optional override of the class's default ability-priority order
+            # (see _generate_stats), which re-validates and falls back.
             raw_stat_priority = envelope.payload.get("stat_priority")
             stat_priority = (
                 tuple(raw_stat_priority)
