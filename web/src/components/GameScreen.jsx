@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import CharacterSheet from "./CharacterSheet.jsx";
-import DiceTray from "./DiceTray.jsx";
 import ExportButtons from "./ExportButtons.jsx";
 import MapPanel from "./MapPanel.jsx";
 import ScenePanel from "./ScenePanel.jsx";
@@ -117,10 +116,6 @@ export default function GameScreen() {
       <div className="grid grid-cols-[1fr_320px] gap-3 items-start max-h-[38vh] overflow-hidden">
         <ScenePanel onSuggest={(text) => setDraft(text)} />
         <CharacterSheet />
-      </div>
-
-      <div className="panel px-3 py-2">
-        <DiceTray />
       </div>
 
       <form onSubmit={submit} className="panel p-3 flex gap-2">

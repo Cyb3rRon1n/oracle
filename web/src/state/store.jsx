@@ -25,7 +25,6 @@ function initial() {
     log: [],
     awaitingDM: false, // true between sending an action / starting and the DM's first word back
     scene: null, // latest scene_update payload
-    lastRoll: null,
     pendingProposal: null,
     contextManifest: null,
   };
@@ -120,10 +119,9 @@ function reducer(state, event) {
         inCombat: event.payload.in_combat ?? state.inCombat,
       };
 
-    case ET.DICE_RESULT:
-      // The engine already broadcasts a kind:dice log_entry for every roll
-      // (engine.py broadcasts both); this payload only drives the roller UI.
-      return { ...state, lastRoll: event.payload };
+    // dice_result is still emitted by the server (death saves, DM-requested
+    // rolls) but the client shows those via their kind:"dice" log_entry -
+    // there's no separate roller widget to feed.
 
     case ET.SESSION_STARTED:
       return { ...state, started: true };
@@ -221,9 +219,6 @@ export function StoreProvider({ children }) {
       },
       sendChat(text) {
         connRef.current?.sendEvent(ET.CHAT_MESSAGE, { text });
-      },
-      rollDice(dice, reason) {
-        connRef.current?.sendEvent(ET.DICE_ROLL, { dice, reason });
       },
       editCharacter(field, value) {
         connRef.current?.sendEvent(ET.CHARACTER_EDIT, { field, value });
