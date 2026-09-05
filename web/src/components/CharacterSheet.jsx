@@ -58,10 +58,13 @@ export default function CharacterSheet() {
 }
 
 function HpBar({ hp, max }) {
-  const pct = max > 0 ? Math.max(0, Math.round((hp / max) * 100)) : 0;
+  const pct = max > 0 ? Math.max(0, Math.min(100, Math.round((hp / max) * 100))) : 0;
+  // Colour by how hurt you are, not a flat blood-red at full health.
+  const fill =
+    pct > 50 ? "bg-emerald-600" : pct > 25 ? "bg-amber-500" : "bg-dungeon-blood";
   return (
     <div className="h-2 bg-dungeon-bg rounded overflow-hidden border border-dungeon-edge">
-      <div className="h-full bg-gradient-to-r from-dungeon-blood to-red-500" style={{ width: `${pct}%` }} />
+      <div className={`h-full ${fill} transition-all`} style={{ width: `${pct}%` }} />
     </div>
   );
 }

@@ -21,5 +21,3 @@ export const RACES = [
   { group: "Lightfoot Halfling", key: "lightfoot_halfling" },
   { group: "Stout Halfling", key: "stout_halfling" },
 ];
-
-export const DEFAULT_SERVER = import.meta.env.VITE_SERVER_URI || "ws://localhost:8765";

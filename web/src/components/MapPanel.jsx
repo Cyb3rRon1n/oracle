@@ -12,7 +12,7 @@ const W = 320;
 const H = 260;
 const PAD = 34;
 
-function layout(nodes, edges) {
+function layout(nodes) {
   const placed = nodes.filter((n) => n.x != null || n.y != null);
   const floating = nodes.filter((n) => n.x == null && n.y == null);
 
@@ -49,7 +49,7 @@ export default function MapPanel() {
   const { state } = useStore();
   const { t } = useLang();
   const map = state.world.map;
-  const { positions } = useMemo(() => layout(map?.nodes ?? [], map?.edges ?? []), [map]);
+  const { positions } = useMemo(() => layout(map?.nodes ?? []), [map]);
 
   if (!map?.nodes?.length) {
     return <p className="italic text-dungeon-ink/50 text-sm">{t("The map has not been charted yet.")}</p>;

@@ -13,6 +13,10 @@ const FR = {
   "Thrain Ironveil": "Thrain Voiledefer",
   "Session": "Session",
   "New": "Nouvelle",
+  "Copy": "Copier",
+  "Copied": "Copié",
+  "Server address": "Adresse du serveur",
+  "Point this page at your own server — e.g. ws://192.168.1.10:8765.": "Dirigez cette page vers votre propre serveur — p. ex. ws://192.168.1.10:8765.",
   "Share this id to play together — same id, one party.": "Partagez cet identifiant pour jouer ensemble — même identifiant, un seul groupe.",
   "Class": "Classe",
   "Fighter": "Guerrier",
@@ -38,6 +42,7 @@ const FR = {
   // Game screen
   "The party has gathered.": "Le groupe est réuni.",
   "Begin the adventure": "Commencer l'aventure",
+  "The DM is weaving the scene…": "Le MJ tisse la scène…",
   "Send": "Envoyer",
   ", what do you do?": ", que faites-vous ?",
   "It's not your turn — chat out of character…": "Ce n'est pas votre tour — discussion hors jeu…",

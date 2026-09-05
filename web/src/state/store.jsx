@@ -23,6 +23,7 @@ function initial() {
     currentTurn: null,
     inCombat: false,
     log: [],
+    awaitingDM: false, // true between sending an action / starting and the DM's first word back
     scene: null, // latest scene_update payload
     lastRoll: null,
     pendingProposal: null,
@@ -75,6 +76,8 @@ function reducer(state, event) {
     case ET.LOG_ENTRY:
       return {
         ...state,
+        // Any real DM output ends the "DM is thinking" state.
+        awaitingDM: state.awaitingDM && event.payload.kind !== "narration",
         log: appendLog(state.log, {
           kind: event.payload.kind,
           text: event.payload.text,
@@ -111,6 +114,7 @@ function reducer(state, event) {
     case ET.TURN_PROMPT:
       return {
         ...state,
+        awaitingDM: false,
         currentTurn: event.payload.player_id,
         turnOrder: event.payload.turn_order || state.turnOrder,
         inCombat: event.payload.in_combat ?? state.inCombat,
@@ -131,11 +135,17 @@ function reducer(state, event) {
         // ({target, hp_delta, add_condition}) - held until applied or
         // replaced by the player's next action server-side.
         pendingProposal: event.payload.proposed_change ?? state.pendingProposal,
+        // An error/warning ("The DM couldn't respond", "Couldn't generate an
+        // opening scene") also ends the wait.
+        awaitingDM: state.awaitingDM && event.payload.level === "info",
         log: [...state.log, { id: ++logSeq, kind: "system", text: event.payload.text, level: event.payload.level }],
       };
 
     case "proposal_applied":
       return { ...state, pendingProposal: null };
+
+    case "dm_pending":
+      return { ...state, awaitingDM: true };
 
     case ET.SCENE_UPDATE:
       return { ...state, scene: event.payload };
@@ -206,6 +216,7 @@ export function StoreProvider({ children }) {
         dispatch({ type: "ws_status", status: "connected" });
       },
       sendAction(text) {
+        dispatch({ type: "dm_pending" });
         connRef.current?.sendEvent(ET.PLAYER_ACTION, { text });
       },
       sendChat(text) {
@@ -225,6 +236,7 @@ export function StoreProvider({ children }) {
         dispatch({ type: "proposal_applied" });
       },
       startAdventure() {
+        dispatch({ type: "dm_pending" });
         connRef.current?.sendEvent(ET.START_SESSION, {});
       },
       requestContextManifest() {

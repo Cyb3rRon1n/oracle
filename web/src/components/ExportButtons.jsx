@@ -43,10 +43,10 @@ export default function ExportButtons() {
   return (
     <div className="flex gap-2 text-xs">
       <button className="px-2 py-1 rounded border border-dungeon-edge hover:border-dungeon-gold transition" onClick={exportCharacter} disabled={!sheet}>
-        ⬇ Character
+        {t("⬇ Character")}
       </button>
       <button className="px-2 py-1 rounded border border-dungeon-edge hover:border-dungeon-gold transition" onClick={exportTranscript}>
-        ⬇ Transcript
+        {t("⬇ Transcript")}
       </button>
     </div>
   );
