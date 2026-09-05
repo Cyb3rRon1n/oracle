@@ -37,87 +37,46 @@ logger = logging.getLogger(__name__)
 Broadcast = Callable[[Envelope], Awaitable[None]]
 SendTo = Callable[[str, Envelope], Awaitable[None]]
 
-# The safety net for an NPC introduced without a real max_hp from
-# lookup_rule, not the intended path - roughly a CR-1/4 mook's SRD HP, so
-# an unnamed "rat" is a real but trivial fight, not a 100-HP sponge.
+# NPC introduced without a real max_hp from lookup_rule - a CR-1/4 mook's
+# HP, a trivial fight rather than a 100-HP sponge.
 DEFAULT_NPC_HP = 10
 
-# A flat buffer added once to every player character's level-1 HP, on top
-# of the SRD hit-die max + CON modifier. Combat keeps real stakes (a
-# goblin's 2d6+2 matters, death saves are reachable) but a single bad
-# round on turn one can't end a low-HP character outright - the failure
-# mode the earlier flat-100 experiment was over-correcting for. Level-up
-# HP growth stays pure SRD (see _grant_levels); this is level-1 only.
+# Added once to level-1 HP (on top of hit-die max + CON), level-1 only -
+# combat stays lethal-if-careless without being one-crit-fatal at low HP.
 STARTING_HP_CUSHION = 10
 
-# How many resolved turns between campaign-summary rebuilds - the rolling
-# window (Session.max_history_messages) holds ~6 turns, so 10 keeps the
-# summary comfortably ahead of what would otherwise scroll out of context.
+# Resolved turns between campaign-summary rebuilds (window holds ~6).
 CAMPAIGN_SUMMARY_INTERVAL = 10
 
-# Fact-ledger injection: the newest facts always reach the DM; anything older
-# only when one of its words (5+ chars) appears in the current action text or
-# location - crude entity retrieval, enough to resurface an old promise when
-# it's named again without paying for every fact on every call.
+# Fact-ledger injection: newest facts always reach the DM; older ones only
+# when one of their 5+ char words appears in the current action/location.
 LEDGER_RECENT_LIMIT = 12
 LEDGER_RELEVANT_LIMIT = 8
 
-# Fallback XP for defeating an NPC whose name doesn't match a known SRD
-# monster (see _xp_for_npc below) and whose introduction didn't carry an
-# explicit "xp" override - CR 1/4's real SRD value (server/rules/srd.json's
-# xp_by_cr), the same tier every monster currently in the SRD subset except
-# the orc actually sits at, so this is a reasonable floor rather than an
-# arbitrary round number.
+# XP for an NPC with no known-monster CR and no explicit "xp" override
+# (CR 1/4's SRD value - see _xp_for_npc).
 DEFAULT_NPC_XP = 50
 
-# Conditions that impose disadvantage on the *bearer's own* rolls, per
-# their real SRD description (server/rules/srd.json's own condition text)
-# - a real, deliberate subset of the five conditions this project tracks,
-# not all of them. grappled has no self-roll effect at all in the real
-# text (only a speed-0 movement effect, and Oracle has no speed/movement
-# system to hook that to) - correctly excluded, not a gap. stunned's real
-# effects (incapacitated, auto-fail STR/DEX saves, attacks *against* it
-# have advantage) are a structurally different kind of mechanic -
-# target-side and turn-blocking, not "the bearer rolls worse" - and
-# deliberately not modeled in this slice; a stunned character can still
-# act and rolls normally here, a real known gap, not silently pretended
-# away.
+# Conditions that impose disadvantage on the bearer's OWN rolls. Subset of
+# the five tracked: grappled (movement-only, no movement system) and
+# stunned (target-side/turn-blocking, not modeled) are deliberately out.
 DISADVANTAGE_CONDITIONS = frozenset({"poisoned", "frightened", "prone"})
 
-# Per-condition roll_kind exclusions, matching each condition's real SRD
-# text now that request_roll can actually distinguish a save from a check
-# from an attack roll (the roll_kind field, AnthropicNarrator only - see
-# ROADMAP.md). Poisoned/frightened's real text is "disadvantage on attack
-# rolls and ability checks" - saving throws are never mentioned, so a
-# save is excluded. Prone's real text only ever mentions attack rolls
-# ("has disadvantage on attack rolls") - neither checks nor saves are
-# affected at all, so both are excluded. Only takes effect when roll_kind
-# is actually given (see _has_disadvantage below) - an omitted roll_kind
-# (a plain player /roll, or any older/simpler request_roll call that
-# doesn't set it) keeps the prior broader "applies to any roll" behavior
-# unchanged, so this is additive, not a breaking change to existing calls.
+# Per-condition roll_kind narrowing, per SRD text: poisoned/frightened hit
+# attacks + checks but not saves; prone hits only attacks. Only applies
+# when roll_kind is given (request_roll, Anthropic); an omitted roll_kind
+# keeps the broader "any roll" behavior.
 ROLL_KIND_DISADVANTAGE_EXCLUSIONS: dict[str, frozenset[str]] = {
     "poisoned": frozenset({"save"}),
     "frightened": frozenset({"save"}),
     "prone": frozenset({"save", "check"}),
 }
 
-# character_edit's own real scope (docs/protocol.md, ROADMAP.md's "let a
-# player edit their own notes/inventory directly, without DM adjudication"):
-# deliberately just the fields that are pure player-side bookkeeping, not
-# mechanical state. hp/conditions/stats/xp all stay DM- or engine-only -
-# the same "the engine or the DM decides mechanical state, the player only
-# decides fiction/bookkeeping" boundary update_character's own tool schema
-# already draws, just enforced from the other direction here. equip/
-# unequip are the one field pair that also changes a mechanical value
-# (ac) as a side effect - still consistent with that boundary, since the
-# player only ever names which owned item to wear/wield, never the AC
-# number itself; _compute_ac (engine-owned, real SRD data) computes what
-# that actually means, the player never types a value into it directly.
-# Free-text fiction fields a player owns outright - set directly, no
-# adjudication. personality/ideals/bonds/flaws are the paper sheet's RP
-# anchors (seeded at creation, see build_starting_character); the DM reads
-# them via character_summary but never writes them.
+# What a player may set on their own sheet via character_edit: pure
+# fiction/bookkeeping only. hp/conditions/stats/xp stay DM- or engine-only.
+# equip/unequip change AC as a side effect but the player only names an
+# owned item, never a number (_compute_ac does the rest). The DM reads the
+# RP text fields via character_summary but never writes them.
 CHARACTER_EDIT_TEXT_FIELDS = frozenset({"notes", "personality", "ideals", "bonds", "flaws"})
 CHARACTER_EDIT_FIELDS = CHARACTER_EDIT_TEXT_FIELDS | frozenset(
     {"add_item", "remove_item", "equip", "unequip"}
@@ -125,19 +84,11 @@ CHARACTER_EDIT_FIELDS = CHARACTER_EDIT_TEXT_FIELDS | frozenset(
 
 
 def _has_disadvantage(character: CharacterSheet, roll_kind: str | None = None) -> list[str]:
-    """Returns which of the acting character's current conditions actually
-    trigger disadvantage (empty if none) - a list, not just a bool, so a
-    caller can name the real reason in the roll's own text rather than a
-    bare "disadvantage" with no explanation. Real 5e disadvantage never
-    stacks (multiple sources still just apply once) - callers only need
-    `bool(...)` on this to know whether to roll with disadvantage at all,
-    the list itself is purely for the human-readable reason.
-
-    roll_kind (optional - "attack"/"save"/"check", request_roll's own new
-    field) narrows this against ROLL_KIND_DISADVANTAGE_EXCLUSIONS when
-    given; left as the prior "applies regardless" behavior when omitted,
-    which is what a plain player /roll (no roll_kind at all) always
-    passes."""
+    """Which of the character's conditions trigger disadvantage (empty if
+    none). A list, not a bool, so callers can name the reason in the roll
+    text; disadvantage never stacks, so `bool(...)` is all that matters
+    mechanically. roll_kind ("attack"/"save"/"check") narrows the result
+    via ROLL_KIND_DISADVANTAGE_EXCLUSIONS when given."""
     reasons = []
     for c in character.conditions:
         key = c.casefold()
@@ -149,18 +100,8 @@ def _has_disadvantage(character: CharacterSheet, roll_kind: str | None = None) -
     return reasons
 
 
-# A real, deterministic starting sheet instead of every new character
-# beginning as a blank name+HP-10 with nothing else - the immersion gap
-# this closes: a fresh character sheet previously showed nothing but a
-# name and HP, since stats/inventory otherwise only get populated if the
-# DM's update_character tool happens to fire, which this project's whole
-# reliability investigation (ROADMAP.md) has shown is unreliable. This
-# stays deliberately small: a class picks starting HP (the SRD hit-die max
-# + CON modifier + STARTING_HP_CUSHION) and a starting item or two from the
-# SRD's existing (limited, CC-BY-4.0)
-# equipment list. Not a full 5e character build - see ROADMAP.md for
-# what's still deliberately left for later (more classes/equipment,
-# player-chosen stat allocation instead of a fixed per-class array).
+# Per-class starting kit. A fixed subset, not a full 5e chargen (no
+# player-chosen equipment/stats yet).
 CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
     "fighter": ["Longsword", "Leather Armor"],
     "rogue": ["Shortbow", "Leather Armor"],
@@ -168,17 +109,10 @@ CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
     "wizard": ["Potion of Healing"],
 }
 
-# Deterministic per-class known spells, the same "no player-chosen
-# allocation yet" approach CLASS_STARTING_EQUIPMENT/CLASS_SKILL_PROFICIENCIES
-# already take - real 5e lets a wizard/cleric prepare a chosen subset daily
-# from a much larger list; this assigns a small, fixed set once at creation
-# instead of modeling that choice or the daily re-preparation ritual. A
-# leveled spell above what the character can currently cast (server/rules/
-# srd.json's spell_slots_by_level - e.g. fireball at level 1, no 3rd-level
-# slot until level 5) is still "known", simply not castable yet until a
-# real slot exists - no special-casing needed, the slot check at cast time
-# is the only gate. Fighter/rogue have no entry (cast nothing), the same
-# fallback CLASS_ABILITY_PRIORITY's own absence already establishes.
+# Fixed per-class known spells, assigned once at creation (no daily
+# preparation modeled). A spell above the character's current slot level
+# is still "known", just not castable - the cast-time slot check is the
+# only gate. Fighter/rogue: no entry, cast nothing.
 CLASS_KNOWN_SPELLS: dict[str, list[str]] = {
     "wizard": [
         "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
@@ -192,17 +126,9 @@ CLASS_KNOWN_SPELLS: dict[str, list[str]] = {
     ],
 }
 
-# A lightweight session-zero choice (Session.content_preference,
-# server/state.py) - "standard" is deliberately absent here, needing no
-# extra instruction since WorldBible's own tone_guidance (server/lore)
-# already covers it; only a real, explicit choice to go lighter or more
-# intense adds anything. Prepended to every turn's action_text while
-# active (see _narrate_and_apply below), not stated once at session start
-# and left to fade - the same "durable, not a one-time mention" reasoning
-# WorldBible's own system-prompt placement already established, applied
-# here at the per-turn level since this is session-scoped rather than
-# something the narrator's shared system prompt can hold (one server
-# process can host multiple sessions with different choices).
+# Session-zero tone choice, prepended to every turn's action_text while
+# active (per-session, so it can't live in the shared system prompt).
+# "standard" has no entry - WorldBible.tone_guidance already covers it.
 CONTENT_PREFERENCE_HINTS = {
     "lighter": (
         "Session tone: keep this lighter - ease off graphic violence, gore, and dark or "
@@ -214,29 +140,14 @@ CONTENT_PREFERENCE_HINTS = {
     ),
 }
 
-# The SRD's own real Standard Array (Basic Rules character-creation
-# option), not an invented spread - same "use the official SRD numbers,
-# don't make one up" convention this file's XP-per-CR/XP-per-level tables
-# already follow.
+# The SRD Standard Array.
 STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
 
-# Deliberately hand-written per class, not derived from a formula - same
-# style CLASS_STARTING_EQUIPMENT already uses. Corrected 2026-08-11: this
-# comment used to claim each class's own first *two* entries were exactly
-# its SRD saving_throws - checked directly against server/rules/srd.json
-# while building CLASS_SAVING_THROW_PROFICIENCIES (below) and found that
-# was only ever true for fighter (Str, Con). CON was placed second for
-# every class here as a universal survival-stat priority pick, not
-# because it's a real saving-throw proficiency for wizard/rogue/cleric
-# (their real SRD saving throws are Int+Wis, Dex+Int, and Wis+Cha - none
-# include Con) - this table is for Standard Array assignment priority
-# only, never used for real saving-throw proficiency, which now has its
-# own separately, correctly authored table. Only the class's own *first*
-# entry reliably matches its real primary saving throw; the remaining
-# four are ordered by ordinary class-archetype priority (a caster wants
-# its remaining physical stat over its remaining mental one, etc.). A
-# blank/unrecognized class has no entry here and gets no stats at all -
-# the same fallback build_starting_character's HP/inventory already use.
+# Order in which the Standard Array is assigned to abilities, per class.
+# Hand-written: primary stat first, CON second (survival), the rest by
+# archetype. NOT the same as real saving-throw proficiency - that has its
+# own table (CLASS_SAVING_THROW_PROFICIENCIES). Blank class: no entry, no
+# stats.
 CLASS_ABILITY_PRIORITY: dict[str, tuple[str, ...]] = {
     "fighter": ("str", "con", "dex", "wis", "cha", "int"),
     "wizard": ("int", "con", "dex", "wis", "cha", "str"),
@@ -244,15 +155,8 @@ CLASS_ABILITY_PRIORITY: dict[str, tuple[str, ...]] = {
     "cleric": ("wis", "con", "str", "dex", "cha", "int"),
 }
 
-# Deterministic per-class skill proficiencies, the same "no player-chosen
-# allocation yet" approach CLASS_ABILITY_PRIORITY/_generate_stats already
-# take for ability scores - real 5e actually lets a player choose (2 for
-# most classes, 4 for rogue) from a class's own longer list; this picks a
-# fixed, thematically sensible subset from that real list rather than
-# modeling the choice itself, the same simplification STANDARD_ARRAY's
-# fixed assignment already makes for ability scores. A blank/unrecognized
-# class has no entry and is proficient in nothing, the same fallback
-# CLASS_ABILITY_PRIORITY's own absence already produces for stats.
+# Fixed per-class skill proficiencies (no player choice modeled). Blank
+# class: proficient in nothing.
 CLASS_SKILL_PROFICIENCIES: dict[str, tuple[str, ...]] = {
     "fighter": ("athletics", "perception"),
     "wizard": ("arcana", "investigation"),
@@ -260,18 +164,9 @@ CLASS_SKILL_PROFICIENCIES: dict[str, tuple[str, ...]] = {
     "cleric": ("insight", "religion"),
 }
 
-# Real 5e's own fixed pair of proficient saving-throw abilities per class
-# (the SRD's own "saving_throws" field, server/rules/srd.json - e.g.
-# fighter's "Strength, Constitution") - verified directly against that
-# data while writing this, not assumed from CLASS_ABILITY_PRIORITY above,
-# whose own CON-second convention only happens to match for fighter (see
-# that constant's own corrected comment). `proficiency_bonus` applies to
-# a saving throw only when its ability is one of these two, real 5e's own
-# rule - previously not modeled at all (request_roll's `roll_kind ==
-# "save"` case got no proficiency consideration whatsoever, a real,
-# previously-named gap - see ROADMAP.md). A blank/unrecognized class has
-# no entry and is proficient in no saves, the same fallback
-# CLASS_SKILL_PROFICIENCIES' own absence already produces.
+# The SRD's two proficient saving-throw abilities per class. Proficiency
+# bonus applies to a save only when its ability is one of these. Blank
+# class: no proficient saves.
 CLASS_SAVING_THROW_PROFICIENCIES: dict[str, tuple[str, str]] = {
     "fighter": ("str", "con"),
     "wizard": ("int", "wis"),
@@ -279,12 +174,7 @@ CLASS_SAVING_THROW_PROFICIENCIES: dict[str, tuple[str, str]] = {
     "cleric": ("wis", "cha"),
 }
 
-# Real 5e's own baseline Ability Score Improvement levels - the SRD's
-# standard progression every class shares. Some subclasses grant extra
-# ASIs (Fighter's own 6/14, in the full rules) - not modeled, since
-# Oracle has no subclass system at all, the same "no ability-score/CON
-# system yet" class of simplification the rest of this project already
-# names rather than hides.
+# SRD baseline ASI levels (no subclass extras).
 ASI_LEVELS = frozenset({4, 8, 12, 16, 19})
 
 
