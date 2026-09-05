@@ -43,6 +43,8 @@ const FR = {
   "The party has gathered.": "Le groupe est réuni.",
   "Begin the adventure": "Commencer l'aventure",
   "The DM is weaving the scene…": "Le MJ tisse la scène…",
+  "World context": "Contexte du monde",
+  "Files the DM draws on, keyed to what's happening.": "Fichiers que le MJ utilise, selon ce qui se passe.",
   "Send": "Envoyer",
   ", what do you do?": ", que faites-vous ?",
   "It's not your turn — chat out of character…": "Ce n'est pas votre tour — discussion hors jeu…",

@@ -151,6 +151,11 @@ function reducer(state, event) {
     case ET.CONTEXT_MANIFEST:
       return { ...state, contextManifest: event.payload };
 
+    case "context_selected":
+      return state.contextManifest
+        ? { ...state, contextManifest: { ...state.contextManifest, selected: event.files } }
+        : state;
+
     case "local_session":
       return { ...state, sessionId: event.sessionId, me: event.playerId };
 
@@ -239,6 +244,7 @@ export function StoreProvider({ children }) {
       },
       selectContext(files) {
         connRef.current?.sendEvent(ET.CONTEXT_SELECT, { files });
+        dispatch({ type: "context_selected", files }); // server sends no fresh manifest back
       },
     }),
     [],

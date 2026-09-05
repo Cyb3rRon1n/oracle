@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import CharacterSheet from "./CharacterSheet.jsx";
 import CharacterSheetFull from "./CharacterSheetFull.jsx";
+import ContextPicker from "./ContextPicker.jsx";
 import ExportButtons from "./ExportButtons.jsx";
 import MapPanel from "./MapPanel.jsx";
 import ScenePanel from "./ScenePanel.jsx";
@@ -106,6 +107,9 @@ export default function GameScreen() {
           </button>
         </div>
       ) : null}
+
+      <ContextPicker />
+
 
       <main className="panel flex-1 min-h-[40vh] overflow-y-auto p-4 space-y-3">
         {state.log.map((entry) => (

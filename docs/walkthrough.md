@@ -41,6 +41,12 @@ and the process sitting there quietly. It idles safely with zero clients, and
 each session's state saves to `sessions/<session id>.json` as it's played — a
 restart resumes where you left off.
 
+**Optional — world context.** Drop campaign notes (`.txt` / `.md` / `.json` /
+`.csv`) into `world_context/` on the server machine. The client's **World
+context** panel (in the lobby) lists them; toggle the ones you want, and the
+server keyword-injects the relevant parts into the DM's prompt each turn
+(`server/lorebook.py`). `WORLD_CONTEXT_DIR` overrides the location.
+
 ## 3. The web client
 
 Build and serve it on any machine — the developer's laptop or the server
