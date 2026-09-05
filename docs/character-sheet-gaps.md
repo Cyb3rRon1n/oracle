@@ -34,7 +34,7 @@ paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-firs
 | Field | Paper sheet | Add it |
 |---|---|---|
 | ~~**Personality Traits / Ideals / Bonds / Flaws**~~ | Four short RP fields | **Done.** Four `str` fields on `CharacterSheet`, seeded from `origins.json` at creation, player-editable via `character_edit`, fed to the DM through `character_summary`. No Inspiration mechanic yet (see below). |
-| **Attacks & Spellcasting table** | Per-attack: name, to-hit bonus, damage + type | `_owner_character_view` resolves `equipped_weapon` → `{name, atk_bonus: prof + STR/DEX mod, damage: die + mod + type}` from `srd.json` equipment data (all server-side already; just not shipped). Extend to known attack spells. |
+| ~~**Attacks & Spellcasting table**~~ | Per-attack: name, to-hit bonus, damage + type | **Done.** `_owner_character_view` → `attacks: [{name, kind, to_hit, damage}]` — the equipped weapon (DEX for ranged, best of STR/DEX for finesse, else STR; magic bonus folded in; proficiency assumed) plus every attack-shaped known spell. Not covered: weapon-proficiency gating (Oracle tracks none — see below), cantrip damage scaling by level. |
 | **Proficiencies & Languages** | Armor/weapon/tool proficiencies; spoken languages | `class.proficiencies` and `race.languages` into `srd.json`; surface in `_owner_character_view`. Display-only unless a proficiency actually gates something. |
 | **Hit Dice pool** | `Nd<hit die>`, spent on a short rest, restored on a long rest | `CharacterSheet.hit_dice_total` (= level) / `hit_dice_remaining`. Replaces the current short-rest shortcut (`_apply_update`'s "heal half of what's missing") with the real "spend a die, roll it + CON" rule. Long rest restores half the pool. |
 

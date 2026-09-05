@@ -1582,6 +1582,33 @@ async def test_owner_character_view_includes_class_features_and_skill_proficienc
     )
 
 
+def test_attack_lines_resolve_weapon_and_spell_rows():
+    from server.engine import _attack_lines
+
+    rules = RulesIndex.load_default()
+    fighter = build_starting_character("p", "Bry", "fighter", rules)  # Longsword, STR
+    rows = _attack_lines(fighter, rules, None)
+    assert rows == [
+        {"name": "Longsword", "kind": "weapon", "to_hit": "+4", "damage": "1d8+2 slashing"}
+    ]
+
+    wizard = build_starting_character("p", "El", "wizard", rules)  # no weapon, attack cantrips
+    view = _owner_character_view(wizard, rules)
+    spell_rows = view["attacks"]
+    assert all(r["kind"] == "spell" for r in spell_rows)
+    assert {"name": "Fire Bolt", "kind": "spell", "to_hit": "+4", "damage": "1d10 fire"} in spell_rows
+
+
+def test_attack_lines_use_dex_for_a_ranged_weapon():
+    from server.engine import _attack_lines
+
+    rules = RulesIndex.load_default()
+    rogue = build_starting_character("p", "Sly", "rogue", rules)  # Shortbow, ranged -> DEX
+    assert _attack_lines(rogue, rules, None) == [
+        {"name": "Shortbow", "kind": "weapon", "to_hit": "+4", "damage": "1d6+2 piercing"}
+    ]
+
+
 async def test_owner_character_view_spell_attack_bonus_is_none_for_a_non_caster():
     engine, session, _ = make_engine(StubDM())
     player_id = str(uuid.uuid4())

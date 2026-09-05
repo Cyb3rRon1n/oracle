@@ -141,13 +141,30 @@ export default function CharacterSheetFull({ onClose }) {
             </Section>
 
             <Section title={t("Attacks")}>
-              {sheet.equipped_weapon ? (
-                <div className="flex justify-between text-sm">
-                  <span>{sheet.equipped_weapon}</span>
-                  <Planned label={t("to-hit / damage")} />
-                </div>
+              {(sheet.attacks?.length ?? 0) === 0 ? (
+                <p className="text-dungeon-ink/50 italic text-sm">{t("No attacks.")}</p>
               ) : (
-                <p className="text-dungeon-ink/50 italic text-sm">{t("Nothing equipped.")}</p>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-widest text-dungeon-ink/50">
+                      <th className="text-left font-normal">{t("Name")}</th>
+                      <th className="text-right font-normal">{t("Atk")}</th>
+                      <th className="text-right font-normal">{t("Damage")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sheet.attacks.map((a) => (
+                      <tr key={a.kind + a.name}>
+                        <td className="py-0.5">
+                          {a.name}
+                          {a.kind === "spell" && <span className="text-sky-400/70 text-[10px] ml-1">✦</span>}
+                        </td>
+                        <td className="text-right tabular-nums">{a.to_hit}</td>
+                        <td className="text-right tabular-nums text-dungeon-ink/80">{a.damage}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </Section>
 

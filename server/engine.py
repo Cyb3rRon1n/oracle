@@ -646,6 +646,57 @@ def _npc_roster(session: Session) -> str:
     return "Tracked NPCs:\n" + "\n".join(lines)
 
 
+def _sign(n: int) -> str:
+    return f"+{n}" if n >= 0 else str(n)
+
+
+def _attack_lines(character: CharacterSheet, rules: RulesIndex, spell_attack_bonus: int | None) -> list[dict]:
+    """The paper sheet's Attacks & Spellcasting table, resolved server-side
+    so the client never guesses a number: the equipped weapon plus every
+    attack-shaped known spell, each as {name, kind, to_hit, damage}.
+
+    Weapon ability follows real 5e - DEX for a ranged weapon, the better of
+    STR/DEX for a finesse weapon, otherwise STR. Proficiency is assumed
+    (Oracle tracks no weapon proficiencies - see docs/character-sheet-gaps.md);
+    a real magic_bonus on the carried weapon adds to both rolls. Spell
+    to-hit is the caster's own spell_attack_bonus; spell damage is the
+    SRD die as-is (no ability mod - real 5e's rule for spell damage).
+    Empty for a bare-handed non-caster."""
+    lines: list[dict] = []
+    prof = character.proficiency_bonus
+    mods = character.stat_modifiers
+
+    weapon = character.equipped_weapon
+    entry = rules.get_entry("equipment", weapon) if weapon else None
+    if entry and entry.get("damage"):
+        die, _, dtype = entry["damage"].partition(" ")
+        category = entry.get("category", "").lower()
+        props = entry.get("properties", "").lower()
+        if "ranged" in category:
+            ability = "dex"
+        elif "finesse" in props:
+            ability = "dex" if mods.get("dex", 0) >= mods.get("str", 0) else "str"
+        else:
+            ability = "str"
+        magic = getattr(character.find_item(weapon), "magic_bonus", 0) or 0
+        ability_mod = mods.get(ability, 0)
+        to_hit = prof + ability_mod + magic
+        dmg_mod = ability_mod + magic
+        damage = f"{die}{_sign(dmg_mod)} {dtype}" if dmg_mod else f"{die} {dtype}"
+        lines.append({"name": entry["name"], "kind": "weapon", "to_hit": _sign(to_hit), "damage": damage})
+
+    if spell_attack_bonus is not None:
+        for slug_name in character.known_spells:
+            spell = rules.get_entry("spell", slug_name)
+            if spell and spell.get("attack") and spell.get("damage"):
+                die, _, dtype = spell["damage"].partition(" ")
+                lines.append({
+                    "name": spell["name"], "kind": "spell",
+                    "to_hit": _sign(spell_attack_bonus), "damage": f"{die} {dtype}",
+                })
+    return lines
+
+
 def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     """The owner's own full sheet - everything model_dump() already has,
     plus two fields that exist but were never actually sent: real class
@@ -682,6 +733,7 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
         # surfaced so the sheet can mark them, the same as skill_proficiencies.
         "saving_throw_proficiencies": list(CLASS_SAVING_THROW_PROFICIENCIES.get(class_key, ())),
         "spell_attack_bonus": spell_attack_bonus,
+        "attacks": _attack_lines(character, rules, spell_attack_bonus),
     }
 
 
