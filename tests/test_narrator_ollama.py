@@ -1260,3 +1260,33 @@ async def test_propose_correction_is_a_no_op_for_the_legacy_tool_calling_path():
     proposed = await narrator.propose_correction("Something happened.", "{}")
 
     assert proposed is None
+
+
+async def test_every_chat_call_carries_an_explicit_context_window():
+    # Ollama's default num_ctx (4096) silently truncates Oracle's per-turn
+    # prompt from the front - the system prompt and tool instructions go
+    # first. Every chat call must pin an explicit, larger window.
+    narrator = make_narrator()
+    narrator._client = FakeOllamaClient(
+        [[FakeChunk(content="You wait.", done=True)]]
+    )
+
+    async for _ in narrator.narrate([], "{}", "wait", noop_apply_update):
+        pass
+
+    assert narrator._client.calls, "expected at least one chat call"
+    for call in narrator._client.calls:
+        assert call["options"]["num_ctx"] >= 8192
+        assert call["options"]["num_predict"] >= 256
+
+
+async def test_num_ctx_is_configurable():
+    narrator = OllamaNarrator(
+        rules=RulesIndex.load_default(), structured_output=False, num_ctx=16384
+    )
+    narrator._client = FakeOllamaClient([[FakeChunk(content="ok", done=True)]])
+
+    async for _ in narrator.narrate([], "{}", "wait", noop_apply_update):
+        pass
+
+    assert narrator._client.calls[0]["options"]["num_ctx"] == 16384

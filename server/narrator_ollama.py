@@ -694,9 +694,20 @@ class OllamaNarrator:
         world_bible: WorldBible | None = None,
         few_shot_example: bool = False,
         hardened_rules: bool = False,
+        num_ctx: int = 8192,
+        num_predict: int = 1024,
     ):
         self._client = ollama.AsyncClient(host=host)
         self._model = model
+        # Ollama defaults num_ctx to 4096 (2048 on older builds) and
+        # silently drops the FRONT of an over-long prompt - i.e. the system
+        # prompt and tool instructions go first. Oracle's per-turn prompt
+        # (DM system prompt + world bible + character sheet + history +
+        # lorebook) runs well past 4096, so an explicit, larger window is
+        # required for the model to even see its own instructions. num_predict
+        # caps a runaway generation without clipping a normal 3-5 sentence
+        # turn. Both overridable via OLLAMA_NUM_CTX / OLLAMA_NUM_PREDICT.
+        self._chat_options = {"num_ctx": num_ctx, "num_predict": num_predict}
         self._rules = rules or RulesIndex.load_default()
         # Computed once, appended to every system prompt variant below -
         # present on every narrate() call regardless of the rolling
@@ -774,6 +785,13 @@ class OllamaNarrator:
         # other. Also ignored entirely when structured_output is False.
         self._world_updates = world_updates
 
+    async def _chat(self, **kwargs):
+        """All Ollama chat calls route through here so every request carries
+        an explicit context window (see _chat_options). Per-call `options`
+        still win over the defaults if a caller ever passes them."""
+        kwargs["options"] = {**self._chat_options, **kwargs.get("options", {})}
+        return await self._client.chat(**kwargs)
+
     def narrate(
         self,
         history: list[dict],
@@ -800,7 +818,7 @@ class OllamaNarrator:
         prior = f"Summary so far:\n{prior_summary}\n\n" if prior_summary else ""
         from .narrator import _turns_to_text
 
-        response = await self._client.chat(
+        response = await self._chat(
             model=self._model,
             messages=[
                 {
@@ -839,7 +857,7 @@ class OllamaNarrator:
             {"role": "system", "content": MISSED_CHANGE_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
-        response = await self._client.chat(
+        response = await self._chat(
             model=self._model, messages=messages, format=MISSED_CHANGE_SCHEMA, stream=False
         )
         try:
@@ -866,7 +884,7 @@ class OllamaNarrator:
             {"role": "system", "content": PROPOSE_CORRECTION_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
-        response = await self._client.chat(
+        response = await self._chat(
             model=self._model, messages=messages, format=MISSED_CHANGE_SCHEMA, stream=False
         )
         try:
@@ -940,7 +958,7 @@ class OllamaNarrator:
             *history,
             {"role": "user", "content": prompt},
         ]
-        response = await self._client.chat(model=self._model, messages=messages, format=schema, stream=False)
+        response = await self._chat(model=self._model, messages=messages, format=schema, stream=False)
 
         try:
             data = json.loads(response.message.content or "")
@@ -976,7 +994,7 @@ class OllamaNarrator:
                 *history,
                 {"role": "user", "content": followup_prompt},
             ]
-            response = await self._client.chat(
+            response = await self._chat(
                 model=self._model, messages=followup_messages, format=followup_schema, stream=False
             )
             try:
@@ -1043,7 +1061,7 @@ class OllamaNarrator:
 
         schema = _with_fact_fields(_with_scene_fields(_with_world_fields(DECIDE_SCHEMA, self._world_updates)), self._fact_ledger)
 
-        response = await self._client.chat(model=self._model, messages=base_messages, format=schema, stream=False)
+        response = await self._chat(model=self._model, messages=base_messages, format=schema, stream=False)
         try:
             data = json.loads(response.message.content or "")
         except json.JSONDecodeError:
@@ -1067,7 +1085,7 @@ class OllamaNarrator:
                 *history,
                 {"role": "user", "content": f"{prompt}\n\nReal dice result: {roll_result_text}\nDecide the outcome now."},
             ]
-            response = await self._client.chat(model=self._model, messages=followup_messages, format=followup_schema, stream=False)
+            response = await self._chat(model=self._model, messages=followup_messages, format=followup_schema, stream=False)
             try:
                 data = json.loads(response.message.content or "")
             except json.JSONDecodeError:
@@ -1106,7 +1124,7 @@ class OllamaNarrator:
                 "content": f"{prompt}\n\nDecided outcome (narrate exactly this): {json.dumps(decided, ensure_ascii=False)}",
             },
         ]
-        stream = await self._client.chat(model=self._model, messages=narrate_messages, stream=True)
+        stream = await self._chat(model=self._model, messages=narrate_messages, stream=True)
         async for chunk in stream:
             if chunk.message.content:
                 yield chunk.message.content
@@ -1131,7 +1149,7 @@ class OllamaNarrator:
         ]
 
         for _ in range(MAX_TOOL_ROUNDS):
-            stream = await self._client.chat(
+            stream = await self._chat(
                 model=self._model,
                 messages=messages,
                 tools=OLLAMA_TOOLS,
@@ -1194,6 +1212,12 @@ def create_ollama_narrator() -> OllamaNarrator:
     # change; "0" escapes to the single-call path for A/B measurement.
     two_phase = os.environ.get("OLLAMA_TWO_PHASE", "true").strip().lower() not in ("0", "false", "no")
     fact_ledger = os.environ.get("OLLAMA_FACT_LEDGER", "false").strip().lower() in ("1", "true", "yes")
+    # Ollama's own default num_ctx (4096) truncates Oracle's per-turn prompt
+    # from the front, dropping the system prompt and tool instructions - see
+    # OllamaNarrator.__init__. 8192 covers a typical turn; raise it for long
+    # sessions or a big world bible if the model supports it.
+    num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
+    num_predict = int(os.environ.get("OLLAMA_NUM_PREDICT", "1024"))
     return OllamaNarrator(
         model=os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
         host=os.environ.get("OLLAMA_HOST"),
@@ -1202,4 +1226,6 @@ def create_ollama_narrator() -> OllamaNarrator:
         roll_requests=roll_requests,
         world_updates=world_updates,
         fact_ledger=fact_ledger,
+        num_ctx=num_ctx,
+        num_predict=num_predict,
     )
