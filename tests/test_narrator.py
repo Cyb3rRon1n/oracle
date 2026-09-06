@@ -5,6 +5,7 @@ from server.narrator import (
     UPDATE_WORLD_TOOL,
     AnthropicNarrator,
     NarratorBackend,
+    _parse_hooks,
 )
 from server.rules import RulesIndex
 
@@ -381,3 +382,12 @@ async def test_propose_correction_base_default_offers_nothing():
     backend = BareNarrator()
     proposed = await backend.propose_correction("Your blade cuts deep into the bandit.", "{}")
     assert proposed is None
+
+
+def test_parse_hooks_handles_object_array_and_prose():
+    assert _parse_hooks('{"hooks": ["a", "b"]}') == ["a", "b"]
+    assert _parse_hooks('junk ["x", "y"] junk') == ["x", "y"]
+    assert _parse_hooks("- first hook\n2. second hook\n\n") == ["first hook", "second hook"]
+    assert _parse_hooks("not json at all, one line") == ["not json at all, one line"]
+    assert _parse_hooks('{"hooks": ["a","a","b","c","d","e"]}') == ["a", "b", "c", "d"]  # deduped, capped
+    assert _parse_hooks("") == []

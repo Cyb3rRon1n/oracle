@@ -742,6 +742,26 @@ class OllamaNarrator:
         )
         return (response.message.content or "").strip()
 
+    async def quest_hooks(self, context: dict) -> list[str]:
+        """See NarratorBackend.quest_hooks (server/narrator.py). One constrained
+        JSON call against a {"hooks": [str]} schema."""
+        from .narrator import _QUEST_HOOKS_SYSTEM, _parse_hooks, _quest_hooks_user
+
+        response = await self._chat(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": _QUEST_HOOKS_SYSTEM},
+                {"role": "user", "content": _quest_hooks_user(context)},
+            ],
+            format={
+                "type": "object",
+                "properties": {"hooks": {"type": "array", "items": {"type": "string"}}},
+                "required": ["hooks"],
+            },
+            stream=False,
+        )
+        return _parse_hooks(response.message.content or "")
+
     async def _narrate_structured(
         self,
         history: list[dict],

@@ -70,14 +70,18 @@ limit is the part to get right — err toward too quiet. No turn-loop changes.
 
 ---
 
-## 2. Quest board
+## 2. Quest board — SHIPPED (2026-09-06)
 
-**Prerequisite SHIPPED (2026-09-06):** `end_adventure` / `session_ended` +
-`Session.adventures_completed` + `WorldBible.next_adventure_prompt`. The quest
-board only makes sense between adventures, and that lobby state didn't exist —
-`_has_started()` was a one-way door. It now returns the party to `LobbyScreen`
-after `end_adventure`. The board's hook threads into `_on_start_session`'s
-`next_adventure_prompt` call (the `hook` param, already wired to accept it).
+Built as designed, minus `Session.selected_hook` (the plurality winner is
+computed at start via `_selected_hook()`, not stored). `NarratorBackend.quest_hooks`
+(Anthropic + Ollama, `_parse_hooks` shared), `Session.quest_hooks` / `hook_votes`,
+`request_quests` / `vote_quest` / `quest_board`, `LobbyScreen`'s `QuestBoard`
+panel + "→ {leading hook}" on the ready bar. Client requests the board on mount
+when `adventures_completed > 0`. Deferred items below still deferred.
+
+**Prerequisite (also shipped 2026-09-06):** `end_adventure` / `session_ended` +
+`Session.adventures_completed` + `WorldBible.next_adventure_prompt` — the
+between-adventures lobby state the board needs.
 
 The DM (AI) posts 2-3 available next missions with a one-line hook; players
 signal interest; a mission launches when enough are ready. This replaces the

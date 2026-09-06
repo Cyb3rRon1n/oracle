@@ -19,6 +19,8 @@ export const EventType = {
   SET_TYPING: "set_typing",
   TAVERN_REST: "tavern_rest",
   END_ADVENTURE: "end_adventure",
+  REQUEST_QUESTS: "request_quests",
+  VOTE_QUEST: "vote_quest",
 
   // protocol v2 (docs/protocol.md "Protocol v2 additions")
   CONTEXT_MANIFEST_REQUEST: "context_manifest_request",
@@ -42,6 +44,7 @@ export const EventType = {
   CONTEXT_MANIFEST: "context_manifest",
   SCENE_UPDATE: "scene_update",
   PRESENCE: "presence",
+  QUEST_BOARD: "quest_board",
 };
 
 export function makeEnvelope(type, sessionId, senderId, payload = {}) {

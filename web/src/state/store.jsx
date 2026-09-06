@@ -27,6 +27,8 @@ function initial() {
     awaitingDM: false, // true between sending an action / starting and the DM's first word back
     inspirationArmed: false, // player asked to spend their held Inspiration on the next roll
     typing: {}, // player_id -> bool, ephemeral lobby typing indicator
+    adventuresCompleted: 0,
+    quest: { hooks: [], votes: {} }, // tavern quest board (between adventures)
     scene: null, // latest scene_update payload
     pendingProposal: null,
     contextManifest: null,
@@ -68,6 +70,8 @@ function reducer(state, event) {
         ...state,
         synced: true,
         started: event.payload.started,
+        adventuresCompleted: event.payload.adventures_completed ?? 0,
+        quest: { hooks: event.payload.quest_hooks || [], votes: event.payload.hook_votes || {} },
         turnOrder: event.payload.turn_order || [],
         currentTurn: event.payload.current_turn ?? null,
         inCombat: !!event.payload.in_combat,
@@ -173,6 +177,9 @@ function reducer(state, event) {
     case "dm_pending":
       return { ...state, awaitingDM: true };
 
+    case ET.QUEST_BOARD:
+      return { ...state, quest: { hooks: event.payload.hooks || [], votes: event.payload.votes || {} } };
+
     case ET.SCENE_UPDATE:
       return { ...state, scene: event.payload };
 
@@ -264,6 +271,12 @@ export function StoreProvider({ children }) {
       },
       endAdventure() {
         connRef.current?.sendEvent(ET.END_ADVENTURE, {});
+      },
+      requestQuests(regenerate = false) {
+        connRef.current?.sendEvent(ET.REQUEST_QUESTS, regenerate ? { regenerate: true } : {});
+      },
+      voteQuest(hook) {
+        connRef.current?.sendEvent(ET.VOTE_QUEST, { hook });
       },
       editCharacter(field, value) {
         connRef.current?.sendEvent(ET.CHARACTER_EDIT, { field, value });

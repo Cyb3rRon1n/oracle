@@ -19,6 +19,13 @@ export default function LobbyScreen() {
   const readyCount = roster.filter((p) => p.ready).length;
   const objectives = (state.world.objectives || []).filter((o) => o.status === "active");
   const hasRecap = !!state.world.summary || objectives.length > 0;
+  const showQuestBoard = state.adventuresCompleted > 0;
+
+  // Ask the DM for hooks once, when a party with a story enters the tavern.
+  useEffect(() => {
+    if (showQuestBoard && state.quest.hooks.length === 0) actions.requestQuests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showQuestBoard]);
 
   return (
     <div className="min-h-screen p-4 sm:p-6">
@@ -49,6 +56,8 @@ export default function LobbyScreen() {
           </div>
         )}
 
+        {showQuestBoard && <QuestBoard quest={state.quest} players={state.players} me={state.me} actions={actions} t={t} />}
+
         <div className="grid gap-4 md:grid-cols-[1fr_1.4fr]">
           <Roster roster={roster} me={state.me} typing={state.typing} t={t} />
           <TavernChat state={state} actions={actions} t={t} />
@@ -72,6 +81,11 @@ export default function LobbyScreen() {
             🛏 {t("Long rest")}
           </button>
           <div className="flex-1" />
+          {showQuestBoard && leadingHook(state.quest) && (
+            <span className="text-xs text-dungeon-gold/70 italic max-w-[16rem] truncate" title={leadingHook(state.quest)}>
+              → {leadingHook(state.quest)}
+            </span>
+          )}
           <span className="text-sm text-dungeon-ink/60">
             {t("Ready")}: <b className="text-dungeon-ink">{readyCount}</b> / {roster.length}
           </span>
@@ -92,6 +106,71 @@ export default function LobbyScreen() {
       </div>
 
       {sheetOpen && <CharacterSheetFull onClose={() => setSheetOpen(false)} />}
+    </div>
+  );
+}
+
+function initials(name) {
+  return (name || "?").trim().slice(0, 2).toUpperCase();
+}
+
+function leadingHook(quest) {
+  let best = "";
+  let bestN = 0;
+  let tie = false;
+  for (const h of quest.hooks) {
+    const n = (quest.votes[h] || []).length;
+    if (n > bestN) { best = h; bestN = n; tie = false; }
+    else if (n === bestN && n > 0) tie = true;
+  }
+  return tie || bestN === 0 ? "" : best;
+}
+
+function QuestBoard({ quest, players, me, actions, t }) {
+  return (
+    <div className="panel p-4 border-dungeon-gold/40 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-xs uppercase tracking-widest text-dungeon-gold/70">{t("The quest board")}</div>
+        <button
+          className="text-xs text-dungeon-ink/50 hover:text-dungeon-gold"
+          onClick={() => actions.requestQuests(true)}
+        >
+          🔄 {t("New hooks")}
+        </button>
+      </div>
+      {quest.hooks.length === 0 ? (
+        <p className="text-sm italic text-dungeon-ink/50">{t("The road is open — start when ready.")}</p>
+      ) : (
+        <ul className="space-y-1">
+          {quest.hooks.map((h) => {
+            const voters = quest.votes[h] || [];
+            const mine = voters.includes(me);
+            return (
+              <li key={h}>
+                <button
+                  className={`w-full text-left flex items-start gap-2 text-sm rounded px-2 py-1.5 border transition ${
+                    mine ? "border-dungeon-gold bg-dungeon-gold/10" : "border-dungeon-edge hover:border-dungeon-gold/60"
+                  }`}
+                  onClick={() => actions.voteQuest(h)}
+                >
+                  <span className="flex-1">{h}</span>
+                  <span className="flex gap-1 shrink-0">
+                    {voters.map((pid) => (
+                      <span
+                        key={pid}
+                        title={players[pid]?.name}
+                        className="w-5 h-5 rounded-full bg-dungeon-edge text-[10px] flex items-center justify-center font-display"
+                      >
+                        {initials(players[pid]?.name)}
+                      </span>
+                    ))}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

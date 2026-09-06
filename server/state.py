@@ -802,6 +802,14 @@ class Session(BaseModel):
     # auto-starts once every connected player is in here; cleared on start.
     # Persisted so a mid-lobby server restart doesn't silently drop it.
     ready_players: list[str] = Field(default_factory=list)
+    # Quest board (server/engine.py's _on_request_quests / _on_vote_quest):
+    # the between-adventures "what next" picker. `quest_hooks` is the DM-
+    # generated shortlist for this lobby visit; `hook_votes` maps a hook to the
+    # player_ids interested in it (a player votes for at most one). Both cleared
+    # on start and on end_adventure. Only populated when adventures_completed >
+    # 0 - a fresh session just starts cold.
+    quest_hooks: list[str] = Field(default_factory=list)
+    hook_votes: dict[str, list[str]] = Field(default_factory=dict)
     # Real 5e formal initiative (server/engine.py's _on_start_combat/
     # _on_end_combat) - deliberately narrow scope: only replaces the
     # mechanical turn_order/current_turn-index cycling for the duration of
