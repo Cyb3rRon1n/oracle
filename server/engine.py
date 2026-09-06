@@ -1116,15 +1116,10 @@ class GameEngine:
                 character = build_starting_character(
                     player_id, name, character_class, self._rules, self._origin_table, stat_priority, race
                 )
-                # A real, live-found gap (ROADMAP.md's campaign dry-run,
-                # 2026-08-10): a typo'd/unrecognized class string used to
-                # silently fall back to a blank, classless, stat-less
-                # character with zero indication anything went wrong - a
-                # player could type a garbled class name and not notice
-                # until well into the session. Only warns when the player
-                # actually typed something that didn't match - a genuinely
-                # blank field is the UI's own explicit "blank to skip"
-                # option, not a mistake worth flagging.
+                # A typo'd class string otherwise falls back to a blank,
+                # stat-less character silently. Only warns when the player
+                # actually typed something - a blank field is the UI's own
+                # "blank to skip" option.
                 if character_class.strip() and not character.character_class:
                     await self._send_to(
                         player_id,
@@ -1135,10 +1130,8 @@ class GameEngine:
                             level="warning",
                         ),
                     )
-                # Same silent-mistake gap the class warning above closed,
-                # for the same reason - a typo'd/unrecognized race string
-                # otherwise costs a player their ability bonus and racial
-                # traits with no indication anything went wrong.
+                # Same for a typo'd race string (costs the ability bonus and
+                # racial traits otherwise).
                 if race.strip() and not character.race:
                     await self._send_to(
                         player_id,
@@ -1154,15 +1147,9 @@ class GameEngine:
             self._session.turn_order.append(player_id)
             await self._save(player_id)
         else:
-            # A reconnect (this player_id already has a character here, most
-            # often a stale local .player_id file from a previous session)
-            # keeps that character's existing name/class regardless of what
-            # was just typed on the welcome screen - real found-live
-            # confusion, not hypothetical: a player types a fresh name
-            # expecting a new character, silently gets an old one back
-            # with zero indication their input was ignored. A private
-            # heads-up only when it'd actually be surprising - the typed
-            # name genuinely differs from what they're really playing.
+            # A reconnect keeps the existing character's name/class whatever
+            # was typed on the welcome screen. Heads-up only when the typed
+            # name genuinely differs from what they're playing.
             typed_name = envelope.payload.get("player_name")
             existing_character = self._session.characters[player_id]
             if typed_name and typed_name != existing_character.name:
@@ -1178,66 +1165,33 @@ class GameEngine:
         character = self._session.characters[player_id]
         await self._send_to(player_id, self._state_sync_envelope(player_id))
 
-        # A private "here's where things left off" recap for anyone
-        # joining a story already underway - a returning player reconnecting
-        # AND a brand-new player joining an in-progress multiplayer game
-        # (arguably the one who needs it most) both got nothing beyond
-        # whatever their own client silently reconstructs from state_sync
-        # before this - no scrolled-back log, no restated objective.
-        # Skipped only when nothing has happened yet (_has_started() false
-        # - a session still sitting in its pre-game lobby has no story to
-        # recap). Entirely deterministic (WorldState/Session.log, already-
-        # tracked data), not an LLM call - always available instantly,
-        # regardless of narrator reliability or latency, the same "engine
-        # composes it" discipline the opening-scene premise (server/lore)
-        # already established. Sent *after* state_sync above, not before -
-        # a real ordering bug caught before it ever shipped: the client
-        # only transitions off WelcomeScreen once it processes state_sync
-        # (client/app.py's own _handle), so a system_message arriving
-        # earlier has no SessionScreen/LobbyScreen to render into yet and
-        # is silently dropped - the exact race _on_start_session's own
-        # session_started-before-narration ordering already guards against
-        # elsewhere in this file.
+        # A private "story so far" recap for anyone joining an already-started
+        # session (returning or brand-new). Deterministic, not an LLM call.
+        # Must go out AFTER state_sync: the client only leaves WelcomeScreen
+        # once it processes state_sync, so an earlier system_message is dropped.
         if self._has_started():
             await self._send_to(player_id, self._system_envelope(self._resume_recap(), level="info"))
-            # A returning character specifically (not a brand-new player,
-            # who has no own prior turns that could have scrolled out of
-            # the rolling history window in the first place) gets the same
-            # grounding fed to the DM itself, once, on their next real
-            # action - see Session.pending_dm_recap's own docstring
-            # (server/state.py) for the full "why" and _on_player_action
-            # for where this actually gets consumed.
+            # A returning character also gets that grounding fed to the DM
+            # once, on their next action (see Session.pending_dm_recap).
             if not is_new_character and player_id not in self._session.pending_dm_recap:
                 self._session.pending_dm_recap.append(player_id)
 
         await self._broadcast(self._system_envelope(f"{character.name} joined the session.", level="info"))
-        # Structured counterpart to the text log line above - lets a client
-        # add/refresh this player's presence line (left-column "other
-        # players" view) without parsing prose. Fires on every join,
-        # including a reconnect, so a client's own local roster stays
-        # correct even after missing an earlier player_left.
+        # Structured counterpart to the log line above - a client refreshes
+        # this player's presence line without parsing prose. Fires on reconnect
+        # too, so a roster that missed an earlier player_left still corrects.
         await self._broadcast(self._player_joined_envelope(character))
 
-        # Narration and turn-taking only become visible once the adventure
-        # has actually started (see _on_start_session below) - a fresh join
-        # lands in the client's pre-game lobby, not mid-turn-prompt. This
-        # join is a genuine reconnect into an already-started game - where
-        # the returning player should still see whose turn it is - iff
-        # _has_started() says so.
+        # Turn-taking is only visible once the adventure has started; a reconnect
+        # into a started game should still see whose turn it is.
         if self._has_started():
-            # A reconnect rescues a queue left stuck on an absent player -
-            # pre-fix saved state persists current_turn_index pointing at
-            # someone long gone, and nothing else would ever move it.
+            # Rescue a queue left pointing at a player who is long gone.
             if await self._skip_absent_players() or self._session.current_turn == player_id:
                 await self._broadcast(self._turn_prompt_envelope())
 
     def _has_started(self) -> bool:
-        # Session.started is the authoritative signal going forward, but a
-        # session saved before that field existed would load as False even
-        # with real narration history already in it - bool(log) is the
-        # fallback that keeps an old real save (this project's own
-        # sessions/*.json among others) correctly recognized as already
-        # started rather than getting dropped back into a pre-game lobby.
+        # bool(log) is the fallback for a session saved before Session.started
+        # existed - it would load as False despite real narration history.
         return self._session.started or bool(self._session.log)
 
     def _resume_recap(self) -> str:
@@ -1286,14 +1240,10 @@ class GameEngine:
 
     def _seed_world_map(self) -> str:
         """Seed the campaign map with the world bible's known regions at
-        session start (docs/protocol.md "Protocol v2 additions - Map").
-        The bible describes the world as common knowledge - every arrival
-        walks the same six-day road - so a fresh session's Map tab shows
-        the known regions immediately instead of an empty canvas that only
-        fills as the DM happens to narrate. Only bible regions carrying
-        coordinates seed anything; edges derive from border text naming a
-        sibling region. Returns the apply_update summary ('' when nothing
-        seeded)."""
+        session start (docs/protocol.md "Map"), so the Map tab isn't an empty
+        canvas. Only bible regions with coordinates seed nodes; edges derive
+        from border text naming a sibling region. Returns the apply_update
+        summary ('' when nothing seeded)."""
         placed = [r for r in self._world_bible.regions if r.x is not None and r.y is not None]
         if not placed:
             return ""
@@ -1312,42 +1262,23 @@ class GameEngine:
         return summary
 
     async def _on_start_session(self, envelope: Envelope) -> None:
-        """The lobby's "Start Adventure" trigger - any joined player may
-        send this (Oracle has no separate host/GM role - turn order and
-        now session-starting are both symmetric across players). Decoupled
-        from _on_join_session on purpose: joining creates your character
-        and lets you review it/chat in the lobby, but the DM doesn't
-        narrate and the turn queue doesn't become visible until someone
-        explicitly starts things - see docs/protocol.md.
-
-        Idempotent via _has_started(): a second start_session (another
-        player also clicking Start around the same moment, or a retry after
-        the first one narrated fine) after the adventure has already begun
-        is a silent no-op, not a re-narrated opening scene. Session.started
-        is set True unconditionally the moment this actually proceeds - not
-        only after a successful narration - so a failed/disabled opening
-        scene doesn't leave the session re-triggerable on every future
-        start_session; see _narrate_opening_scene's own best-effort framing
-        for why a failure there still shouldn't undo this."""
+        """The lobby's "Start Adventure" trigger - any joined player may send
+        this (Oracle has no host/GM role). Idempotent via _has_started().
+        Session.started is set True the moment this proceeds, not only after a
+        successful narration, so a failed opening scene isn't re-triggerable."""
         if self._has_started() or not self._session.characters:
             return
 
-        # A lightweight session-zero choice (LobbyScreen's own selector,
-        # client/app.py) from whoever actually starts the adventure - an
-        # unrecognized or missing value falls back to the same "standard"
-        # default Session.content_preference already has, the same
-        # graceful-miss convention every other name-based field in this
-        # file already follows, rather than a pydantic ValidationError on
-        # a malformed/adversarial payload.
+        # Unrecognized/missing falls back to the "standard" default rather
+        # than raising on a malformed payload.
         content_preference = envelope.payload.get("content_preference")
         if content_preference in ("lighter", "standard", "intense"):
             self._session.content_preference = content_preference
 
         self._session.started = True
         if self._seed_world_map():
-            # Push the seeded known world immediately - session_started is a
-            # bare lifecycle signal, and without this the map only reached a
-            # client on its next full state_sync (i.e. after a reconnect).
+            # Push the seeded map now - otherwise it only reaches a client on
+            # its next full state_sync.
             await self._broadcast(self._world_update_envelope())
         await self._save(envelope.sender_id)
 
@@ -1356,13 +1287,8 @@ class GameEngine:
 
         roster = list(self._session.characters.values())
         if len(roster) > 1:
-            # A group opening scene isn't a new multi-actor tool-routing
-            # mechanism (character_summary/apply_update still anchor on one
-            # character, same as any other turn) - just a richer prompt so
-            # the DM's narration acknowledges everyone actually present
-            # instead of assuming a lone traveler. Owner's own framing was
-            # "maybe begin with players introducing themselves" - a nudge,
-            # not a hard requirement, so this stays a prompt-level note.
+            # A richer prompt so the opening narration acknowledges everyone
+            # present; tool-routing still anchors on one character.
             names = ", ".join(
                 f"{c.name} the {c.character_class}" if c.character_class else c.name for c in roster
             )
@@ -1372,14 +1298,9 @@ class GameEngine:
                 character.name, plural=False, origin_detail=character.background
             )
 
-        # session_started fires BEFORE narration, not after - a real
-        # ordering bug caught before it ever shipped: _narrate_and_apply
-        # (inside _narrate_opening_scene) broadcasts log_entry narration
-        # chunks and any npc_update as it streams, and a client still on
-        # the lobby screen has nowhere to render them yet. Broadcasting
-        # session_started first lets every client transition into the real
-        # session view first, then watch the opening scene stream in live -
-        # the same experience a normal turn's narration already gives.
+        # session_started must go out BEFORE narration: _narrate_opening_scene
+        # streams log_entry chunks, and a client still on the lobby screen has
+        # nowhere to render them.
         await self._broadcast(self._session_started_envelope())
 
         if self._enable_opening_scene:
@@ -1391,18 +1312,9 @@ class GameEngine:
             await self._broadcast(self._turn_prompt_envelope())
 
     async def _on_start_combat(self, envelope: Envelope) -> None:
-        """Real 5e formal initiative - any joined player may trigger this
-        (the same symmetric, no-host-role precedent start_session already
-        establishes), not something detected from narration. Deliberately
-        explicit rather than inferred: this project's own tool-call
-        reliability investigation (ROADMAP.md) found the DM model can't be
-        trusted to reliably notice and act on state changes on its own, and
-        "did combat just start" is exactly that kind of judgment call - a
-        player saying so is the one signal that's actually reliable.
-
-        Idempotent, matching _on_start_session's own precedent - a second
-        start_combat while already in combat (two players both reaching
-        for it, a retry) is a silent no-op, not a re-rolled order.
+        """Real 5e formal initiative - any joined player may trigger this,
+        explicitly (the DM model isn't trusted to reliably notice "combat
+        started"). Idempotent: a second start_combat while in combat is a no-op.
 
         Rolls a real 1d20 + DEX modifier for every present player and every
         currently-tracked NPC (server/dice.py's roll(), the same primitive
@@ -1434,11 +1346,8 @@ class GameEngine:
             total, _, _ = dice.roll("1d20", extra_modifier=dex_mod)
             participants.append((npc.name, total, dex_mod, None))
 
-        # Highest roll first; ties broken by the higher DEX modifier (real
-        # 5e's own tiebreak), then by Python's stable sort preserving each
-        # participant's original (join/introduction) order - a real,
-        # deterministic tiebreak beyond that isn't attempted, matching real
-        # 5e's own "DM decides" for a tie that persists past DEX.
+        # Highest roll first, ties to higher DEX modifier (5e's own tiebreak),
+        # then stable-sort join order.
         participants.sort(key=lambda p: (-p[1], -p[2]))
 
         self._session.pre_combat_turn_order = list(self._session.turn_order)
@@ -1453,16 +1362,9 @@ class GameEngine:
         await self._save()
 
     async def _on_end_combat(self, envelope: Envelope) -> None:
-        """Symmetric with _on_start_combat - any joined player may end
-        combat too, the same "no host role" precedent. Idempotent: a
-        second end_combat outside combat is a silent no-op.
-
-        Restores turn_order to pre_combat_turn_order (plain join order,
-        snapshotted the moment combat began) plus anyone who joined mid-
-        combat - _on_join_session appends a new joiner straight to the
-        live turn_order during combat, same as it always does, so those
-        joiners are simply whatever's in turn_order now but wasn't in the
-        snapshot, appended in the order they actually joined."""
+        """Any joined player may end combat. Idempotent outside combat.
+        Restores turn_order to the pre-combat snapshot plus any mid-combat
+        joiners, in join order."""
         if not self._session.in_combat:
             return
 
@@ -1480,16 +1382,9 @@ class GameEngine:
         await self._save()
 
     async def _skip_absent_players(self) -> bool:
-        """Advances the turn past any player with no live connection, so
-        the strict round-robin queue never stalls on someone who isn't at
-        the table - the gap found live 2026-08-29: with turn_order
-        append-only and the turn advancing only on a resolved action, a
-        disconnected active player blocked every other player indefinitely
-        ("It's not your turn"), and the stuck state even survived a server
-        restart since current_turn_index persists with the session. Bounded
-        by construction: at most one full cycle of the queue. Returns
-        whether the turn moved - handle_disconnect announces a mid-flight
-        departure; a slot the queue merely reaches is passed silently."""
+        """Advances the turn past any player with no live connection, so the
+        round-robin queue never stalls on someone who isn't at the table.
+        Bounded to one full cycle. Returns whether the turn moved."""
         if not self._has_started() or self._session.current_turn in self._connected_players:
             return False
         for _ in range(len(self._session.turn_order)):
@@ -1627,31 +1522,19 @@ class GameEngine:
         touches the broadcast action_text/action log line, only what the
         narrator backend itself receives)."""
         player_id = character.player_id
-        # Captured before this turn's apply_update closure can mutate them
-        # (the acting character is the same mutable object throughout this
-        # call), the same "compare before vs. after" pattern was_alive/
-        # defeated already use for NPC XP below - so a real transition into
-        # or out of dying can be announced after narration resolves, not
-        # just silently reflected in the next character_update/player_update.
+        # Captured before this turn's apply_update closure can mutate them, so a
+        # dying/dead transition can be announced once narration resolves.
         was_dying = character.dying
         was_dead = character.dead
         sheet_changed = False
         npcs_touched: set[str] = set()
         rolls_made: list[dict] = []
         world_changed = False
-        # (text, category) - one entry per real update_character change
-        # this turn, broadcast as color-coded log lines after narration
-        # finishes streaming (a direct owner ask: damage/heal/spell/item
-        # should read differently at a glance, not blend into plain text
-        # narration - see _outcome_category above). Same deferred-broadcast
-        # shape rolls_made/xp_awards already use, for the same reason -
-        # apply_update is a synchronous tool callback, so nothing here can
-        # await a broadcast directly.
+        # (text, category) per update_character change, broadcast as colour-coded
+        # log lines after narration streams (apply_update is sync, can't await).
         outcomes: list[tuple[str, str]] = []
-        # (npc_name, xp_awarded, levels_gained) - one entry per NPC this
-        # turn's apply_update calls actually defeated, so a broadcast can
-        # announce each defeat/level-up after narration finishes streaming,
-        # not interrupt it mid-stream.
+        # (npc_name, xp_awarded, levels_gained) per NPC defeated this turn,
+        # broadcast after narration finishes.
         xp_awards: list[tuple[str, int, list[tuple[str, CharacterSheet, int, list[str]]]]] = []
         xp_award_members: dict[str, CharacterSheet] = {}
 
@@ -1660,14 +1543,8 @@ class GameEngine:
             dc = update.get("dc")
             reason = update.get("reason", "")
 
-            # weapon, when given, is an equipment name (e.g. "longsword") -
-            # the engine looks up its real SRD damage die and uses that as
-            # the notation instead of whatever the model typed, the same
-            # "resolve real data server-side rather than trust the model to
-            # get it right" reasoning ability already applies. A name that
-            # doesn't match known equipment falls through to the given
-            # dice unchanged - the same graceful-miss convention every
-            # other name-based lookup in this file already follows.
+            # weapon: an equipment name; look up its real SRD damage die rather
+            # than trust the model's notation. Unknown name -> given dice unchanged.
             weapon = update.get("weapon")
             damage_type = None
             weapon_magic_bonus = 0
@@ -1676,70 +1553,38 @@ class GameEngine:
                 weapon_damage = equipment_entry.get("damage") if equipment_entry else None
                 if weapon_damage:
                     notation, _, damage_type = weapon_damage.partition(" ")
-                # The acting character's own carried instance of this
-                # weapon, if any - a magic weapon (InventoryItem.magic_bonus,
-                # server/state.py, set via update_character's own add_item +
-                # magic_bonus) adds to its damage roll, real 5e's own rule.
-                # Only the damage roll, not also the to-hit roll - `weapon`
-                # only ever means "resolve this weapon's real damage die"
-                # (this closure's own comment above), and a to-hit roll
-                # never names a weapon at all today - a real, named gap for
-                # a later pass, not silently promised here.
+                # A carried magic instance (InventoryItem.magic_bonus) adds to
+                # the damage roll. Damage only - a to-hit roll never names a
+                # weapon today. ponytail: to-hit magic bonus, later pass.
                 owned_weapon = character.find_item(weapon)
                 if owned_weapon:
                     weapon_magic_bonus = owned_weapon.magic_bonus
 
-            # spell, when given (e.g. "fire_bolt"), resolves a real
-            # attack-roll-shaped cantrip/spell the same way weapon resolves
-            # a physical attack - only spells with an "attack": true and a
-            # structured "damage" field in srd.json set anything here (a
-            # save-based spell like sacred_flame, or a non-damaging one
-            # like bless, has nothing an attack roll would resolve, so this
-            # is a graceful no-op for those - see "Spellcasting" in
-            # docs/protocol.md for why request_roll never rolls a target's
-            # saving throw on the caster's behalf). Spell name matching
-            # doesn't check known_spells here (unlike cast_spell on
-            # update_character) - this only ever resolves real dice/damage
-            # data for display, it doesn't consume a slot or need to.
+            # spell: like weapon, but for an attack-roll cantrip/spell. Only
+            # spells with "attack": true and a "damage" field resolve anything;
+            # save-based/non-damaging spells are a no-op. No known_spells check -
+            # this resolves dice for display, it doesn't consume a slot.
             spell = update.get("spell")
             spell_entry = self._rules.get_entry("spell", spell) if spell else None
             if spell_entry and spell_entry.get("attack") and spell_entry.get("damage"):
                 notation, _, damage_type = spell_entry["damage"].partition(" ")
 
-            # ability, when given, is the acting character's own ability
-            # key (e.g. "dex") - the engine looks up its real modifier
-            # (CharacterSheet.stat_modifiers, already precomputed) and adds
-            # it itself, rather than trusting the DM to compute
-            # floor((score-10)/2) correctly and splice it into the dice
-            # string by hand. dice.roll()'s notation regex only supports
-            # one signed modifier group anyway (no "1d20+3+2"), so this
-            # also sidesteps a real parsing limitation, not just a
-            # reliability one. Composes naturally with weapon above - a
-            # real 5e damage roll is exactly "weapon's die + ability mod".
+            # ability: the character's own ability key; the engine adds its real
+            # precomputed modifier rather than trust the DM's arithmetic (and
+            # dice.roll's regex only allows one modifier group anyway).
             ability = update.get("ability")
 
-            # skill, when given (e.g. "stealth"), is real 5e's own name for
-            # what's actually being checked - the engine resolves its real
-            # governing ability (SKILL_ABILITIES) automatically rather than
-            # asking the DM to also separately pass ability for the same
-            # roll, the same "resolve real data server-side" reasoning
-            # weapon already applies to damage dice. An explicit ability
-            # still wins if the DM passes one anyway (a real, if rare, 5e
-            # case - some rolls swap a skill's usual ability), matching the
-            # same "explicit override beats an automatic default" priority
-            # order _xp_for_npc's own explicit-xp-beats-CR-lookup already
-            # establishes. An unrecognized skill name is a graceful no-op,
-            # not an error - the same convention every other name-based
-            # lookup here already follows.
+            # skill: the engine resolves its governing ability (SKILL_ABILITIES)
+            # automatically. An explicit ability still wins; unknown skill is a
+            # no-op.
             skill = update.get("skill")
             if skill not in SKILL_ABILITIES:
                 skill = None
             if skill and not ability:
                 ability = SKILL_ABILITIES[skill]
 
-            # A resolved spell (see above) auto-fills ability from the
-            # character's own real spellcasting ability (SPELLCASTING_ABILITY)
-            # the same way skill does, when the DM didn't already give one.
+            # A resolved attack spell auto-fills ability from the character's
+            # spellcasting ability when the DM didn't give one.
             if spell_entry and spell_entry.get("attack") and not ability:
                 ability = SPELLCASTING_ABILITY.get(character.character_class.strip().lower())
 
@@ -1766,33 +1611,18 @@ class GameEngine:
             if spell_entry and spell_entry.get("attack"):
                 proficient = True
                 proficiency_bonus = character.proficiency_bonus
-            # update.get("roll_kind"), not the local roll_kind variable -
-            # that's only (re)computed further below, and only ever
-            # inferred for "check"/"attack", never "save" (a save has no
-            # equivalent auto-detectable signal the way skill/spell-attack
-            # do), so reading the raw input here is correct, not a race.
+            # Raw input, not the local roll_kind (computed below and never
+            # inferred as "save").
             if update.get("roll_kind") == "save" and ability in CLASS_SAVING_THROW_PROFICIENCIES.get(
                 character.character_class.strip().lower(), ()
             ):
                 proficient = True
                 proficiency_bonus = character.proficiency_bonus
 
-            # roll_kind ("attack"/"save"/"check") is purely descriptive of
-            # what the roll represents - unlike every other request_roll
-            # field, it never changes the roll's own math (no modifier, no
-            # notation change). Its one real effect is narrowing which
-            # tracked conditions apply disadvantage below (real 5e's own
-            # per-roll-type scoping - see ROLL_KIND_DISADVANTAGE_EXCLUSIONS).
-            # An unrecognized value is treated the same as omitted (None) -
-            # the same graceful-miss convention every other name-based
-            # field in this closure (weapon, ability) already follows,
-            # rather than erroring on a value the model got slightly wrong.
-            # A skill check is, definitionally, a "check"; a resolved spell
-            # attack is, definitionally, an "attack" - defaulting either
-            # here (only when the DM didn't already say otherwise) means
-            # naming one also gets the real per-condition disadvantage
-            # scoping for free, without the DM needing to pass two
-            # redundant fields for the same underlying fact.
+            # roll_kind never changes the roll's math; it only narrows which
+            # tracked conditions apply disadvantage (ROLL_KIND_DISADVANTAGE_
+            # EXCLUSIONS). Inferred from skill/spell-attack when the DM omitted
+            # it; unrecognized -> None.
             roll_kind = update.get("roll_kind")
             if roll_kind not in ("attack", "save", "check"):
                 if skill:
@@ -1802,14 +1632,9 @@ class GameEngine:
                 else:
                     roll_kind = None
 
-            # Fully automatic, never a model-supplied field - the same
-            # "the engine computes this from real tracked state, not the
-            # model's judgment" reasoning every other mechanic in this
-            # file already follows. A character narrating their way into
-            # a disadvantageous circumstance the engine has no tracked
-            # state for (fighting in darkness, an ally in the way) still
-            # isn't modeled - real, deliberate future work, not silently
-            # promised here.
+            # Automatic from tracked conditions only, never model-supplied.
+            # ponytail: untracked circumstantial disadvantage (darkness, cover)
+            # not modelled.
             disadvantage_reasons = _has_disadvantage(character, roll_kind)
             disadvantage = bool(disadvantage_reasons)
 
@@ -1824,19 +1649,9 @@ class GameEngine:
 
             success = None if dc is None else total >= dc
 
-            # A critical hit - real 5e's own natural-20-on-an-attack-roll
-            # rule. kept_roll mirrors the client's own disadvantage-
-            # narrowing logic (_dice_result_line): under disadvantage,
-            # rolls holds both d20s but only the worse was actually kept,
-            # so checking either raw entry could wrongly call a discarded
-            # 20 a crit. advantage is never actually set anywhere in this
-            # codebase today (only disadvantage, from tracked conditions),
-            # so rolls always has exactly one entry outside the
-            # disadvantage case. Deliberately just an announced fact for
-            # now, not automatic damage-doubling - that needs the engine
-            # to correlate this roll with a later, separate damage roll
-            # for the same attack, a bigger mechanic than detecting the
-            # crit itself (see ROADMAP.md).
+            # Natural 20 on an attack roll. Under disadvantage `rolls` holds both
+            # d20s but only the worse counts, so use that. ponytail: announced
+            # only, no automatic damage-doubling.
             kept_roll = min(rolls) if disadvantage else rolls[0]
             critical = roll_kind == "attack" and sides == 20 and kept_roll == 20
 
@@ -1867,22 +1682,9 @@ class GameEngine:
 
             target = update.get("target") or "self"
 
-            # A model given the character sheet as JSON (which includes its own
-            # player_id, name, and conditions) sometimes echoes one of those
-            # back as target instead of "self" - without this, that misroutes
-            # into the NPC branch below and silently creates a phantom NPC
-            # sheet named after the player's own id, name, or (found live
-            # during a campaign dry-run, ROADMAP.md, 2026-08-10) one of their
-            # own already-applied conditions (e.g. "Veil-Touched", every
-            # character's own origin condition) - a mistargeted hit on the
-            # acting character routes here as a normal self-update instead of
-            # spawning a bogus NPC, the same resolution this exact class of
-            # mistargeting already gets for player_id/name confusion. Scoped
-            # to the acting character's own *current* conditions, not a fixed
-            # list - the coincidence of an unrelated real NPC sharing a name
-            # with a condition string is negligible, but a static list would
-            # need to know every condition any origin/narration could ever
-            # apply.
+            # The model sometimes echoes the sheet's player_id/name/a condition
+            # string back as target instead of "self". Catch those here so they
+            # route as a self-update rather than spawning a phantom NPC.
             if target in ("self", player_id, character.name) or target in character.conditions:
                 result = character.apply_update(update)
                 changed = not result.startswith("No changes applied")
@@ -1907,71 +1709,38 @@ class GameEngine:
 
                 return result
 
-            # Keyed by a casefolded form of the name, not the raw target
-            # string - an inconsistently-cased target from the DM (e.g.
-            # "Bandit" one turn, "bandit" the next) would otherwise silently
-            # create a second, disconnected NPC entry instead of updating the
-            # one already being tracked. npc.name keeps the first-seen
-            # casing for display, so the tool result and broadcasts stay
-            # consistent turn to turn regardless of how later calls case it.
-            # Underscores fold too: small models slugify ("second_bandit"
-            # vs "Second Bandit" across turns - seen twice in the post-v2
-            # harness runs).
+            # Casefold and fold underscores so "Bandit"/"bandit"/"second_bandit"
+            # don't spawn duplicate NPC entries across turns. npc.name keeps
+            # first-seen casing for display.
             npc_key = target.casefold().replace("_", " ")
             npc = self._session.npcs.get(npc_key)
             introduced = npc is None
 
             if introduced:
-                # Same default-HP fallback join_session already uses for a
-                # fresh player character - a safety net for when the DM
-                # forgets to pass a real max_hp from lookup_rule, not the
-                # intended path.
+                # Safety net for when the DM forgets a real max_hp from lookup_rule.
                 max_hp = update.get("max_hp") or DEFAULT_NPC_HP
                 npc = CharacterSheet(player_id=target, name=target, hp=max_hp, max_hp=max_hp)
-                # A known SRD monster's real ability scores were already
-                # sitting in srd.json, just never connected to a tracked
-                # NPC before - the same target-name lookup _xp_for_npc uses
-                # for CR, applied here too so a DM introducing e.g. a real
-                # "goblin" gets its actual stat block (and therefore real
-                # modifiers on any request_roll targeting it) for free,
-                # not just for player characters.
+                # Give a known SRD monster its real stat block (and therefore
+                # real request_roll modifiers) for free.
                 monster_entry = self._rules.get_entry("monster", target)
                 if monster_entry is not None:
                     npc.stats = dict(monster_entry.get("stats", {}))
-                    # A real 5e monster's AC is a flat authored value (armor,
-                    # natural hide, etc. already folded in) - copied
-                    # directly, unlike a player's AC which is *computed*
-                    # from armor + DEX (_compute_ac above). Falls back to
-                    # CharacterSheet.ac's own default (10) if this monster
-                    # entry has no "ac" field, same as an unmatched name.
+                    # A monster's AC is a flat authored value, copied directly
+                    # (unlike a player's computed AC). Default 10 if absent.
                     if "ac" in monster_entry:
                         npc.ac = monster_entry["ac"]
                 self._session.npcs[npc_key] = npc
 
-            # Captured before apply_update mutates hp - this is the
-            # deterministic trigger for XP, not a tool the DM has to
-            # remember to call. ROADMAP.md's reliability investigation
-            # found tool-call reliability plateaus around 29% across every
-            # local model tested, so awarding XP off "the model also called
-            # an award_xp tool" would silently fail most of the time; hp
-            # crossing from >0 to 0 is already-observed, already-reliable
-            # engine state (this same apply_update path is what the
-            # untracked-change heuristic above exists to catch failures
-            # of). was_alive on a freshly-introduced NPC is True unless it
-            # was introduced already-dead in the same update (max_hp<=0),
-            # which correctly awards no XP for a "corpse" that was never
-            # alive in this session.
+            # Captured before apply_update mutates hp: hp crossing >0 -> 0 is the
+            # deterministic XP trigger, not a tool the DM must remember to call.
             was_alive = npc.hp > 0
 
             delta_result = npc.apply_update(update)
             changed = not delta_result.startswith("No changes applied")
             defeated = was_alive and npc.hp == 0
 
-            # Introducing a new NPC is itself a real change worth
-            # broadcasting even if this same call's deltas were a no-op
-            # (e.g. just naming it with no damage yet) - matches the
-            # player-character path's own "only broadcast on a real
-            # change" rule otherwise.
+            # Introducing an NPC is a real change worth broadcasting even if
+            # this call's deltas were a no-op.
             if introduced or changed:
                 npcs_touched.add(npc_key)
 
@@ -1982,10 +1751,8 @@ class GameEngine:
 
             xp_note = ""
             if defeated:
-                # Split across the whole party (real 5e's rule) by
-                # _award_party_xp - a floor division, the remainder simply
-                # drops, and a solo session is an exact no-op that awards
-                # everything to the one member.
+                # _award_party_xp floor-divides across the party; the remainder
+                # drops, a solo session awards everything to the one member.
                 xp_award = _xp_for_npc(npc, update, self._rules)
                 party_results = self._award_party_xp(xp_award)
                 for _pid, _member, _levels, _asi in party_results:
@@ -2005,10 +1772,8 @@ class GameEngine:
                 result = delta_result
             return result + xp_note
 
-        # Scene-facts snapshot for this turn (docs/protocol.md "Protocol v2
-        # additions - Scene envelope"): the narrator's decide phase reports
-        # them through the scene_sink closure below; broadcast after narration
-        # finishes so the client renders them as the turn's resolution.
+        # Scene-facts snapshot (docs/protocol.md "Scene envelope"): the decide
+        # phase reports through scene_sink; broadcast after narration finishes.
         scene_facts: dict = {}
 
         def scene_sink(facts: dict) -> None:
@@ -2023,12 +1788,8 @@ class GameEngine:
             self._session.add_facts(facts)
 
         full_clocks_before = {c.name for c in self._session.world.clocks if c.filled >= c.segments}
-        # (text) - one entry per progress clock this turn's update_world
-        # calls filled to its last segment (docs/protocol.md "Clocks"),
-        # announced as a system_message after narration finishes streaming,
-        # the same deferred-broadcast shape outcomes/xp_awards already use -
-        # apply_update/update_world are synchronous tool callbacks, so
-        # nothing here can await a broadcast directly.
+        # Progress clocks filled to their last segment this turn (docs/protocol.md
+        # "Clocks"), announced after narration finishes.
         clocks_filled: list[str] = []
 
         def update_world(update: dict) -> str:
@@ -2042,21 +1803,13 @@ class GameEngine:
                         full_clocks_before.add(clock.name)
             return result
 
-        # Prepended here rather than baked into the DM's system prompt -
-        # content_preference is per-session (Session.content_preference,
-        # server/state.py) while the system prompt is shared/global across
-        # every session one server process hosts. "standard" has no entry
-        # in CONTENT_PREFERENCE_HINTS above, so this is a no-op for the
-        # common/default case. Prepending to the real action_text used in
-        # this narrate() call (not the raw text broadcast to the action
-        # log by _on_player_action, which happens before this method is
-        # even called) keeps the hint invisible to players.
+        # Prepended to this call's action_text (invisible to players) rather
+        # than the shared system prompt, since content_preference is per-session.
+        # "standard" has no hint -> no-op for the default case.
         hint = CONTENT_PREFERENCE_HINTS.get(self._session.content_preference)
         narrate_action_text = f"[{hint}]\n{action_text}" if hint else action_text
-        # dm_recap (this reconnecting player's own pending_dm_recap, popped
-        # by _on_player_action) goes in front of the content-preference
-        # hint - context for "what's going on" belongs before a tone
-        # instruction, not after it.
+        # dm_recap goes in front of the tone hint - "what's going on" before
+        # "how to say it".
         if dm_recap:
             narrate_action_text = (
                 f"[Context: {character.name} is picking back up after a gap - {dm_recap}]\n{narrate_action_text}"
@@ -2071,11 +1824,8 @@ class GameEngine:
         if npc_roster:
             world_summary = f"{world_summary}\n{npc_roster}" if world_summary else npc_roster
         # Lorebook injection (docs/protocol.md "World context -> lorebook"):
-        # keyword hits from the recent play window under a character budget,
-        # appended to the same grounding region of the prompt world state
-        # and the NPC roster already occupy. Empty selection -> empty block,
-        # so sessions that never touch world_context are byte-identical to
-        # before.
+        # keyword hits from the recent play window under a character budget.
+        # Empty selection -> empty block.
         window_text = "\n".join(
             str(message.get("content", "")) for message in self._session.history[-6:]
         )
@@ -2116,27 +1866,11 @@ class GameEngine:
                 )
             )
 
-        # A real chance for the DM to self-correct, not just a passive
-        # warning - see check_for_missed_changes's own comment further
-        # below for the full "why". Deliberately placed here, before the
-        # sheet_changed/npcs_touched/outcomes broadcasts below, rather than
-        # alongside the warning itself: a correction applied via this call
-        # mutates that same nonlocal state through apply_update exactly
-        # like a normal in-turn tool call would, so it needs to happen
-        # before those broadcasts run to be picked up by them, not after.
-        # getattr, not a required Protocol method - most test doubles
-        # (StubDM and friends, tests/test_engine.py) have no need to
-        # implement this, the same "optional capability" convention this
-        # project already uses for request_roll/update_world being None.
-        # No POSSIBLE_UNTRACKED_CHANGE_PATTERN gate here (unlike the passive
-        # warning below) - that regex is deliberately narrow (its own
-        # comment admits real false negatives on phrasing it doesn't catch),
-        # and a clean check_missed_change() response costs nothing beyond
-        # one extra structured-output call: _has_outcome_change() gates the
-        # actual apply_update, so a quiet turn just gets an honest "nothing
-        # to fix" rather than a spurious correction. The warning tier below
-        # stays regex-gated - it's player-facing, so false positives there
-        # cost attention, not just latency.
+        # A real chance for the DM to self-correct (see check_for_missed_changes
+        # below). Must run before the sheet/outcome broadcasts so a correction's
+        # apply_update is picked up by them. getattr - optional capability, most
+        # test doubles skip it. No regex gate here (unlike the player-facing
+        # warning below): a clean check just costs one structured-output call.
         missed_change_corrected = False
         if check_for_missed_changes and not sheet_changed and not npcs_touched:
             check_missed_change = getattr(self._dm, "check_missed_change", None)
@@ -2147,11 +1881,8 @@ class GameEngine:
             await self._broadcast(self._log_envelope("dice", self._dice_log_text(character.name, roll)))
             await self._broadcast(self._dice_result_envelope(player_id, roll))
 
-        # A direct owner ask: damage/heal/spell/item/condition should read
-        # differently at a glance in the log, not blend into plain
-        # narration text - broadcast outright (not owner-only) since HP/
-        # conditions changing is already narratively public the same way
-        # player_update/npc_update already are.
+        # Colour-coded so damage/heal/spell/item reads differently at a glance.
+        # Broadcast (not owner-only) - HP/conditions changing is already public.
         for text, category in outcomes:
             await self._broadcast(self._log_envelope("outcome", text, category=category))
 
@@ -2167,35 +1898,22 @@ class GameEngine:
                 await self._broadcast(self._player_update_envelope(_member))
         elif sheet_changed:
             await self._send_to(player_id, self._character_update_envelope(player_id, character))
-            # The private character_update above carries the full sheet
-            # (inventory included) to the owner; everyone else's presence
-            # view needs the same public-only fields player_joined already
-            # established, kept live rather than only ever set at join time.
+            # character_update is the owner's full sheet; player_update keeps
+            # everyone else's public-only presence view live.
             await self._broadcast(self._player_update_envelope(character))
 
         for npc_key in npcs_touched:
             touched_npc = self._session.npcs[npc_key]
             await self._broadcast(self._npc_update_envelope(touched_npc.name, touched_npc))
 
-        # Broadcast once narration/sheet/npc updates have all gone out, so
-        # this reads as the resolution of what just streamed rather than
-        # interrupting it. system_message rather than a new envelope type -
-        # matches how every other game-flow announcement not itself DM
-        # narration (a join, an out-of-turn refusal) already reaches
-        # clients, so no client-side changes were needed to render this.
+        # After narration/sheet/npc updates, so it reads as the resolution.
         for npc_name, xp_award, party_results in xp_awards:
             text = _party_xp_announcement(npc_name, xp_award, party_results)
             await self._broadcast(self._system_envelope(text, level="info"))
 
-        # A dying/dead transition is already reflected in the sheet_changed
-        # character_update/player_update broadcasts above, but neither of
-        # those reads as an announcement the way the XP-award text just
-        # above does - a player watching HP tick to 0 in a redacted "Party"
-        # view shouldn't have to notice that themselves. Compared against
-        # was_dying/was_dead captured before narration started, not just
-        # "is dying now", so a character who was already dying before this
-        # turn (e.g. from the automatic damage-while-down failure inside
-        # CharacterSheet.apply_update) doesn't get re-announced every turn.
+        # Announce a dying/dead transition explicitly. Compared against
+        # was_dying/was_dead from before narration so an already-dying
+        # character isn't re-announced every turn.
         if character.dead and not was_dead:
             await self._broadcast(self._system_envelope(f"{character.name} has died.", level="warning"))
         elif character.dying and not was_dying:
@@ -2212,16 +1930,9 @@ class GameEngine:
             await self._broadcast(self._world_update_envelope())
 
         if missed_change_corrected:
-            # A real correction actually landed above (via check_missed_change),
-            # not just a passive flag - lets the player know the sheet was
-            # double-checked and fixed, rather than either staying silent
-            # or still showing the "might be out of sync" warning below,
-            # which the sheet_changed/npcs_touched state a real correction
-            # just set would suppress anyway (see that condition below).
-            # Deliberately not advisory=True - the client renders that flag
-            # with a yellow warning triangle (client/app.py), the right
-            # treatment for "you might want to double check" but wrong for
-            # a real confirmation that the sheet's already been fixed.
+            # A real correction landed via check_missed_change - tell the player
+            # the sheet was fixed. Not advisory=True (that's the yellow-triangle
+            # "double check this" treatment, wrong for a done fix).
             await self._send_to(
                 player_id,
                 self._system_envelope(
@@ -2284,11 +1995,8 @@ class GameEngine:
 
     async def _maybe_update_campaign_summary(self) -> None:
         """Best-effort rolling campaign summary (docs/REBUILD_PLAN.md): every
-        CAMPAIGN_SUMMARY_INTERVAL resolved turns, hand the backend the current
-        summary plus the history window and let it compress. Failure never
-        blocks the turn - the same report-don't-block convention _save()
-        already established; a stale/absent summary degrades to exactly the
-        pre-summarizer behavior."""
+        CAMPAIGN_SUMMARY_INTERVAL resolved turns, let the backend compress the
+        summary plus the history window. Failure never blocks the turn."""
         session = self._session
         if not session.history:
             return
@@ -2310,16 +2018,10 @@ class GameEngine:
         await self._broadcast(self._log_envelope("chat", envelope.payload.get("text", "")))
 
     async def _on_character_edit(self, envelope: Envelope) -> None:
-        """Player-side bookkeeping - notes, adding/removing/equipping an
-        inventory item by name - that doesn't need DM adjudication
-        (docs/protocol.md). Deliberately the mirror image of apply_update's
-        mechanical fields: this handler only ever touches notes/inventory/
-        equipped_weapon/equipped_armor (and, as a side effect of the
-        latter, ac - see CHARACTER_EDIT_FIELDS above), never hp/conditions/
-        stats/xp, so a player editing their own sheet can't grant
-        themselves healing or gear out of nowhere the DM never narrated.
-        Exempt from turn order like chat_message/dice_roll - only
-        _on_player_action checks current_turn."""
+        """Player-side bookkeeping that doesn't need DM adjudication: the RP
+        text fields, and adding/removing/equipping inventory by name (docs/
+        protocol.md). Never touches hp/conditions/stats/xp, so a player can't
+        grant themselves healing or gear. Exempt from turn order."""
         player_id = envelope.sender_id
         character = self._session.characters.get(player_id)
         if character is None:
@@ -2347,10 +2049,7 @@ class GameEngine:
         if field in CHARACTER_EDIT_TEXT_FIELDS:
             setattr(character, field, str(value))
         elif field == "add_item":
-            # No magic_bonus here - that's the DM tool's own optional field
-            # (apply_update, server/state.py), never player-settable, the
-            # same "engine/DM decides mechanical state" boundary this
-            # handler's own docstring already draws.
+            # No magic_bonus - that's the DM tool's field, never player-settable.
             character.add_item(str(value))
         elif field == "remove_item":
             item = str(value)
@@ -2359,13 +2058,7 @@ class GameEngine:
                     player_id, self._system_envelope(f"You don't have '{item}' to remove.", level="warning")
                 )
                 return
-            # Removing an equipped item unequips it too - a dangling
-            # equipped_weapon/equipped_armor/equipped_shield pointing at
-            # something no longer owned would be a real, confusing
-            # inconsistency. Stack-aware now: only when no more of that
-            # name are left (character.find_item returns None) - removing
-            # one potion from a stack of three shouldn't unequip anything,
-            # but removing your only equipped weapon should.
+            # Removing the last of an item unequips it, so no slot dangles.
             if character.find_item(item) is None:
                 if character.equipped_weapon == item:
                     character.equipped_weapon = None
@@ -2423,30 +2116,20 @@ class GameEngine:
                 shield_magic_bonus=shield_item.magic_bonus if shield_item else 0,
             )
 
-        # notes/inventory/equipped_weapon/equipped_armor stay private, the
-        # same boundary _public_character_view draws - but ac is public
-        # (visible combat capability, same as hp), so an equip/unequip
-        # that actually changed it also needs the public player_update
-        # broadcast every other ac-changing path already sends, not just
-        # the private character_update every character_edit sends.
+        # The edited fields are private, but ac is public - so an equip that
+        # changed it needs the public player_update broadcast too.
         await self._send_to(player_id, self._character_update_envelope(player_id, character))
         if ac_changed:
             await self._broadcast(self._player_update_envelope(character))
         await self._save(player_id)
 
     async def _on_apply_proposed_change(self, envelope: Envelope) -> None:
-        """Applies a server-authored correction proposal the player accepted
-        via /apply (docs/protocol.md's "Missed-change confirmable
-        proposal"). The proposal was generated by the DM backend when the
-        missed-change heuristic fired and check_missed_change declined to
-        auto-correct; it only ever carries target/hp_delta/add_condition
-        (the MISSED_CHANGE_SCHEMA field set). Exempt from turn order like
-        _on_character_edit - this is a correction of what already happened,
-        not a narrative action. Applies through the same
-        CharacterSheet.apply_update/NPC machinery a real in-turn tool call
-        uses, so its broadcasts match a real update_character. The pending
-        proposal expires on the player's next action (_on_player_action
-        pops it), so a stale suggestion can never be applied late."""
+        """Applies a correction proposal the player accepted via /apply
+        (docs/protocol.md's "Missed-change confirmable proposal"). Generated by
+        the DM backend when check_missed_change declined to auto-correct; carries
+        the MISSED_CHANGE_SCHEMA fields. Exempt from turn order. Applies through
+        the same apply_update/NPC machinery as a real tool call. The proposal
+        expires on the player's next action."""
         player_id = envelope.sender_id
         character = self._session.characters.get(player_id)
         if character is None:
@@ -2515,15 +2198,10 @@ class GameEngine:
         )
 
     async def _on_death_save(self, envelope: Envelope) -> None:
-        """A dying player's own roll against death (docs/protocol.md's
-        "Death saves" section) - deliberately its own dedicated event, not
-        folded into dice_roll. A death save is always a fixed 1d20 with no
-        notation for a player to choose, and needs outcome bookkeeping
-        (successes/failures/stabilize/died) no other roll has to carry -
-        reusing dice_roll's free-text notation input would mean either a
-        player has to remember to always type "/roll 1d20" or this handler
-        special-cases dice_roll internally anyway, neither simpler than a
-        dedicated event.
+        """A dying player's own roll against death (docs/protocol.md's "Death
+        saves"). Its own event, not folded into dice_roll: always a fixed 1d20,
+        and carries outcome bookkeeping (successes/failures/stabilize/died) no
+        other roll has.
 
         Exempt from turn order, like dice_roll/character_edit - deliberately
         not tied to "the start of the dying character's own turn" the way
