@@ -134,7 +134,16 @@ export default function CharacterSheetFull({ onClose }) {
                 <span className="text-dungeon-ink/60">
                   {t("Temp HP")} <b className="text-dungeon-ink">{sheet.temp_hp || 0}</b>
                 </span>
-                <Planned label={t("Hit dice")} />
+                {sheet.hit_die ? (
+                  <span className="text-dungeon-ink/60">
+                    {t("Hit dice")}{" "}
+                    <b className="text-dungeon-ink">
+                      {sheet.hit_dice_remaining ?? 0}/{sheet.hit_dice_total ?? 0} {sheet.hit_die}
+                    </b>
+                  </span>
+                ) : (
+                  <Planned label={t("Hit dice")} />
+                )}
               </div>
             </Section>
 
@@ -187,7 +196,7 @@ export default function CharacterSheetFull({ onClose }) {
             </Section>
 
             <div className="flex gap-2">
-              <Planned box label={t("Currency")} />
+              <MiniStat box label={t("Gold")} value={`${sheet.gold ?? 0} gp`} />
               <Inspiration
                 held={!!sheet.inspiration}
                 armed={state.inspirationArmed}
@@ -244,10 +253,10 @@ export default function CharacterSheetFull({ onClose }) {
                   ))}
                 </div>
               )}
-              <div className="flex gap-3 text-xs">
-                <Planned label={t("Armor / weapons / tools")} />
-                <Planned label={t("Languages")} />
-              </div>
+              <ProfLine label={t("Armor")} items={sheet.class_proficiencies?.armor} t={t} />
+              <ProfLine label={t("Weapons")} items={sheet.class_proficiencies?.weapons} t={t} />
+              <ProfLine label={t("Tools")} items={sheet.class_proficiencies?.tools} t={t} />
+              <ProfLine label={t("Languages")} items={sheet.languages} t={t} />
             </Section>
 
             <Section title={t("Spellcasting")}>
@@ -283,6 +292,17 @@ function Inspiration({ held, armed, toggle, t }) {
           {armed ? t("Armed — next roll") : t("Use on next roll")}
         </button>
       )}
+    </div>
+  );
+}
+
+function ProfLine({ label, items, t }) {
+  return (
+    <div className="flex gap-2 text-xs py-0.5">
+      <span className="text-dungeon-ink/50 shrink-0 w-16">{label}</span>
+      <span className="text-dungeon-ink/80 capitalize">
+        {items?.length ? items.join(", ") : t("none")}
+      </span>
     </div>
   );
 }

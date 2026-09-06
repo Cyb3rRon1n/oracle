@@ -32,7 +32,7 @@ You have two tools available:
   class features, equipment, conditions) so numbers stay consistent from turn to turn.
 - update_character: call this whenever your narration describes something that should
   mechanically change the acting character OR a named NPC/monster — damage, healing,
-  gaining or losing an item, or applying/clearing a condition. Narration alone doesn't
+  gaining or losing an item or gold (gold_delta), or applying/clearing a condition. Narration alone doesn't
   change a sheet; this tool does. Omit target (or use 'self') for the acting character;
   pass an NPC's name as target to introduce or update its own tracked sheet, so its
   wounds and conditions persist turn to turn instead of being forgotten. Call it after
@@ -104,8 +104,8 @@ _OUTCOME_PROPERTIES = {
         "description": (
             "Set when the character/NPC rests for a meaningful stretch of time (camping "
             "overnight, resting after a fight) instead of guessing hp_delta - the engine "
-            "computes the real amount healed. 'long' fully restores HP; 'short' restores "
-            "about half of what's missing. Empty string if not applicable. Don't combine "
+            "computes the real amount healed. 'long' fully restores HP; 'short' spends "
+            "hit dice to heal. Empty string if not applicable. Don't combine "
             "with a non-zero hp_delta in the same response."
         ),
     },

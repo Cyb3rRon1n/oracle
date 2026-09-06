@@ -1,5 +1,6 @@
 // Mirrors shared/protocol.py's EventType union and Envelope shape.
 // Keep both sides in sync - the schema freeze lives in docs/protocol.md.
+// tests/test_protocol_sync.py fails CI if this list and the Python Literal drift.
 
 export const EventType = {
   // client -> server

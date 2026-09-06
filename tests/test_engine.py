@@ -251,6 +251,7 @@ def test_build_starting_character_gives_a_real_class_kit(
     assert [item.name for item in sheet.inventory] == expected_inventory
     assert all(item.quantity == 1 and item.magic_bonus == 0 for item in sheet.inventory)
     assert sheet.character_class  # the SRD's display name, e.g. "Fighter"
+    assert sheet.hit_die.startswith("d") and sheet.hit_dice_total == 1 and sheet.hit_dice_remaining == 1
     assert sheet.stats == expected_stats
     assert sheet.stat_modifiers["con"] == 2  # (14 - 10) // 2
     assert sheet.ac == expected_ac
@@ -1362,6 +1363,9 @@ async def test_level_up_grows_hp_by_class_hit_die_and_broadcasts_level_up():
     assert character.level == 2
     assert character.max_hp == 34  # 22 + 12 (fighter's d10 max + CON mod) per level
     assert character.hp == 34
+    assert character.hit_die == "d10"
+    assert character.hit_dice_total == 2  # tracks level
+    assert character.hit_dice_remaining == 2  # the new die arrives unspent
 
     level_ups = [
         r for r in received
@@ -1758,6 +1762,28 @@ async def test_owner_character_view_includes_subrace_traits_combined_with_base_r
     traits_text = " ".join(view["racial_traits"])
     assert "Fey Ancestry" in traits_text  # base elf trait
     assert "Cantrip" in traits_text  # high elf's own subrace trait
+
+
+async def test_owner_character_view_includes_class_proficiencies_and_languages():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Bree", "character_class": "rogue", "race": "wood_elf"},
+    ))
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert "thieves' tools" in view["class_proficiencies"]["tools"]
+    assert "light armor" in view["class_proficiencies"]["armor"]
+    assert view["languages"] == ["Common", "Elvish"]
+
+
+async def test_owner_character_view_proficiencies_empty_for_blank_class_and_race():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)  # no class, no race
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["class_proficiencies"] == {}
+    assert view["languages"] == []
 
 
 async def test_owner_character_view_handles_a_blank_or_unrecognized_race():

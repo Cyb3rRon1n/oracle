@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field
 
+from . import dice
+
 # The six SRD ability scores, in the SRD's own conventional order - shared
 # by both player CharacterSheets (stats, populated by
 # server/engine.py's build_starting_character) and NPC stat blocks
@@ -103,6 +105,13 @@ class CharacterSheet(BaseModel):
     # Buffer drained before real HP on damage, untouched by healing, no stacking.
     temp_hp: int = 0
     character_class: str = ""
+    # The class hit die, e.g. "d10", set at creation. Blank for a classless
+    # character - short rests fall back to the flat "heal half" stand-in.
+    hit_die: str = ""
+    # 5e hit-dice pool: total == level, spent one at a time on a short rest to
+    # heal (roll + CON), half restored on a long rest.
+    hit_dice_total: int = 1
+    hit_dice_remaining: int = 1
     # Independent of class; blank = no recognized race (no bonus/traits, not an error).
     race: str = ""
     # Walking speed in feet, from the race (default 30). Display-only - Oracle
@@ -135,6 +144,9 @@ class CharacterSheet(BaseModel):
     flaws: str = ""
     xp: int = 0
     level: int = 1
+    # Gold pieces. The DM adjudicates loot/rewards/purchases via gold_delta;
+    # ponytail: one coin type, add cp/sp/pp if a real coin economy shows up.
+    gold: int = 0
     # A stored field, not computed: for a player it's set by _compute_ac
     # (armor + DEX) on creation/equip; for a tracked NPC it's the monster's
     # flat authored value copied from srd.json - two different sources.
@@ -274,32 +286,43 @@ class CharacterSheet(BaseModel):
                 self.death_save_failures = 0
                 changes.append(f"{self.name} drops to 0 HP and begins dying - roll a death save")
 
-        # A real recovery mechanic, closing a gap that's existed since HP
-        # was first tracked: healing had always meant the DM narrating a
-        # positive hp_delta and doing that arithmetic itself - the same
-        # "don't rely on the model to get numbers right when the engine
-        # can just compute them" reasoning ability scores/XP already
-        # follow, applied here. Deliberately simplified from real 5e (no
-        # hit-dice pool, no per-die CON-modifier healing) - a long rest is
-        # a full, unconditional HP restore (real 5e's own actual rule, not
-        # a simplification); a short rest restores half of whatever's
-        # currently missing, a proportional stand-in for "spend some hit
-        # dice" that needs no new resource tracked on the sheet.
-        # Deliberately doesn't touch conditions - unlike HP, most SRD
-        # conditions (poisoned, frightened, ...) don't just expire with
-        # time under the actual rules, so silently clearing them here
-        # would be a real rules error, not a simplification; the DM can
-        # still pair this with an explicit remove_condition in the same
-        # call when the fiction actually calls for it.
+        # The engine computes the heal, not the DM. A long rest is a full HP
+        # restore (real 5e) and gives back half the hit-dice pool. A short rest
+        # spends hit dice one at a time - roll the die + CON, min 0 per die -
+        # until full or the pool is empty; a classless character (no hit_die)
+        # falls back to the old flat "half of what's missing" stand-in.
+        # Deliberately doesn't touch conditions - most SRD conditions don't
+        # expire with time, so clearing them here would be a rules error.
         rest = update.get("rest")
-        if rest == "long" and self.hp < self.max_hp:
-            self.hp = self.max_hp
-            changes.append(f"long rest: HP restored to {self.hp}/{self.max_hp}")
-        elif rest == "short":
-            healed = (self.max_hp - self.hp) // 2
-            if healed > 0:
-                self.hp += healed
-                changes.append(f"short rest: HP +{healed} (now {self.hp}/{self.max_hp})")
+        con_mod = self.stat_modifiers.get("con", 0)
+        if rest == "long":
+            if self.hp < self.max_hp:
+                self.hp = self.max_hp
+                changes.append(f"long rest: HP restored to {self.hp}/{self.max_hp}")
+            regained = min(max(1, self.hit_dice_total // 2), self.hit_dice_total - self.hit_dice_remaining)
+            if regained > 0:
+                self.hit_dice_remaining += regained
+                changes.append(f"long rest: {self.hit_dice_remaining}/{self.hit_dice_total} hit dice")
+        elif rest == "short" and self.hp < self.max_hp:
+            if self.hit_die and self.hit_dice_remaining > 0:
+                spent = healed = 0
+                while self.hit_dice_remaining > 0 and self.hp < self.max_hp:
+                    _, rolls, _ = dice.roll(self.hit_die)
+                    gain = min(max(0, rolls[0] + con_mod), self.max_hp - self.hp)
+                    self.hp += gain
+                    self.hit_dice_remaining -= 1
+                    spent += 1
+                    healed += gain
+                changes.append(
+                    f"short rest: spent {spent} hit {'die' if spent == 1 else 'dice'}, "
+                    f"HP +{healed} (now {self.hp}/{self.max_hp}, "
+                    f"{self.hit_dice_remaining}/{self.hit_dice_total} hit dice)"
+                )
+            else:
+                healed = (self.max_hp - self.hp) // 2
+                if healed > 0:
+                    self.hp += healed
+                    changes.append(f"short rest: HP +{healed} (now {self.hp}/{self.max_hp})")
 
         # Healing above 0 HP - whether from hp_delta or either rest branch
         # above, checked once here rather than duplicated in both - clears
@@ -339,6 +362,12 @@ class CharacterSheet(BaseModel):
         remove_item = update.get("remove_item")
         if remove_item and self.remove_item(remove_item):
             changes.append(f"lost '{remove_item}'")
+
+        gold_delta = update.get("gold_delta")
+        if isinstance(gold_delta, int) and not isinstance(gold_delta, bool) and gold_delta:
+            applied = max(0, self.gold + gold_delta) - self.gold  # can't go below 0
+            self.gold += applied
+            changes.append(f"gold {'+' if applied >= 0 else ''}{applied} (now {self.gold})")
 
         add_condition = update.get("add_condition")
         if add_condition and add_condition not in self.conditions:
