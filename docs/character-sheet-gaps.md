@@ -8,6 +8,12 @@ build list.
 This file is that list — every official-sheet field Oracle has no data for, what the
 paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-first.
 
+**Status (2026-09-06): effectively complete.** Every Trivial / Small / Medium field
+below is shipped (see the "Done" notes and CHANGELOG.md). The one remaining mechanical
+gap is weapon/armor **proficiency gating** — the sheet lists a class's proficiencies but
+nothing enforces them on the attack path (tracked in ROADMAP.md). Page-2 / cosmetic
+fields stay deliberately unmodelled. This doc is now a record, not a to-do list.
+
 ## Trivial (client-only or one server line)
 
 | Field | Paper sheet | Add it |

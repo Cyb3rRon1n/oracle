@@ -18,7 +18,10 @@ swappable narrator backend (Anthropic / Ollama / OpenAI-compatible). The
 engine owns all state and 5e mechanics (HP, AC, XP, initiative, death saves,
 spell slots, conditions, disadvantage). Persistent world/quest state, NPC
 memory, a keyword-triggered lorebook, a rolling campaign summary, a fact
-ledger. A reproducible tool-call reliability harness. Full list: CHANGELOG.md.
+ledger. A between-adventures tavern lobby (roster, chat, ready-check,
+in-tavern rest, an AI tavern-keeper, a quest board) with a real
+adventure → tavern → next-adventure loop (`end_adventure`). A reproducible
+tool-call reliability harness. Full list: CHANGELOG.md.
 
 ## Open
 
@@ -60,11 +63,13 @@ ledger. A reproducible tool-call reliability harness. Full list: CHANGELOG.md.
   the closest OSS sibling (`open-tabletop-gm`) leans on this for cheap
   continuity. Bigger and more speculative than the NPC `notes` field built;
   revisit if `notes` turns out not to be enough in play.
-- **Character-sheet gaps** — `docs/character-sheet-gaps.md` tracks the paper-5e
-  fields Oracle doesn't model yet (hit dice pool, currency, speed, languages,
-  inspiration, alignment) with a cost estimate for each.
 - **Further SRD monster/spell coverage** beyond the batches shipped — real
   content work, not a hard limit.
+- **Weapon/armor proficiency gating** — Oracle lists class proficiencies on
+  the sheet but nothing checks them (an unproficient attack still gets the
+  proficiency bonus). The last real mechanical gap from
+  `docs/character-sheet-gaps.md`; small, needs a prompt/engine tweak to the
+  attack path. Everything else in that doc is shipped.
 
 ## Explicitly not doing
 
