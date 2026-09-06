@@ -27,7 +27,7 @@ paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-firs
 |---|---|---|
 | ~~**Temp HP**~~ | A separate pool absorbed before real HP | **Done.** `CharacterSheet.temp_hp`; `apply_update` drains it before real HP on damage, healing never touches it, a new source takes `max(current, new)` (no stacking). `update_character` gains a `temp_hp` field (Anthropic tool; the Ollama structured schema doesn't cover it — legacy tool-calling path can still send it). |
 | ~~**Speed**~~ | Movement rate in feet | **Done (display-only).** `speed` per race in `srd.json` (30, dwarves 25, wood elf 35), `CharacterSheet.speed: int`, set in `build_starting_character`. No positioning system, so it's a number on the sheet and nothing more. |
-| **Currency (CP/SP/EP/GP/PP)** | Five boxes; loot economy | `CharacterSheet.currency: dict[str,int]`; `update_character` gains `gold_delta` (or per-coin); DM system prompt gains "award/deduct coin when the fiction calls for it". Also wants a shop/price concept to be worth much. |
+| ~~**Currency**~~ | Five boxes; loot economy | **Done (gold only).** `CharacterSheet.gold: int`; DM-only `update_character` `gold_delta`, clamped at 0. CP/SP/EP/PP deliberately not modeled — `ponytail:` one coin type until a real coin economy shows up. See `docs/protocol.md` "Currency". |
 
 ## Medium (model + engine + SRD data + DM prompt work)
 
@@ -35,7 +35,7 @@ paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-firs
 |---|---|---|
 | ~~**Personality Traits / Ideals / Bonds / Flaws**~~ | Four short RP fields | **Done.** Four `str` fields on `CharacterSheet`, seeded from `origins.json` at creation, player-editable via `character_edit`, fed to the DM through `character_summary`. The Inspiration reward for playing to them is wired up (see below). |
 | ~~**Attacks & Spellcasting table**~~ | Per-attack: name, to-hit bonus, damage + type | **Done.** `_owner_character_view` → `attacks: [{name, kind, to_hit, damage}]` — the equipped weapon (DEX for ranged, best of STR/DEX for finesse, else STR; magic bonus folded in; proficiency assumed) plus every attack-shaped known spell. Not covered: weapon-proficiency gating (Oracle tracks none — see below), cantrip damage scaling by level. |
-| **Proficiencies & Languages** | Armor/weapon/tool proficiencies; spoken languages | `class.proficiencies` and `race.languages` into `srd.json`; surface in `_owner_character_view`. Display-only unless a proficiency actually gates something. |
+| ~~**Proficiencies & Languages**~~ | Armor/weapon/tool proficiencies; spoken languages | **Done (display-only).** `class.proficiencies` (armor/weapons/tools) and `race.languages` in `srd.json`; `_owner_character_view` sends `class_proficiencies` + `languages`; the overlay lists them. Nothing gates on them yet. |
 | ~~**Hit Dice pool**~~ | `Nd<hit die>`, spent on a short rest, restored on a long rest | **Done.** `CharacterSheet.hit_die` / `hit_dice_total` (= level) / `hit_dice_remaining`. Short rest spends dice (roll + CON) until full or empty; long rest gives back half. Classless falls back to the old "half missing" stand-in. See `docs/protocol.md` "Rest and recovery". |
 
 ## Page 2 / cosmetic (probably just use Notes)

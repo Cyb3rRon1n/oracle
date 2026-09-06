@@ -69,8 +69,8 @@ You have five tools available:
   class features, equipment, conditions) so numbers stay consistent from turn to turn.
 - update_character: call this whenever your narration describes something that should
   mechanically change the acting character OR a named NPC/monster — damage, healing,
-  gaining or losing an item, or applying/clearing a condition. Narration alone doesn't
-  change a sheet; this tool does. Omit target (or use 'self') for the acting character;
+  gaining or losing an item or gold, or applying/clearing a condition. Narration alone
+  doesn't change a sheet; this tool does. Omit target (or use 'self') for the acting character;
   pass an NPC's name as target to introduce or update its own tracked sheet, so its
   wounds and conditions persist turn to turn instead of being forgotten. Call it after
   you've decided the outcome (including after a request_roll result, if one was needed),
@@ -134,7 +134,7 @@ UPDATE_CHARACTER_TOOL = {
     "name": "update_character",
     "description": (
         "Apply a mechanical change to a sheet as a result of narrated events — "
-        "damage, healing, gaining or losing an item, or a new or cleared condition. "
+        "damage, healing, gaining or losing an item or gold, or a new or cleared condition. "
         "All fields are optional; include only what actually changed. Omit target "
         "(or use 'self') for the acting character. For an NPC or monster, pass its "
         "name as target instead: the first call for a given name creates a tracked "
@@ -200,6 +200,14 @@ UPDATE_CHARACTER_TOOL = {
             "remove_item": {
                 "type": "string",
                 "description": "Item name to remove from inventory, if present.",
+            },
+            "gold_delta": {
+                "type": "integer",
+                "description": (
+                    "Change the acting character's gold: positive for loot, a reward, or a "
+                    "sale; negative for a purchase or a bribe. The engine clamps at 0 (you "
+                    "can't spend what you don't have). Self only."
+                ),
             },
             "add_condition": {
                 "type": "string",

@@ -144,6 +144,9 @@ class CharacterSheet(BaseModel):
     flaws: str = ""
     xp: int = 0
     level: int = 1
+    # Gold pieces. The DM adjudicates loot/rewards/purchases via gold_delta;
+    # ponytail: one coin type, add cp/sp/pp if a real coin economy shows up.
+    gold: int = 0
     # A stored field, not computed: for a player it's set by _compute_ac
     # (armor + DEX) on creation/equip; for a tracked NPC it's the monster's
     # flat authored value copied from srd.json - two different sources.
@@ -359,6 +362,12 @@ class CharacterSheet(BaseModel):
         remove_item = update.get("remove_item")
         if remove_item and self.remove_item(remove_item):
             changes.append(f"lost '{remove_item}'")
+
+        gold_delta = update.get("gold_delta")
+        if isinstance(gold_delta, int) and not isinstance(gold_delta, bool) and gold_delta:
+            applied = max(0, self.gold + gold_delta) - self.gold  # can't go below 0
+            self.gold += applied
+            changes.append(f"gold {'+' if applied >= 0 else ''}{applied} (now {self.gold})")
 
         add_condition = update.get("add_condition")
         if add_condition and add_condition not in self.conditions:

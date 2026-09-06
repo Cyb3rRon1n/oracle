@@ -811,6 +811,7 @@
           "Extra Attack Improvement: Your Extra Attack now lets you attack four times instead of three."
         ]
       },
+      "proficiencies": {"armor": ["all armor", "shields"], "weapons": ["simple", "martial"], "tools": []},
       "saving_throws": "Strength, Constitution"
     },
     "wizard": {
@@ -828,6 +829,7 @@
           "Signature Spells: Choose two 3rd-level wizard spells you know; you can cast each once without expending a spell slot, regaining the use after a long rest."
         ]
       },
+      "proficiencies": {"armor": [], "weapons": ["daggers", "darts", "slings", "quarterstaffs", "light crossbows"], "tools": []},
       "saving_throws": "Intelligence, Wisdom"
     },
     "rogue": {
@@ -864,6 +866,7 @@
           "Stroke of Luck: Once per long rest, turn a miss into a hit, or treat an ability check failure as a roll of 20."
         ]
       },
+      "proficiencies": {"armor": ["light armor"], "weapons": ["simple", "hand crossbows", "longswords", "rapiers", "shortswords"], "tools": ["thieves' tools"]},
       "saving_throws": "Dexterity, Intelligence"
     },
     "cleric": {
@@ -906,6 +909,7 @@
           "Divine Intervention Improvement: Your calls for Divine Intervention succeed automatically, no roll required."
         ]
       },
+      "proficiencies": {"armor": ["light armor", "medium armor", "shields"], "weapons": ["simple"], "tools": []},
       "saving_throws": "Wisdom, Charisma"
     }
   },
@@ -914,6 +918,7 @@
       "name": "Human",
       "ability_score_increase": {"str": 1, "dex": 1, "con": 1, "int": 1, "wis": 1, "cha": 1},
       "speed": 30,
+      "languages": ["Common", "one extra language of your choice"],
       "traits": [
         "Versatile: humans have no single defining trait - just a well-rounded aptitude across every ability."
       ]
@@ -922,6 +927,7 @@
       "name": "Elf",
       "ability_score_increase": {"dex": 2},
       "speed": 30,
+      "languages": ["Common", "Elvish"],
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Keen Senses: you have proficiency in the Perception skill.",
@@ -933,6 +939,7 @@
       "name": "Dwarf",
       "ability_score_increase": {"con": 2},
       "speed": 25,
+      "languages": ["Common", "Dwarvish"],
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Dwarven Resilience: you have advantage on saving throws against poison, and resistance against poison damage.",
@@ -943,6 +950,7 @@
       "name": "Halfling",
       "ability_score_increase": {"dex": 2},
       "speed": 30,
+      "languages": ["Common", "Halfling"],
       "traits": [
         "Lucky: when you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
         "Brave: you have advantage on saving throws against being frightened.",
@@ -953,6 +961,7 @@
       "name": "High Elf",
       "ability_score_increase": {"dex": 2, "int": 1},
       "speed": 30,
+      "languages": ["Common", "Elvish", "one extra language of your choice"],
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Keen Senses: you have proficiency in the Perception skill.",
@@ -967,6 +976,7 @@
       "name": "Wood Elf",
       "ability_score_increase": {"dex": 2, "wis": 1},
       "speed": 35,
+      "languages": ["Common", "Elvish"],
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Keen Senses: you have proficiency in the Perception skill.",
@@ -981,6 +991,7 @@
       "name": "Hill Dwarf",
       "ability_score_increase": {"con": 2, "wis": 1},
       "speed": 25,
+      "languages": ["Common", "Dwarvish"],
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Dwarven Resilience: you have advantage on saving throws against poison, and resistance against poison damage.",
@@ -992,6 +1003,7 @@
       "name": "Mountain Dwarf",
       "ability_score_increase": {"con": 2, "str": 2},
       "speed": 25,
+      "languages": ["Common", "Dwarvish"],
       "traits": [
         "Darkvision: you can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light.",
         "Dwarven Resilience: you have advantage on saving throws against poison, and resistance against poison damage.",
@@ -1003,6 +1015,7 @@
       "name": "Lightfoot Halfling",
       "ability_score_increase": {"dex": 2, "cha": 1},
       "speed": 30,
+      "languages": ["Common", "Halfling"],
       "traits": [
         "Lucky: when you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
         "Brave: you have advantage on saving throws against being frightened.",
@@ -1014,6 +1027,7 @@
       "name": "Stout Halfling",
       "ability_score_increase": {"dex": 2, "con": 1},
       "speed": 30,
+      "languages": ["Common", "Halfling"],
       "traits": [
         "Lucky: when you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
         "Brave: you have advantage on saving throws against being frightened.",
