@@ -251,6 +251,7 @@ def test_build_starting_character_gives_a_real_class_kit(
     assert [item.name for item in sheet.inventory] == expected_inventory
     assert all(item.quantity == 1 and item.magic_bonus == 0 for item in sheet.inventory)
     assert sheet.character_class  # the SRD's display name, e.g. "Fighter"
+    assert sheet.hit_die.startswith("d") and sheet.hit_dice_total == 1 and sheet.hit_dice_remaining == 1
     assert sheet.stats == expected_stats
     assert sheet.stat_modifiers["con"] == 2  # (14 - 10) // 2
     assert sheet.ac == expected_ac
@@ -379,6 +380,24 @@ def test_build_starting_character_falls_back_on_blank_or_unknown_race(race):
 
     assert sheet.race == ""
     assert sheet.stats["con"] == 14  # unchanged from the plain-fighter baseline
+
+
+@pytest.mark.parametrize(
+    ("race", "expected_speed"),
+    [("human", 30), ("dwarf", 25), ("wood_elf", 35), ("", 30), ("not-a-real-race", 30)],
+)
+def test_build_starting_character_sets_speed_from_race(race, expected_speed):
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules, race=race)
+    assert sheet.speed == expected_speed
+
+
+def test_owner_character_view_sends_xp_thresholds_bracketing_the_level():
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules)
+    view = _owner_character_view(sheet, rules)
+    assert view["xp_level_start"] == 0  # level 1
+    assert view["xp_next_level"] == 300  # level 2 threshold
 
 
 def test_build_starting_character_records_race_independent_of_class():
@@ -1344,6 +1363,9 @@ async def test_level_up_grows_hp_by_class_hit_die_and_broadcasts_level_up():
     assert character.level == 2
     assert character.max_hp == 34  # 22 + 12 (fighter's d10 max + CON mod) per level
     assert character.hp == 34
+    assert character.hit_die == "d10"
+    assert character.hit_dice_total == 2  # tracks level
+    assert character.hit_dice_remaining == 2  # the new die arrives unspent
 
     level_ups = [
         r for r in received
@@ -1740,6 +1762,28 @@ async def test_owner_character_view_includes_subrace_traits_combined_with_base_r
     traits_text = " ".join(view["racial_traits"])
     assert "Fey Ancestry" in traits_text  # base elf trait
     assert "Cantrip" in traits_text  # high elf's own subrace trait
+
+
+async def test_owner_character_view_includes_class_proficiencies_and_languages():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Bree", "character_class": "rogue", "race": "wood_elf"},
+    ))
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert "thieves' tools" in view["class_proficiencies"]["tools"]
+    assert "light armor" in view["class_proficiencies"]["armor"]
+    assert view["languages"] == ["Common", "Elvish"]
+
+
+async def test_owner_character_view_proficiencies_empty_for_blank_class_and_race():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)  # no class, no race
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["class_proficiencies"] == {}
+    assert view["languages"] == []
 
 
 async def test_owner_character_view_handles_a_blank_or_unrecognized_race():
@@ -2296,6 +2340,53 @@ async def test_dm_requested_roll_matches_conditions_case_insensitively():
 
     results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
     assert results[-1][2]["disadvantage"] is True
+
+
+async def test_armed_inspiration_gives_advantage_on_the_next_roll_and_is_spent():
+    dm = RequestRollDM({"dice": "1d20", "dc": 10, "reason": "leap the chasm"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inspiration = True
+    await engine.handle(Envelope(
+        type="use_inspiration", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    with patch("server.dice.random.randint", side_effect=[6, 17]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I run and jump"},
+        ))
+
+    payload = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"][-1][2]
+    assert payload["advantage"] is True and payload["inspiration"] is True
+    assert payload["rolls"] == [6, 17]
+    assert payload["result"] == 17  # kept the higher roll
+    assert session.characters[player_id].inspiration is False  # token spent
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "advantage: Inspiration" in dice_logs[-1][2]["text"]
+
+
+async def test_held_but_unarmed_inspiration_does_not_affect_the_roll():
+    dm = RequestRollDM({"dice": "1d20", "reason": "ordinary check"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inspiration = True  # held, but never armed
+
+    with patch("server.dice.random.randint", side_effect=[11]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I look around"},
+        ))
+
+    payload = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"][-1][2]
+    assert "advantage" not in payload
+    assert session.characters[player_id].inspiration is True  # not spent
 
 
 async def test_dm_requested_roll_multiple_disadvantage_conditions_still_only_apply_once():
@@ -4986,6 +5077,7 @@ async def test_character_edit_sets_rp_fields_privately():
         ("ideals", "no one gets left behind"),
         ("bonds", "the sister I never told I was leaving"),
         ("flaws", "I'd rather be right than kind"),
+        ("alignment", "Chaotic Good"),
     ]:
         await engine.handle(Envelope(
             type="character_edit", session_id="test-session", sender_id=player_id,
@@ -5015,6 +5107,18 @@ async def test_update_character_never_sets_personality():
     result = sheet.apply_update({"personality": "reckless"})
     assert sheet.personality == "cautious"
     assert result.startswith("No changes applied")
+
+
+async def test_apply_update_grants_inspiration_once_and_never_clears_it():
+    from server.state import CharacterSheet
+
+    sheet = CharacterSheet(player_id="p", name="x", hp=10, max_hp=10)
+    assert "Inspiration" in sheet.apply_update({"inspiration": True})
+    assert sheet.inspiration is True
+    # A second grant is a no-op; the DM can't clear it with inspiration: false.
+    assert sheet.apply_update({"inspiration": True}).startswith("No changes applied")
+    assert sheet.apply_update({"inspiration": False}).startswith("No changes applied")
+    assert sheet.inspiration is True
 
 
 async def test_character_edit_add_item_appends_to_inventory():

@@ -6,44 +6,56 @@ import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from pydantic import ValidationError
-
 from shared.protocol import Envelope
 
 from . import dice
+from .character_build import (
+    CLASS_SAVING_THROW_PROFICIENCIES,
+    CLASS_SKILL_PROFICIENCIES,
+    _apply_ability_score_improvements,
+    _asi_announcement,
+    _character_from_import,
+    _hit_die_max,
+    build_starting_character,
+)
 from .lore import (
     OriginTable,
     WorldBible,
     load_default_origin_table,
     load_default_world_bible,
-    random_origin,
 )
 from .lorebook import MAX_LORE_CHARS, SUPPORTED_SUFFIXES, Lorebook
 from .narrator import NarratorBackend
 from .persistence import SessionStore
-from .rules import RulesIndex, slug
+from .rolls import (
+    DEFAULT_NPC_HP,
+    DEFAULT_NPC_XP,  # noqa: F401 - re-exported for tests
+    _cast_spell,
+    _compute_ac,
+    _dice_roll_tags,
+    _has_disadvantage,
+    _xp_for_npc,
+)
+from .rules import RulesIndex
 from .state import (
-    ABILITY_KEYS,
     SKILL_ABILITIES,
     SPELLCASTING_ABILITY,
     CharacterSheet,
-    InventoryItem,
     Session,
     ability_modifier,
+)
+from .views import (
+    _attack_lines,  # noqa: F401 - re-exported for tests
+    _npc_roster,
+    _outcome_category,
+    _owner_character_view,
+    _public_character_view,
 )
 
 logger = logging.getLogger(__name__)
 
 Broadcast = Callable[[Envelope], Awaitable[None]]
 SendTo = Callable[[str, Envelope], Awaitable[None]]
-
-# NPC introduced without a real max_hp from lookup_rule - a CR-1/4 mook's
-# HP, a trivial fight rather than a 100-HP sponge.
-DEFAULT_NPC_HP = 10
-
-# Added once to level-1 HP (on top of hit-die max + CON), level-1 only -
-# combat stays lethal-if-careless without being one-crit-fatal at low HP.
-STARTING_HP_CUSHION = 10
 
 # Resolved turns between campaign-summary rebuilds (window holds ~6).
 CAMPAIGN_SUMMARY_INTERVAL = 10
@@ -53,78 +65,15 @@ CAMPAIGN_SUMMARY_INTERVAL = 10
 LEDGER_RECENT_LIMIT = 12
 LEDGER_RELEVANT_LIMIT = 8
 
-# XP for an NPC with no known-monster CR and no explicit "xp" override
-# (CR 1/4's SRD value - see _xp_for_npc).
-DEFAULT_NPC_XP = 50
-
-# Conditions that impose disadvantage on the bearer's OWN rolls. Subset of
-# the five tracked: grappled (movement-only, no movement system) and
-# stunned (target-side/turn-blocking, not modeled) are deliberately out.
-DISADVANTAGE_CONDITIONS = frozenset({"poisoned", "frightened", "prone"})
-
-# Per-condition roll_kind narrowing, per SRD text: poisoned/frightened hit
-# attacks + checks but not saves; prone hits only attacks. Only applies
-# when roll_kind is given (request_roll, Anthropic); an omitted roll_kind
-# keeps the broader "any roll" behavior.
-ROLL_KIND_DISADVANTAGE_EXCLUSIONS: dict[str, frozenset[str]] = {
-    "poisoned": frozenset({"save"}),
-    "frightened": frozenset({"save"}),
-    "prone": frozenset({"save", "check"}),
-}
-
 # What a player may set on their own sheet via character_edit: pure
 # fiction/bookkeeping only. hp/conditions/stats/xp stay DM- or engine-only.
 # equip/unequip change AC as a side effect but the player only names an
 # owned item, never a number (_compute_ac does the rest). The DM reads the
 # RP text fields via character_summary but never writes them.
-CHARACTER_EDIT_TEXT_FIELDS = frozenset({"notes", "personality", "ideals", "bonds", "flaws"})
+CHARACTER_EDIT_TEXT_FIELDS = frozenset({"notes", "personality", "ideals", "bonds", "flaws", "alignment"})
 CHARACTER_EDIT_FIELDS = CHARACTER_EDIT_TEXT_FIELDS | frozenset(
     {"add_item", "remove_item", "equip", "unequip"}
 )
-
-
-def _has_disadvantage(character: CharacterSheet, roll_kind: str | None = None) -> list[str]:
-    """Which of the character's conditions trigger disadvantage (empty if
-    none). A list, not a bool, so callers can name the reason in the roll
-    text; disadvantage never stacks, so `bool(...)` is all that matters
-    mechanically. roll_kind ("attack"/"save"/"check") narrows the result
-    via ROLL_KIND_DISADVANTAGE_EXCLUSIONS when given."""
-    reasons = []
-    for c in character.conditions:
-        key = c.casefold()
-        if key not in DISADVANTAGE_CONDITIONS:
-            continue
-        if roll_kind is not None and roll_kind in ROLL_KIND_DISADVANTAGE_EXCLUSIONS.get(key, frozenset()):
-            continue
-        reasons.append(c)
-    return reasons
-
-
-# Per-class starting kit. A fixed subset, not a full 5e chargen (no
-# player-chosen equipment/stats yet).
-CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
-    "fighter": ["Longsword", "Leather Armor"],
-    "rogue": ["Shortbow", "Leather Armor"],
-    "cleric": ["Leather Armor", "Potion of Healing"],
-    "wizard": ["Potion of Healing"],
-}
-
-# Fixed per-class known spells, assigned once at creation (no daily
-# preparation modeled). A spell above the character's current slot level
-# is still "known", just not castable - the cast-time slot check is the
-# only gate. Fighter/rogue: no entry, cast nothing.
-CLASS_KNOWN_SPELLS: dict[str, list[str]] = {
-    "wizard": [
-        "fire_bolt", "ray_of_frost", "magic_missile", "mage_armor", "shield", "fireball",
-        "burning_hands", "misty_step", "sleep", "charm_person", "thunderwave",
-        "hold_person", "web", "fly",
-    ],
-    "cleric": [
-        "sacred_flame", "guidance", "cure_wounds", "bless", "healing_word", "spiritual_weapon",
-        "inflict_wounds", "shield_of_faith", "guiding_bolt", "hold_person", "lesser_restoration",
-        "revivify",
-    ],
-}
 
 # Session-zero tone choice, prepended to every turn's action_text while
 # active (per-session, so it can't live in the shared system prompt).
@@ -139,93 +88,6 @@ CONTENT_PREFERENCE_HINTS = {
         "welcome here, described with real weight rather than softened."
     ),
 }
-
-# The SRD Standard Array.
-STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
-
-# Order in which the Standard Array is assigned to abilities, per class.
-# Hand-written: primary stat first, CON second (survival), the rest by
-# archetype. NOT the same as real saving-throw proficiency - that has its
-# own table (CLASS_SAVING_THROW_PROFICIENCIES). Blank class: no entry, no
-# stats.
-CLASS_ABILITY_PRIORITY: dict[str, tuple[str, ...]] = {
-    "fighter": ("str", "con", "dex", "wis", "cha", "int"),
-    "wizard": ("int", "con", "dex", "wis", "cha", "str"),
-    "rogue": ("dex", "con", "int", "wis", "cha", "str"),
-    "cleric": ("wis", "con", "str", "dex", "cha", "int"),
-}
-
-# Fixed per-class skill proficiencies (no player choice modeled). Blank
-# class: proficient in nothing.
-CLASS_SKILL_PROFICIENCIES: dict[str, tuple[str, ...]] = {
-    "fighter": ("athletics", "perception"),
-    "wizard": ("arcana", "investigation"),
-    "rogue": ("stealth", "sleight_of_hand", "perception", "deception"),
-    "cleric": ("insight", "religion"),
-}
-
-# The SRD's two proficient saving-throw abilities per class. Proficiency
-# bonus applies to a save only when its ability is one of these. Blank
-# class: no proficient saves.
-CLASS_SAVING_THROW_PROFICIENCIES: dict[str, tuple[str, str]] = {
-    "fighter": ("str", "con"),
-    "wizard": ("int", "wis"),
-    "rogue": ("dex", "int"),
-    "cleric": ("wis", "cha"),
-}
-
-# SRD baseline ASI levels (no subclass extras).
-ASI_LEVELS = frozenset({4, 8, 12, 16, 19})
-
-
-def _apply_ability_score_improvements(
-    character: CharacterSheet, old_level: int, new_level: int
-) -> list[str]:
-    """Applies a real ASI (+2 to one ability, capped at 20 - real 5e's own
-    hard ceiling) for every ASI level actually crossed between old_level
-    (exclusive) and new_level (inclusive) - a loop, not a single check,
-    the same "one big XP award can cross more than one threshold" reasoning
-    CharacterSheet.gain_xp()'s own level-up loop already follows for HP.
-
-    Deterministic, not a player choice - real 5e's other ASI option
-    (a feat instead) isn't modeled either, since Oracle has no feat system
-    at all. Always targets the class's own top CLASS_ABILITY_PRIORITY
-    entry, the same "no player-chosen allocation yet" approach
-    _generate_stats already uses for the initial array - falls through to
-    the next-priority ability if the top one is already capped, rather
-    than wasting a real improvement outright silently. Returns the ability
-    key(s) actually improved, in order (empty if no ASI level was crossed,
-    or a blank/unrecognized class has no priority order to draw from)."""
-    priority = CLASS_ABILITY_PRIORITY.get(character.character_class.strip().lower(), ())
-    if not priority or not character.stats:
-        return []
-    improved: list[str] = []
-    for level in range(old_level + 1, new_level + 1):
-        if level not in ASI_LEVELS:
-            continue
-        for ability in priority:
-            if character.stats.get(ability, 0) < 20:
-                character.stats[ability] = min(20, character.stats[ability] + 2)
-                improved.append(ability)
-                break
-    return improved
-
-
-def _asi_announcement(name: str, asi_abilities: list[str]) -> str:
-    """Builds the "X's STR increases!" (or "STR and CON increase!") text
-    shared by apply_update's own tool_result and the real player-facing
-    system_message broadcast, so the two can't drift apart. Deduplicates
-    first - crossing two ASI levels in one large XP award (rare, but
-    possible) can improve the same ability twice; a real, deliberately
-    small simplification, this doesn't spell out "STR increases by 4"
-    for that case, just names the ability once - the sheet's own real
-    number is the actual source of truth, this is a narrative nudge."""
-    if not asi_abilities:
-        return ""
-    unique = list(dict.fromkeys(asi_abilities))
-    labels = " and ".join(a.upper() for a in unique)
-    verb = "increases" if len(unique) == 1 else "increase"
-    return f" {name}'s {labels} {verb}!"
 
 
 def _party_xp_announcement(npc_name: str, xp_award: int, party_results: list[tuple]) -> str:
@@ -250,572 +112,6 @@ def _party_xp_announcement(npc_name: str, xp_award: int, party_results: list[tup
         text += _asi_announcement(member.name, asi_abilities)
     return text
 
-
-def _cast_spell(character: CharacterSheet, spell_name: str, rules: RulesIndex) -> tuple[str, bool]:
-    """Applies update_character's new cast_spell field - deterministic
-    slot bookkeeping (real 5e's own resource), not something the DM has
-    to compute or track itself. Returns (message, changed) - changed is
-    False whenever nothing was actually spent (an unknown spell, one this
-    character doesn't know, or no slot left), the same "only broadcast on
-    a real change" rule every other sheet mutation here already follows.
-
-    Only ever touches known_spells/spell_slots - never validates or
-    resolves a spell's actual in-fiction effect (damage, healing,
-    conditions), the same "the engine resolves real data, doesn't model
-    every unique effect" scope weapon/skill already keep. The DM still
-    narrates the effect and, if one is warranted, applies it through this
-    same update_character call's other fields (hp_delta, add_condition,
-    ...) or a following request_roll - cast_spell only ever answers "was
-    a real slot spent."""
-    entry = rules.get_entry("spell", spell_name)
-    if entry is None:
-        return f"no known spell '{spell_name}'.", False
-
-    spell_slug = slug(entry["name"])
-    if spell_slug not in character.known_spells:
-        return f"{character.name} doesn't know {entry['name']}.", False
-
-    spell_level = entry.get("level", 0)
-    if spell_level == 0:
-        # A cantrip - unlimited use, real 5e's own rule, no slot to spend.
-        return f"casts {entry['name']} (cantrip).", False
-
-    slot_key = str(spell_level)
-    if character.spell_slots.get(slot_key, 0) <= 0:
-        return f"no level {spell_level} spell slots remaining - can't cast {entry['name']}.", False
-
-    character.spell_slots[slot_key] -= 1
-    remaining = character.spell_slots[slot_key]
-    return f"casts {entry['name']} (level {spell_level} slot, {remaining} remaining).", True
-
-
-def _generate_stats(character_class: str, stat_priority: tuple[str, ...] | None = None) -> dict[str, int]:
-    """Assigns the SRD's real Standard Array to an ability priority order -
-    deterministic (the same inputs always produce the same array), matching
-    this project's existing "no ability-score system should depend on
-    chance" stance nowhere written down but implied by every other
-    deterministic mechanic here (XP awards, level-1 HP).
-
-    stat_priority, when given, is a player's own explicit override (welcome-
-    screen join payload's "stat_priority" - see _on_join_session) - the
-    "broader stats survey" the original brainstorm asked for, beyond just a
-    recommended class: a player who wants a str-primary rogue instead of
-    the class's own dex-primary default can now say so directly. Falls back
-    to the class's own CLASS_ABILITY_PRIORITY when absent or invalid (not
-    exactly the 6 real ability keys, each exactly once) - the same graceful-
-    miss convention every other name-based field in this file already
-    follows, rather than a ValidationError on a malformed payload."""
-    if stat_priority is not None and set(stat_priority) == set(ABILITY_KEYS) and len(stat_priority) == len(ABILITY_KEYS):
-        priority = stat_priority
-    else:
-        priority = CLASS_ABILITY_PRIORITY.get(character_class.strip().lower())
-    if priority is None:
-        return {}
-    return dict(zip(priority, STANDARD_ARRAY))
-
-
-def _apply_race_bonus(stats: dict[str, int], race_entry: dict | None) -> dict[str, int]:
-    """Applies a race's real ability_score_increase (server/rules/srd.json,
-    e.g. dwarf's +2 con) additively on top of the class-priority Standard
-    Array assignment above - real 5e stacks a racial bonus on whatever base
-    array a class/priority produced, it never replaces or reorders it. A
-    no-op when stats is empty (a blank/unrecognized class - see
-    build_starting_character, which never has stats to add a bonus onto)
-    or race_entry is None (blank/unrecognized race), the same graceful-miss
-    convention every other name-based SRD lookup here already follows."""
-    if not stats or not race_entry:
-        return stats
-    bonus = race_entry.get("ability_score_increase") or {}
-    return {key: value + bonus.get(key, 0) for key, value in stats.items()}
-
-
-def _parse_armor_ac(ac_text: str) -> tuple[int, int | None, bool]:
-    """Parses a real SRD armor entry's own `ac` field into
-    (base, dex_cap, heavy). Real 5e has three distinct shapes, all present
-    in srd.json's expanded equipment table (the "Structured Equipment"
-    entry, ROADMAP.md, first only had light armor - this handles all
-    three now):
-      - Light armor: "11 + Dex modifier" - the full, uncapped Dex modifier
-        applies, positive or negative. dex_cap is None, heavy is False.
-      - Medium armor: "14 + Dex modifier (max 2)" - dex_cap is the real
-        integer cap (2). Real 5e RAW only caps the *positive* side - a
-        negative Dex modifier still applies in full, it isn't further
-        capped at 0 - so the caller must clamp with min(), not treat this
-        as a hard floor.
-      - Heavy armor: a bare number with no "Dex modifier" text at all
-        (e.g. "18") - heavy is True, meaning Dex contributes exactly 0
-        regardless of sign. This needs its own boolean, not a dex_cap of
-        0 - min(dex_modifier, 0) would still apply a *negative* modifier
-        as a penalty, which isn't how heavy armor actually works.
-    `None` base for anything this can't parse - the same graceful-fallback
-    signal `_compute_ac` already treats as "not real armor data"."""
-    base_match = re.match(r"(\d+)", ac_text)
-    if not base_match:
-        return 10, None, False
-    base = int(base_match.group(1))
-    if "Dex modifier" not in ac_text:
-        return base, None, True
-    cap_match = re.search(r"max\s*(\d+)", ac_text)
-    return base, (int(cap_match.group(1)) if cap_match else None), False
-
-
-def _compute_ac(
-    equipped_armor: str | None,
-    dex_modifier: int,
-    rules: RulesIndex,
-    equipped_shield: str | None = None,
-    armor_magic_bonus: int = 0,
-    shield_magic_bonus: int = 0,
-) -> int:
-    """Real 5e's own formula: 10 (unarmored) + DEX modifier, or the
-    specific equipped armor's own base AC + a real DEX contribution that
-    depends on the armor's own weight class (see _parse_armor_ac: none
-    capped for light, capped at a real max for medium, none at all for
-    heavy) - plus a shield's own flat `ac_bonus` (server/rules/srd.json),
-    additive on top of that base+Dex result rather than a replacement
-    value the way equipped_armor's own `ac` field is. Takes single
-    equipped_* names, not the whole inventory - only what a character
-    actually has equipped affects AC, not everything they're carrying.
-    Unrecognized/blank equipped_armor/equipped_shield falls back to no
-    contribution, the same graceful-miss convention every other
-    name-based SRD lookup here already follows.
-
-    armor_magic_bonus/shield_magic_bonus are each equipped item's own
-    real InventoryItem.magic_bonus (server/state.py, the structured-items
-    feature) - callers resolve these from the acting character's own
-    inventory (CharacterSheet.find_item) before calling, since this
-    function only ever sees names, not the character. Additive on top of
-    the SRD base stats the same way a shield's ac_bonus already is - a
-    +1 suit of armor is still whatever armor it is, plus 1."""
-    base = 10
-    dex_cap: int | None = None
-    heavy = False
-    if equipped_armor:
-        entry = rules.get_entry("equipment", equipped_armor)
-        ac_text = entry.get("ac") if entry is not None else None
-        if ac_text:
-            base, dex_cap, heavy = _parse_armor_ac(ac_text)
-    if heavy:
-        effective_dex = 0
-    elif dex_cap is None:
-        effective_dex = dex_modifier
-    else:
-        effective_dex = min(dex_modifier, dex_cap)
-    shield_bonus = 0
-    if equipped_shield:
-        shield_entry = rules.get_entry("equipment", equipped_shield)
-        if shield_entry is not None:
-            shield_bonus = shield_entry.get("ac_bonus") or 0
-    return base + effective_dex + armor_magic_bonus + shield_bonus + shield_magic_bonus
-
-
-def _auto_equip_starting_gear(
-    inventory: list[InventoryItem], rules: RulesIndex
-) -> tuple[str | None, str | None, str | None]:
-    """Picks the first weapon-like, armor-like, and shield-like item out of
-    a fresh character's starting inventory (CLASS_STARTING_EQUIPMENT) to
-    equip automatically - real tabletop chargen starts you already
-    wielding/wearing your starting gear, not carrying it unequipped until
-    a player remembers to run /equip. A weapon is any SRD equipment entry
-    with a `damage` field, armor any entry with an `ac` field, a shield any
-    entry with an `ac_bonus` field - the same distinction _parse_armor_ac/
-    _compute_ac already draw for AC, generalized to also recognize weapons
-    rather than hardcoding "the second item is armor". No current class
-    starts with a shield (CLASS_STARTING_EQUIPMENT), so this is untested
-    by real starting-kit data yet - included for the same completeness
-    reason weapon/armor detection isn't hardcoded to "exactly 2 items"."""
-    weapon: str | None = None
-    armor: str | None = None
-    shield: str | None = None
-    for item in inventory:
-        entry = rules.get_entry("equipment", item.name)
-        if entry is None:
-            continue
-        if weapon is None and entry.get("damage"):
-            weapon = item.name
-        elif armor is None and entry.get("ac"):
-            armor = item.name
-        elif shield is None and entry.get("ac_bonus"):
-            shield = item.name
-    return weapon, armor, shield
-
-
-def _public_character_view(character: CharacterSheet) -> dict:
-    """The subset of a player character's sheet visible to *other* players -
-    name, class, HP, and conditions, but never inventory/stats/notes. Backs
-    every other-player-facing broadcast (player_joined, player_update, and
-    a non-owning recipient's own entry in state_sync's characters dict) so
-    there's exactly one place defining what's public - matches the same
-    "others shouldn't see your inventory" boundary character_update's
-    owner-only routing already established (docs/protocol.md)."""
-    return {
-        "player_id": character.player_id,
-        "name": character.name,
-        "character_class": character.character_class,
-        # Public like name/class, not private like inventory/stats/notes.
-        "race": character.race,
-        "hp": character.hp,
-        "max_hp": character.max_hp,
-        "ac": character.ac,
-        "conditions": list(character.conditions),
-        # dying/dead are urgent public facts; raw death_save counts stay
-        # owner-only (full model_dump() below).
-        "dying": character.dying,
-        "dead": character.dead,
-        # level is public, xp stays owner-only.
-        "level": character.level,
-    }
-
-
-def _class_features_for(class_entry: dict | None, level: int) -> list[str]:
-    """Every class feature earned through `level`: level_1_features plus each
-    features_by_level entry, accumulated. Derived from (class, level) on every
-    view build, not stored. ASI-only / subclass-only levels have no srd.json
-    entry (ASI math is applied separately; subclasses are out of scope)."""
-    if class_entry is None:
-        return []
-    feats = list(class_entry.get("level_1_features", []))
-    by_level = class_entry.get("features_by_level", {})
-    for lvl in range(2, level + 1):
-        feats.extend(by_level.get(str(lvl), []))
-    return feats
-
-
-NPC_NOTES_CONTEXT_MAX_CHARS = 80
-
-
-def _npc_roster(session: Session) -> str:
-    """One bounded line per living tracked NPC, appended to the DM's
-    world_summary so dispositions/notes/wounds stay visible even after the
-    NPC has scrolled out of the rolling history window - the structured
-    subset of ROADMAP.md item 1's memory blind spot, cheap because it's
-    real data rather than prose needing a summary. Without this,
-    `disposition`'s own stated purpose ("stay consistent against turn to
-    turn") only ever worked while the NPC was still in recent history.
-    Dead NPCs are excluded - gone from active play. "" when there's
-    nothing living to report, the same "don't render the absent default"
-    convention WorldState.narrator_context() follows.
-    # ponytail: no cap on tracked-NPC count; a session that introduces
-    dozens of NPCs would grow this block linearly - trim by recency if
-    that's ever observed in play."""
-    lines = []
-    for npc in session.npcs.values():
-        if npc.hp <= 0:
-            continue
-        bits = [f"HP {npc.hp}/{npc.max_hp}"]
-        if npc.disposition != "neutral":
-            bits.append(npc.disposition)
-        if npc.conditions:
-            bits.append(", ".join(sorted(npc.conditions)))
-        line = f"- {npc.name}: " + ", ".join(bits)
-        if npc.notes:
-            line += f" - {npc.notes[:NPC_NOTES_CONTEXT_MAX_CHARS]}"
-        lines.append(line)
-    if not lines:
-        return ""
-    return "Tracked NPCs:\n" + "\n".join(lines)
-
-
-def _sign(n: int) -> str:
-    return f"+{n}" if n >= 0 else str(n)
-
-
-def _attack_lines(character: CharacterSheet, rules: RulesIndex, spell_attack_bonus: int | None) -> list[dict]:
-    """The paper sheet's Attacks & Spellcasting table, resolved server-side
-    so the client never guesses a number: the equipped weapon plus every
-    attack-shaped known spell, each as {name, kind, to_hit, damage}.
-
-    Weapon ability follows real 5e - DEX for a ranged weapon, the better of
-    STR/DEX for a finesse weapon, otherwise STR. Proficiency is assumed
-    (Oracle tracks no weapon proficiencies - see docs/character-sheet-gaps.md);
-    a real magic_bonus on the carried weapon adds to both rolls. Spell
-    to-hit is the caster's own spell_attack_bonus; spell damage is the
-    SRD die as-is (no ability mod - real 5e's rule for spell damage).
-    Empty for a bare-handed non-caster."""
-    lines: list[dict] = []
-    prof = character.proficiency_bonus
-    mods = character.stat_modifiers
-
-    weapon = character.equipped_weapon
-    entry = rules.get_entry("equipment", weapon) if weapon else None
-    if entry and entry.get("damage"):
-        die, _, dtype = entry["damage"].partition(" ")
-        category = entry.get("category", "").lower()
-        props = entry.get("properties", "").lower()
-        if "ranged" in category:
-            ability = "dex"
-        elif "finesse" in props:
-            ability = "dex" if mods.get("dex", 0) >= mods.get("str", 0) else "str"
-        else:
-            ability = "str"
-        magic = getattr(character.find_item(weapon), "magic_bonus", 0) or 0
-        ability_mod = mods.get(ability, 0)
-        to_hit = prof + ability_mod + magic
-        dmg_mod = ability_mod + magic
-        damage = f"{die}{_sign(dmg_mod)} {dtype}" if dmg_mod else f"{die} {dtype}"
-        lines.append({"name": entry["name"], "kind": "weapon", "to_hit": _sign(to_hit), "damage": damage})
-
-    if spell_attack_bonus is not None:
-        for slug_name in character.known_spells:
-            spell = rules.get_entry("spell", slug_name)
-            if spell and spell.get("attack") and spell.get("damage"):
-                die, _, dtype = spell["damage"].partition(" ")
-                lines.append({
-                    "name": spell["name"], "kind": "spell",
-                    "to_hit": _sign(spell_attack_bonus), "damage": f"{die} {dtype}",
-                })
-    return lines
-
-
-def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
-    """The owner's own full sheet - everything model_dump() already has,
-    plus two fields that exist but were never actually sent: real class
-    features (_class_features_for, above: srd.json's own per-class feature
-    text accumulated through the character's current level, so a level-up
-    automatically adds what it granted) and a persistent skill-
-    proficiency list (CLASS_SKILL_PROFICIENCIES, which already drives real
-    roll bonuses but previously only ever showed up transiently in a
-    roll's own label text, never as something a player could just look
-    at). Built for the tabbed character sheet UI (ROADMAP.md item 7) -
-    backs both _state_sync_envelope's and _character_update_envelope's
-    owner-only payloads, the same "one place defines the shape" reasoning
-    _public_character_view already follows for the public side."""
-    class_entry = rules.get_entry("class", character.character_class)
-    race_entry = rules.get_entry("race", character.race) if character.race else None
-    class_key = character.character_class.strip().lower()
-    # Spell attack bonus - real 5e: proficiency + spellcasting ability
-    # modifier. The save DC (8 + those two) is already a computed field on
-    # the sheet; this is the attack-roll counterpart, sent the same way so
-    # the character sheet UI can show both. None for a non-caster.
-    spell_ability = SPELLCASTING_ABILITY.get(class_key)
-    spell_attack_bonus = (
-        character.proficiency_bonus + character.stat_modifiers[spell_ability]
-        if spell_ability and spell_ability in character.stat_modifiers
-        else None
-    )
-    return {
-        **character.model_dump(),
-        "class_features": _class_features_for(class_entry, character.level),
-        "racial_traits": list((race_entry or {}).get("traits", [])),
-        "skill_proficiencies": list(CLASS_SKILL_PROFICIENCIES.get(class_key, ())),
-        # Which two saving throws this class is proficient in - already used
-        # for real save rolls (CLASS_SAVING_THROW_PROFICIENCIES), now also
-        # surfaced so the sheet can mark them, the same as skill_proficiencies.
-        "saving_throw_proficiencies": list(CLASS_SAVING_THROW_PROFICIENCIES.get(class_key, ())),
-        "spell_attack_bonus": spell_attack_bonus,
-        "attacks": _attack_lines(character, rules, spell_attack_bonus),
-    }
-
-
-def _dice_roll_tags(roll: dict) -> str:
-    """The shared descriptive tag suffix for a roll - damage type, a
-    carried weapon's real magic bonus, ability modifier, skill/spell
-    proficiency, roll kind, and any tracked-condition disadvantage -
-    everything that explains *why* a roll's total is what it is, beyond
-    the bare dice notation. `roll` is the same dict shape `request_roll`
-    (below) already appends to `rolls_made` and `_dice_result_envelope`
-    already reads from, so any field this needs is already present by
-    the time either caller runs.
-
-    Used identically by request_roll's own DM-facing tool_result text and
-    GameEngine._dice_log_text's broadcast log line - previously two
-    independent copies of this exact logic that had already drifted out
-    of sync once (weapon_magic_bonus landed in one but not the other - a
-    real bug found while building the structured-items feature, ROADMAP.md
-    item 14). One shared function means that class of bug can't recur.
-    Deliberately doesn't include `reason`/`purpose` or the critical-hit
-    callout - those two are real, deliberate differences between the two
-    callers (the DM already knows why it asked for the roll, so its own
-    tool_result never echoes `reason` back; `_dice_log_text` does, since
-    the player has no other way to know it) rather than something to
-    unify away."""
-    damage_type = roll.get("damage_type")
-    damage_label = f" ({damage_type})" if damage_type else ""
-    weapon_magic_bonus = roll.get("weapon_magic_bonus")
-    weapon_magic_label = f" +{weapon_magic_bonus} magic" if weapon_magic_bonus else ""
-    ability_mod = roll.get("ability_modifier")
-    ability_label = f" +{ability_mod} {roll['ability'].upper()}" if ability_mod is not None else ""
-    skill = roll.get("skill")
-    skill_label = ""
-    if skill:
-        skill_label = f" ({skill.replace('_', ' ').title()}"
-        skill_label += f", +{roll['proficiency_bonus']} proficiency)" if roll.get("proficient") else ")"
-    spell = roll.get("spell")
-    spell_label = f" ({spell}, +{roll['proficiency_bonus']} proficiency)" if spell else ""
-    # A save is the one roll_kind that can carry real proficiency
-    # (CLASS_SAVING_THROW_PROFICIENCIES) with no skill/spell label of its
-    # own to show it on - skill/spell already cover themselves above, so
-    # this only adds the tag when neither did.
-    roll_kind = roll.get("roll_kind")
-    if roll_kind == "save" and roll.get("proficient") and not skill_label and not spell_label:
-        roll_kind_label = f" ({roll_kind}, +{roll['proficiency_bonus']} proficiency)"
-    else:
-        roll_kind_label = f" ({roll_kind})" if roll_kind else ""
-    disadvantage_reasons = roll.get("disadvantage_reasons")
-    disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
-    return (
-        damage_label + weapon_magic_label + ability_label + skill_label + spell_label
-        + roll_kind_label + disadvantage_label
-    )
-
-
-def _outcome_category(update: dict) -> str | None:
-    """Picks a single dominant category for a real update_character change,
-    so the client can color-code the resulting log line by what actually
-    happened - a direct owner ask for damage/heal/spell/item to read
-    differently at a glance, not all blend into the same plain text. Takes
-    priority when a call combines several (e.g. a poisoned dart: hp_delta
-    and add_condition in one call) since damage/heal is the most
-    narratively dominant outcome. None means nothing worth a dedicated
-    color (e.g. only notes/disposition changed) - the same "not every
-    change needs a spotlight" restraint _npc_status_line's own dim
-    default already applies."""
-    hp_delta = update.get("hp_delta")
-    if hp_delta:
-        return "damage" if hp_delta < 0 else "heal"
-    if update.get("rest"):
-        return "heal"
-    if update.get("add_condition") or update.get("remove_condition"):
-        return "condition"
-    if update.get("cast_spell"):
-        return "spell"
-    if update.get("add_item") or update.get("remove_item"):
-        return "item"
-    return None
-
-
-def _hit_die_max(hit_die: str) -> int:
-    # "d10" -> 10. ponytail: max roll, not a per-level roll. Callers add CON.
-    return int(hit_die.lstrip("d"))
-
-
-def _xp_for_npc(npc: CharacterSheet, update: dict, rules: RulesIndex) -> int:
-    """XP for defeating this NPC, in priority order: (1) explicit "xp" in the
-    killing update; (2) the NPC's name matched to an SRD monster, its "cr" run
-    through xp_for_cr; (3) DEFAULT_NPC_XP as a safety net."""
-    explicit = update.get("xp")
-    if isinstance(explicit, int) and not isinstance(explicit, bool):
-        return explicit
-
-    monster_entry = rules.get_entry("monster", npc.name)
-    if monster_entry is not None:
-        cr_xp = rules.xp_for_cr(monster_entry.get("cr", ""))
-        if cr_xp is not None:
-            return cr_xp
-
-    return DEFAULT_NPC_XP
-
-
-def build_starting_character(
-    player_id: str,
-    name: str,
-    character_class: str,
-    rules: RulesIndex,
-    origin_table: OriginTable | None = None,
-    stat_priority: tuple[str, ...] | None = None,
-    race: str = "",
-) -> CharacterSheet:
-    """Builds a real starting sheet from a chosen class via the SRD data,
-    or falls back to a blank hp=100/max_hp=100 sheet for a blank or
-    unrecognized class - keeps old clients/tests that don't send
-    character_class at all working.
-
-    Every new character gets a random pre-Aetherfall origin (server/lore's
-    random_origin) regardless of class choice - the near-death/transport
-    premise applies to everyone, not just characters who picked a real
-    class.
-
-    stat_priority is a player's own optional override of which ability
-    gets which Standard Array slot (see _generate_stats) - ignored
-    entirely for a blank/unrecognized class, the same way the class's own
-    equipment/spells are.
-
-    race is a genuinely independent choice from character_class - a
-    blank/unrecognized value degrades the same graceful way (no ability
-    bonus, no racial traits) rather than blocking creation, and is still
-    recorded even for a classless character, since race and class don't
-    depend on each other."""
-    origin = random_origin(origin_table or load_default_origin_table())
-    background = origin.sheet_summary()
-    # The four RP anchors, seeded from the same origin roll - player-
-    # editable afterwards via character_edit (CHARACTER_EDIT_FIELDS below).
-    # personality reuses the trait the origin already rolled.
-    rp_fields = {
-        "personality": origin.trait,
-        "ideals": origin.ideal,
-        "bonds": origin.bond,
-        "flaws": origin.flaw,
-    }
-
-    race_entry = rules.get_entry("race", race) if race else None
-    race_name = race_entry["name"] if race_entry else ""
-
-    class_entry = rules.get_entry("class", character_class) if character_class else None
-    if class_entry is None:
-        # No hit die to draw from - a bare baseline (the original classless
-        # HP) plus the same cushion every character gets.
-        blank_hp = 10 + STARTING_HP_CUSHION
-        return CharacterSheet(
-            player_id=player_id, name=name, hp=blank_hp, max_hp=blank_hp, background=background,
-            race=race_name, **rp_fields,
-        )
-
-    stats = _apply_race_bonus(_generate_stats(character_class, stat_priority), race_entry)
-    con_mod = ability_modifier(stats["con"]) if stats else 0
-    # SRD level-1 HP (hit die max + CON modifier) plus a flat cushion - see
-    # STARTING_HP_CUSHION. Floored at 1 so a brutal CON score can't produce
-    # a 0- or negative-HP character. Level-up growth is pure SRD (_grant_levels).
-    max_hp = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod + STARTING_HP_CUSHION)
-    inventory = [
-        InventoryItem(name=item_name)
-        for item_name in CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), [])
-    ]
-    dex_mod = ability_modifier(stats["dex"]) if stats else 0
-    known_spells = list(CLASS_KNOWN_SPELLS.get(character_class.strip().lower(), []))
-    spell_slots = rules.spell_slots_by_level(1) if known_spells else {}
-    equipped_weapon, equipped_armor, equipped_shield = _auto_equip_starting_gear(inventory, rules)
-    return CharacterSheet(
-        player_id=player_id,
-        name=name,
-        hp=max_hp,
-        max_hp=max_hp,
-        character_class=class_entry["name"],
-        race=race_name,
-        stats=stats,
-        inventory=inventory,
-        equipped_weapon=equipped_weapon,
-        equipped_armor=equipped_armor,
-        equipped_shield=equipped_shield,
-        ac=_compute_ac(equipped_armor, dex_mod, rules, equipped_shield),
-        known_spells=known_spells,
-        spell_slots=dict(spell_slots),
-        max_spell_slots=dict(spell_slots),
-        background=background,
-        **rp_fields,
-    )
-
-
-def _character_from_import(player_id: str, imported: dict) -> CharacterSheet | None:
-    """Builds a CharacterSheet from a client-submitted export file
-    (join_session's optional imported_character field - client/app.py's
-    WelcomeScreen/export_character). The exported dict is just a prior
-    session's own full CharacterSheet.model_dump(), so this is mostly a
-    pass-through - but player_id is always overridden to the real joining
-    connection's id, never trusted from the file itself (a stale or
-    tampered export shouldn't let one connection claim another's already-
-    tracked identity). Any other shape mismatch (a hand-edited or
-    corrupted file, or one from some future/incompatible sheet version) is
-    caught and treated as "no import" rather than a crash - the caller
-    falls back to a fresh build_starting_character() sheet, the same
-    graceful-fallback convention that function's own blank/unrecognized-
-    class handling already established. The client does its own lighter
-    read/JSON-parse validation first (_load_character_file), but this is
-    the real trust boundary - a client is never authoritative for another
-    connection's data, so the shape gets fully re-validated here too."""
-    try:
-        return CharacterSheet(**{**imported, "player_id": player_id})
-    except (ValidationError, TypeError):
-        return None
 
 # Narration wording that suggests an unrecorded mechanical change - flags a
 # possibly-stale sheet for the player, not a verdict. Deliberately narrow;
@@ -857,6 +153,9 @@ class GameEngine:
         # Feeds build_starting_character's random per-character origin.
         self._origin_table = origin_table or load_default_origin_table()
         self._pending_proposals: dict[str, dict] = {}
+        # player_ids who armed their held Inspiration; consumed by the next d20
+        # roll in request_roll. Engine-local, not persisted - re-arm on reconnect.
+        self._inspiration_armed: set[str] = set()
         # Players with at least one live connection. handle_disconnect fires
         # only on a player's last connection, so this is multi-tab safe.
         self._connected_players: set[str] = set()
@@ -983,6 +282,10 @@ class GameEngine:
             hp_gain = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod) * levels_gained
             character.max_hp += hp_gain
             character.hp += hp_gain
+            # Hit-dice pool tracks level; the new dice arrive unspent.
+            character.hit_die = class_entry["hit_die"]
+            character.hit_dice_total = character.level
+            character.hit_dice_remaining += levels_gained
             # ponytail: AC doesn't recompute when a post-creation ASI changes DEX.
             asi_abilities = _apply_ability_score_improvements(character, old_level, character.level)
             # Slots grow by the old->new max delta, not a reset - a level-up
@@ -1550,21 +853,39 @@ class GameEngine:
             disadvantage_reasons = _has_disadvantage(character, roll_kind)
             disadvantage = bool(disadvantage_reasons)
 
+            # Inspiration: spent here (not by the DM) on the first real d20 roll
+            # after the player armed it. dice.roll cancels advantage+disadvantage
+            # per 5e, but the token is still consumed - that's the rule.
+            inspiration_used = (
+                player_id in self._inspiration_armed
+                and character.inspiration
+                and bool(re.match(r"\s*\d*d20\b", notation, re.IGNORECASE))
+            )
+
             try:
                 total, rolls, sides = dice.roll(
                     notation,
                     extra_modifier=(ability_mod or 0) + proficiency_bonus + weapon_magic_bonus,
+                    advantage=inspiration_used,
                     disadvantage=disadvantage,
                 )
             except dice.InvalidDiceNotation as exc:
                 return f"Invalid dice notation: {exc}"
 
+            if inspiration_used:
+                character.inspiration = False
+                self._inspiration_armed.discard(player_id)
+                sheet_changed = True
+
             success = None if dc is None else total >= dc
 
-            # Natural 20 on an attack roll. Under disadvantage `rolls` holds both
-            # d20s but only the worse counts, so use that. ponytail: announced
-            # only, no automatic damage-doubling.
-            kept_roll = min(rolls) if disadvantage else rolls[0]
+            advantage = inspiration_used and not disadvantage
+            # Natural 20 on an attack roll. Under advantage/disadvantage `rolls`
+            # holds both d20s but only the kept one counts.
+            # ponytail: announced only, no automatic damage-doubling.
+            kept_roll = (
+                max(rolls) if advantage else min(rolls) if disadvantage else rolls[0]
+            )
             critical = roll_kind == "attack" and sides == 20 and kept_roll == 20
 
             roll_entry = {
@@ -1575,6 +896,7 @@ class GameEngine:
                 "skill": skill, "proficient": proficient, "proficiency_bonus": proficiency_bonus,
                 "spell": spell_entry["name"] if spell_entry and spell_entry.get("attack") else None,
                 "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
+                "advantage": advantage, "inspiration": inspiration_used,
                 "critical": critical,
                 "weapon_magic_bonus": weapon_magic_bonus or None,
             }
@@ -2176,6 +1498,34 @@ class GameEngine:
         await self._broadcast(self._player_update_envelope(character))
         await self._save(player_id)
 
+    async def _on_use_inspiration(self, envelope: Envelope) -> None:
+        """Toggle whether the player's held Inspiration is armed for their next
+        d20 roll. Exempt from turn order like death_save - the engine spends the
+        token in request_roll when that roll actually happens."""
+        player_id = envelope.sender_id
+        character = self._session.characters.get(player_id)
+        if character is None:
+            return
+        if not character.inspiration:
+            self._inspiration_armed.discard(player_id)
+            await self._send_to(
+                player_id, self._system_envelope("You have no Inspiration to use.", level="warning")
+            )
+            return
+        if player_id in self._inspiration_armed:
+            self._inspiration_armed.discard(player_id)
+            await self._send_to(
+                player_id, self._system_envelope("Inspiration set aside - it won't be used.", level="info")
+            )
+        else:
+            self._inspiration_armed.add(player_id)
+            await self._send_to(
+                player_id,
+                self._system_envelope(
+                    "Inspiration ready - your next d20 roll is made with advantage.", level="info"
+                ),
+            )
+
     async def _on_dice_roll(self, envelope: Envelope) -> None:
         player_id = envelope.sender_id
         character = self._session.characters.get(player_id)
@@ -2255,6 +1605,10 @@ class GameEngine:
         if roll.get("disadvantage"):
             payload["disadvantage"] = True
             payload["disadvantage_reasons"] = roll["disadvantage_reasons"]
+        if roll.get("advantage"):
+            payload["advantage"] = True
+        if roll.get("inspiration"):
+            payload["inspiration"] = True
         if roll.get("critical"):
             payload["critical"] = True
         if roll.get("weapon_magic_bonus"):

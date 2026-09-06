@@ -43,11 +43,16 @@ export const skillLabel = (key) =>
 
 export const fmtMod = (n) => (n >= 0 ? `+${n}` : `${n}`);
 
-// 10 + WIS modifier + proficiency bonus if proficient in Perception.
-export function passivePerception(sheet) {
-  const wis = sheet.stat_modifiers?.wis ?? 0;
-  const prof = (sheet.skill_proficiencies || []).includes("perception")
+const SKILL_ABILITY = Object.fromEntries(SKILLS);
+
+// 10 + the skill's ability modifier + proficiency bonus if proficient in it.
+export function passiveScore(sheet, skill) {
+  const ability = SKILL_ABILITY[skill] ?? "wis";
+  const mod = sheet.stat_modifiers?.[ability] ?? 0;
+  const prof = (sheet.skill_proficiencies || []).includes(skill)
     ? sheet.proficiency_bonus ?? 2
     : 0;
-  return 10 + wis + prof;
+  return 10 + mod + prof;
 }
+
+export const passivePerception = (sheet) => passiveScore(sheet, "perception");

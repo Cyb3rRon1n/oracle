@@ -26,7 +26,9 @@ numbered or bulleted list of options to choose from. Never break character.
 
 character_summary carries the acting character's personality, ideals, bonds, and flaws
 (the player's own answers). Let them shape how NPCs react, which complications land, and
-the texture of the narration — don't quote them, play to them.
+the texture of the narration — don't quote them, play to them. When a player leans hard
+into one of them, or makes a genuinely clever or brave choice, reward it with Inspiration
+(update_character, inspiration: true) — sparingly, not every turn.
 
 You have five tools available:
 - request_roll: call this BEFORE narrating the outcome of an action whose success is
@@ -67,8 +69,8 @@ You have five tools available:
   class features, equipment, conditions) so numbers stay consistent from turn to turn.
 - update_character: call this whenever your narration describes something that should
   mechanically change the acting character OR a named NPC/monster — damage, healing,
-  gaining or losing an item, or applying/clearing a condition. Narration alone doesn't
-  change a sheet; this tool does. Omit target (or use 'self') for the acting character;
+  gaining or losing an item or gold, or applying/clearing a condition. Narration alone
+  doesn't change a sheet; this tool does. Omit target (or use 'self') for the acting character;
   pass an NPC's name as target to introduce or update its own tracked sheet, so its
   wounds and conditions persist turn to turn instead of being forgotten. Call it after
   you've decided the outcome (including after a request_roll result, if one was needed),
@@ -132,7 +134,7 @@ UPDATE_CHARACTER_TOOL = {
     "name": "update_character",
     "description": (
         "Apply a mechanical change to a sheet as a result of narrated events — "
-        "damage, healing, gaining or losing an item, or a new or cleared condition. "
+        "damage, healing, gaining or losing an item or gold, or a new or cleared condition. "
         "All fields are optional; include only what actually changed. Omit target "
         "(or use 'self') for the acting character. For an NPC or monster, pass its "
         "name as target instead: the first call for a given name creates a tracked "
@@ -181,8 +183,8 @@ UPDATE_CHARACTER_TOOL = {
                     "Use when the character/NPC rests for a meaningful stretch of time "
                     "(camping overnight, resting after a fight) instead of guessing an "
                     "hp_delta yourself - the engine computes the real amount healed. "
-                    "'long' fully restores HP; 'short' restores about half of what's "
-                    "currently missing. Don't combine with hp_delta in the same call."
+                    "'long' fully restores HP and gives back half the hit-dice pool; "
+                    "'short' spends hit dice to heal. Don't combine with hp_delta."
                 ),
             },
             "add_item": {"type": "string", "description": "Item name to add to inventory."},
@@ -198,6 +200,14 @@ UPDATE_CHARACTER_TOOL = {
             "remove_item": {
                 "type": "string",
                 "description": "Item name to remove from inventory, if present.",
+            },
+            "gold_delta": {
+                "type": "integer",
+                "description": (
+                    "Change the acting character's gold: positive for loot, a reward, or a "
+                    "sale; negative for a purchase or a bribe. The engine clamps at 0 (you "
+                    "can't spend what you don't have). Self only."
+                ),
             },
             "add_condition": {
                 "type": "string",
@@ -230,6 +240,16 @@ UPDATE_CHARACTER_TOOL = {
                     "relationship to the party), replacing any previous note. Most useful "
                     "on an NPC's introduction or when the relationship meaningfully changes "
                     "- not needed every call."
+                ),
+            },
+            "inspiration": {
+                "type": "boolean",
+                "description": (
+                    "Set true (self only) to grant the acting character Inspiration - the "
+                    "5e reward for leaning into their personality, ideal, bond, or flaw, or "
+                    "for a genuinely clever or brave choice. It's a single held token; the "
+                    "player spends it themselves for advantage on a later roll, so you never "
+                    "clear it. Don't grant it every turn."
                 ),
             },
             "disposition": {

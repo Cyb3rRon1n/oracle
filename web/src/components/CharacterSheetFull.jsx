@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
-import { ABILITIES, ABILITY_LABEL, SKILLS, skillLabel, fmtMod, passivePerception } from "../lib/dnd5e.js";
+import { ABILITIES, ABILITY_LABEL, SKILLS, skillLabel, fmtMod, passivePerception, passiveScore } from "../lib/dnd5e.js";
 
 export default function CharacterSheetFull({ onClose }) {
   const { state, actions } = useStore();
@@ -42,8 +42,11 @@ export default function CharacterSheetFull({ onClose }) {
             </div>
           </div>
           <div className="flex items-center gap-3 text-sm">
-            <MiniStat label={t("XP")} value={sheet.xp} />
-            <Planned label={t("Alignment")} />
+            <MiniStat
+              label={t("XP")}
+              value={sheet.xp_next_level ? `${sheet.xp} / ${sheet.xp_next_level}` : sheet.xp}
+            />
+            {sheet.alignment && <MiniStat label={t("Alignment")} value={sheet.alignment} />}
             <button
               className="btn-gold !py-1 !px-3 text-sm"
               onClick={onClose}
@@ -98,9 +101,17 @@ export default function CharacterSheetFull({ onClose }) {
               })}
             </Section>
 
-            <div className="panel p-3 text-sm flex justify-between">
-              <span className="text-dungeon-ink/60">{t("Passive perception")}</span>
-              <span className="font-semibold">{passivePerception(sheet)}</span>
+            <div className="panel p-3 text-sm space-y-1">
+              {[
+                [t("Passive perception"), passivePerception(sheet)],
+                [t("Passive investigation"), passiveScore(sheet, "investigation")],
+                [t("Passive insight"), passiveScore(sheet, "insight")],
+              ].map(([label, val]) => (
+                <div key={label} className="flex justify-between">
+                  <span className="text-dungeon-ink/60">{label}</span>
+                  <span className="font-semibold">{val}</span>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -109,7 +120,7 @@ export default function CharacterSheetFull({ onClose }) {
             <div className="grid grid-cols-3 gap-2">
               <MiniStat box label={t("Armor class")} value={sheet.ac} />
               <MiniStat box label={t("Initiative")} value={fmtMod(mod("dex"))} />
-              <Planned box label={t("Speed")} />
+              <MiniStat box label={t("Speed")} value={`${sheet.speed ?? 30} ${t("ft")}`} />
             </div>
 
             <Section title={t("Hit points")}>
@@ -123,7 +134,16 @@ export default function CharacterSheetFull({ onClose }) {
                 <span className="text-dungeon-ink/60">
                   {t("Temp HP")} <b className="text-dungeon-ink">{sheet.temp_hp || 0}</b>
                 </span>
-                <Planned label={t("Hit dice")} />
+                {sheet.hit_die ? (
+                  <span className="text-dungeon-ink/60">
+                    {t("Hit dice")}{" "}
+                    <b className="text-dungeon-ink">
+                      {sheet.hit_dice_remaining ?? 0}/{sheet.hit_dice_total ?? 0} {sheet.hit_die}
+                    </b>
+                  </span>
+                ) : (
+                  <Planned label={t("Hit dice")} />
+                )}
               </div>
             </Section>
 
@@ -176,8 +196,13 @@ export default function CharacterSheetFull({ onClose }) {
             </Section>
 
             <div className="flex gap-2">
-              <Planned box label={t("Currency")} />
-              <Planned box label={t("Inspiration")} />
+              <MiniStat box label={t("Gold")} value={`${sheet.gold ?? 0} gp`} />
+              <Inspiration
+                held={!!sheet.inspiration}
+                armed={state.inspirationArmed}
+                toggle={() => actions.toggleInspiration(!state.inspirationArmed)}
+                t={t}
+              />
             </div>
           </div>
 
@@ -206,6 +231,7 @@ export default function CharacterSheetFull({ onClose }) {
                   ["ideals", t("Ideals")],
                   ["bonds", t("Bonds")],
                   ["flaws", t("Flaws")],
+                  ["alignment", t("Alignment")],
                 ].map(([field, label]) => (
                   <RpField
                     key={field}
@@ -227,10 +253,10 @@ export default function CharacterSheetFull({ onClose }) {
                   ))}
                 </div>
               )}
-              <div className="flex gap-3 text-xs">
-                <Planned label={t("Armor / weapons / tools")} />
-                <Planned label={t("Languages")} />
-              </div>
+              <ProfLine label={t("Armor")} items={sheet.class_proficiencies?.armor} t={t} />
+              <ProfLine label={t("Weapons")} items={sheet.class_proficiencies?.weapons} t={t} />
+              <ProfLine label={t("Tools")} items={sheet.class_proficiencies?.tools} t={t} />
+              <ProfLine label={t("Languages")} items={sheet.languages} t={t} />
             </Section>
 
             <Section title={t("Spellcasting")}>
@@ -248,6 +274,38 @@ export default function CharacterSheetFull({ onClose }) {
 }
 
 /* ---------- small pieces ---------- */
+
+function Inspiration({ held, armed, toggle, t }) {
+  return (
+    <div
+      className={`flex-1 rounded border p-2 text-center ${
+        held ? "bg-dungeon-bg border-dungeon-gold/50" : "bg-dungeon-bg border-dashed border-dungeon-edge opacity-60"
+      }`}
+    >
+      <div className="text-[10px] uppercase tracking-widest text-dungeon-ink/50">{t("Inspiration")}</div>
+      <div className="mt-1 text-lg">{held ? "✨" : "—"}</div>
+      {held && (
+        <button
+          className={`btn-gold !py-0.5 !px-2 text-[11px] mt-1 ${armed ? "" : "opacity-60"}`}
+          onClick={toggle}
+        >
+          {armed ? t("Armed — next roll") : t("Use on next roll")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ProfLine({ label, items, t }) {
+  return (
+    <div className="flex gap-2 text-xs py-0.5">
+      <span className="text-dungeon-ink/50 shrink-0 w-16">{label}</span>
+      <span className="text-dungeon-ink/80 capitalize">
+        {items?.length ? items.join(", ") : t("none")}
+      </span>
+    </div>
+  );
+}
 
 function Planned({ label, box }) {
   const { t } = useLang();
