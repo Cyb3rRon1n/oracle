@@ -21,6 +21,28 @@ const LOG_STYLES = {
   system: "text-dungeon-blood/90",
 };
 
+// Two-click so a mis-tap mid-scene doesn't wrap the adventure. The "Confirm"
+// state reverts on its own after a few seconds.
+function EndAdventureButton({ onEnd, t }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const id = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(id);
+  }, [armed]);
+  return (
+    <button
+      className={`px-2 py-1 rounded border transition text-xs ${
+        armed ? "border-dungeon-blood text-dungeon-blood" : "border-dungeon-edge hover:border-dungeon-gold"
+      }`}
+      onClick={() => (armed ? onEnd() : setArmed(true))}
+      title={t("Wrap up the adventure and return to the tavern")}
+    >
+      {armed ? t("Confirm — end adventure") : `🍺 ${t("Return to tavern")}`}
+    </button>
+  );
+}
+
 function ConnectionBadge({ status }) {
   const { t } = useLang();
   const color =
@@ -72,6 +94,7 @@ export default function GameScreen() {
           >
             📜 {t("Sheet")}
           </button>
+          <EndAdventureButton onEnd={actions.endAdventure} t={t} />
           <ExportButtons />
           <LangFlags />
           <Presence players={state.players} me={state.me} />

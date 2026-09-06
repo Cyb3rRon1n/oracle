@@ -3921,6 +3921,88 @@ async def test_tavern_keeper_failure_is_swallowed():
     assert _keeper_lines(received) == []
 
 
+async def _end_adventure(engine, player_id):
+    await engine.handle(Envelope(
+        type="end_adventure", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+
+async def test_end_adventure_returns_the_party_to_the_lobby():
+    engine, session, received = make_engine(OpeningSceneDM(), enable_opening_scene=True)
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)
+    await start_session(engine, a)
+    assert session.started and session.history
+    received.clear()
+
+    await _end_adventure(engine, a)
+
+    assert not session.started
+    assert session.adventures_completed == 1
+    assert session.history == []
+    assert session.ready_players == []
+    assert any(r[0] == "broadcast" and r[1] == "session_ended" for r in received)
+
+
+async def test_end_adventure_is_a_no_op_before_the_adventure_starts():
+    engine, session, received = make_engine(StubDM())
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    received.clear()
+    await _end_adventure(engine, p)
+    assert session.adventures_completed == 0
+    assert not any(r[1] == "session_ended" for r in received if r[0] == "broadcast")
+
+
+async def test_party_can_start_a_second_adventure_after_returning_to_the_tavern():
+    engine, session, _ = make_engine(OpeningSceneDM(), enable_opening_scene=True)
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)
+    await start_session(engine, a)
+    await _end_adventure(engine, a)
+    assert not session.started
+
+    await _ready(engine, a)
+    await _ready(engine, b)
+    assert session.started  # auto-start works again from the lobby
+    assert session.adventures_completed == 1
+
+
+async def test_second_adventure_opening_skips_the_near_death_beat():
+    dm = OpeningSceneDM()
+    engine, session, _ = make_engine(dm, enable_opening_scene=True)
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    await start_session(engine, p)
+    assert "nearly died" in dm.action_texts[0]  # the isekai arrival beat
+
+    await _end_adventure(engine, p)
+    session.campaign_summary = "They cleared the Greywood and made a rival of the toll-captain."
+    await _ready(engine, p)
+
+    assert "A new adventure begins" in dm.action_texts[-1]
+    assert "nearly died" not in dm.action_texts[-1]
+    assert "toll-captain" in dm.action_texts[-1]
+
+
+def test_started_is_migrated_for_a_legacy_logged_session():
+    session = Session(session_id="legacy", log=[{"kind": "narration", "text": "It was a dark night."}])
+    assert not session.started
+    GameEngine(session, StubDM(), lambda e: None, lambda p, e: None)
+    assert session.started  # log history without the flag = a pre-`started` save
+
+
+def test_started_is_not_migrated_for_a_party_between_adventures():
+    session = Session(
+        session_id="s", started=False, adventures_completed=1,
+        log=[{"kind": "narration", "text": "The first adventure."}],
+    )
+    GameEngine(session, StubDM(), lambda e: None, lambda p, e: None)
+    assert not session.started  # genuinely in the lobby, not a legacy save
+
+
 async def test_start_session_sets_a_recognized_content_preference():
     dm = OpeningSceneDM()
     engine, session, received = make_engine(dm)

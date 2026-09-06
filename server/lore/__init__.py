@@ -175,6 +175,26 @@ class WorldBible(BaseModel):
             intro += " Consider inviting everyone to introduce themselves."
         return intro + " End the scene inviting the next real action.)"
 
+    def next_adventure_prompt(self, names: str, location: str, recap: str, hook: str = "") -> str:
+        """The synthetic action_text for the first turn of a *later* adventure -
+        the party has already arrived in this world, finished at least one
+        adventure, spent time in the tavern, and is now setting out again
+        (server/engine.py's _on_start_session, when adventures_completed > 0).
+        Not the near-death/Guardian arrival beat - opening_scene_prompt covers
+        that, and it would be wrong here. `recap` is the rolling campaign
+        summary; `hook`, when set, is the quest the party voted for at the
+        board and should frame the scene."""
+        where = f" in {location}" if location and location != "unknown" else ""
+        intro = (
+            f"(A new adventure begins. {names} have rested{where} and are setting out again. "
+            f"Where their story stands so far: {recap or 'the early days of their time in ' + self.setting_name}. "
+        )
+        if hook:
+            intro += f"The party has decided to pursue this: {hook}. Open the scene on them acting on that decision. "
+        else:
+            intro += "Open on them at the threshold of whatever comes next, deciding where to go. "
+        return intro + "End the scene inviting the next real action.)"
+
 
 def load_default_world_bible() -> WorldBible:
     return WorldBible.model_validate_json(DEFAULT_LORE_PATH.read_text())

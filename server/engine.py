@@ -173,6 +173,11 @@ class GameEngine:
         self._lorebook = Lorebook()
         if session.context_files:
             self._rebuild_lorebook(session.context_files)
+        # Legacy migration: a session saved before `started` existed loads with
+        # started=False despite real narration history. adventures_completed
+        # distinguishes that from a party legitimately back in the tavern.
+        if session.log and not session.started and session.adventures_completed == 0:
+            session.started = True
 
     def _manifest_files(self) -> list[dict]:
         """The world_context/ directory listing - names/types/sizes only,
@@ -441,9 +446,10 @@ class GameEngine:
                 await self._broadcast(self._turn_prompt_envelope())
 
     def _has_started(self) -> bool:
-        # bool(log) is the fallback for a session saved before Session.started
-        # existed - it would load as False despite real narration history.
-        return self._session.started or bool(self._session.log)
+        # Plain flag now: the legacy "log but no `started`" saves are migrated
+        # to started=True in __init__, so False here genuinely means the lobby -
+        # a fresh session, or a party back in the tavern between adventures.
+        return self._session.started
 
     def _resume_recap(self) -> str:
         """Composes _on_join_session's private "story so far" recap, sent
@@ -538,12 +544,19 @@ class GameEngine:
         character = self._session.characters.get(player_id) or next(iter(self._session.characters.values()))
 
         roster = list(self._session.characters.values())
-        if len(roster) > 1:
+        names = ", ".join(
+            f"{c.name} the {c.character_class}" if c.character_class else c.name for c in roster
+        )
+        if self._session.adventures_completed > 0:
+            # A later adventure: the party's already in this world - no
+            # near-death/Guardian beat, just setting out again from where they
+            # rested. (The quest-board hook will thread in here.)
+            action_text = self._world_bible.next_adventure_prompt(
+                names, self._session.world.location, self._session.campaign_summary
+            )
+        elif len(roster) > 1:
             # A richer prompt so the opening narration acknowledges everyone
             # present; tool-routing still anchors on one character.
-            names = ", ".join(
-                f"{c.name} the {c.character_class}" if c.character_class else c.name for c in roster
-            )
             action_text = self._world_bible.opening_scene_prompt(names, plural=True)
         else:
             action_text = self._world_bible.opening_scene_prompt(
@@ -632,6 +645,37 @@ class GameEngine:
         if self._session.current_turn is not None:
             await self._broadcast(self._turn_prompt_envelope())
         await self._save()
+
+    async def _on_end_adventure(self, envelope: Envelope) -> None:
+        """Any joined player may wrap up the current adventure and take the
+        party back to the tavern lobby - the counterpart to start_session.
+        A no-op if not started. The durable campaign summary is refreshed
+        first (so a short adventure isn't forgotten), then the rolling history
+        window is cleared for the next arc. Party, world location, completed
+        objectives and the log all persist; the ready-check resets."""
+        session = self._session
+        if not session.started:
+            return
+
+        await self._refresh_campaign_summary()
+        session.history.clear()
+        session.turns_since_summary = 0
+        session.started = False
+        session.adventures_completed += 1
+        session.ready_players.clear()
+        session.in_combat = False
+        session.pre_combat_turn_order = None
+        session.current_turn_index = 0
+        self._last_keeper_ts = 0.0
+
+        await self._broadcast(self._session_ended_envelope())
+        # Refresh the roster so the lobby's ready dots reflect the cleared check.
+        for character in session.characters.values():
+            await self._broadcast(self._player_update_envelope(character))
+        await self._broadcast(self._system_envelope(
+            "The adventure winds down. The party makes its way back to the tavern.", level="info"
+        ))
+        await self._save(envelope.sender_id)
 
     async def _skip_absent_players(self) -> bool:
         """Advances the turn past any player with no live connection, so the
@@ -1264,8 +1308,15 @@ class GameEngine:
         if session.turns_since_summary < CAMPAIGN_SUMMARY_INTERVAL:
             return
         session.turns_since_summary = 0
+        await self._refresh_campaign_summary()
+
+    async def _refresh_campaign_summary(self) -> None:
+        """Compress history into campaign_summary now, ignoring the interval.
+        Used on the scheduled tick (via _maybe_update_campaign_summary) and
+        when an adventure ends. Best-effort; never raises."""
+        session = self._session
         summarize = getattr(self._dm, "summarize", None)
-        if summarize is None:
+        if summarize is None or not session.history:
             return
         try:
             summary = await summarize(session.campaign_summary, session.history)
@@ -1814,6 +1865,17 @@ class GameEngine:
         # unconditionally, not inferred from the first narration (best-effort).
         return Envelope(
             type="session_started",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload={},
+        )
+
+    def _session_ended_envelope(self) -> Envelope:
+        # The inverse lifecycle signal: the adventure wrapped, drop back to the
+        # tavern lobby. Empty payload; the client keeps its state and re-renders
+        # LobbyScreen off `started`. adventures_completed rides the next state_sync.
+        return Envelope(
+            type="session_ended",
             session_id=self._session.session_id,
             sender_id="server",
             payload={},

@@ -149,6 +149,11 @@ function reducer(state, event) {
     case ET.SESSION_STARTED:
       return { ...state, started: true, typing: {} };
 
+    // Adventure wrapped: back to the tavern lobby. Keep the party, world and
+    // log; App.jsx re-routes to LobbyScreen off `started`.
+    case ET.SESSION_ENDED:
+      return { ...state, started: false, currentTurn: null, awaitingDM: false, typing: {} };
+
     case ET.SYSTEM_MESSAGE:
       return {
         ...state,
@@ -256,6 +261,9 @@ export function StoreProvider({ children }) {
       },
       tavernRest() {
         connRef.current?.sendEvent(ET.TAVERN_REST, {});
+      },
+      endAdventure() {
+        connRef.current?.sendEvent(ET.END_ADVENTURE, {});
       },
       editCharacter(field, value) {
         connRef.current?.sendEvent(ET.CHARACTER_EDIT, { field, value });
