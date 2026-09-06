@@ -87,10 +87,13 @@ shows the join screen — "Oracle — An AI Dungeon Master awaits…".
 3. **Join**. Anyone can then hit **Begin the adventure** once the party is
    in, and the DM narrates the opening scene live.
 4. Play in plain English. The engine computes HP, AC, XP, spell slots,
-   initiative, and disadvantage from tracked conditions — the model narrates,
-   it never gets trusted with arithmetic. The scene panel's suggested-action
-   chips, the dice tray, and the export buttons are the in-client tools; the
-   FR/EN flag switches the interface live.
+   initiative, hit dice, and disadvantage from tracked conditions — the model
+   narrates, it never gets trusted with arithmetic. The scene panel's
+   suggested-action chips, the 📜 Sheet overlay (full D&D-style sheet, with
+   inline editing of the RP fields and inventory), and the export buttons are
+   the in-client tools; the FR/EN flag switches the interface live. There is no
+   player-facing dice roller — the DM calls for rolls and the engine resolves
+   them.
 
 **What working looks like**: narration streams in after your action, the sheet
 tabs reflect real state changes (a hit actually lowers HP), and every window

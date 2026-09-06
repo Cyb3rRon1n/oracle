@@ -1764,6 +1764,28 @@ async def test_owner_character_view_includes_subrace_traits_combined_with_base_r
     assert "Cantrip" in traits_text  # high elf's own subrace trait
 
 
+async def test_owner_character_view_includes_class_proficiencies_and_languages():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Bree", "character_class": "rogue", "race": "wood_elf"},
+    ))
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert "thieves' tools" in view["class_proficiencies"]["tools"]
+    assert "light armor" in view["class_proficiencies"]["armor"]
+    assert view["languages"] == ["Common", "Elvish"]
+
+
+async def test_owner_character_view_proficiencies_empty_for_blank_class_and_race():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)  # no class, no race
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["class_proficiencies"] == {}
+    assert view["languages"] == []
+
+
 async def test_owner_character_view_handles_a_blank_or_unrecognized_race():
     # No race_entry in the SRD dataset for a character who never picked
     # one - the same graceful "not present isn't an error" fallback
