@@ -16,6 +16,15 @@ class Guardian(BaseModel):
     disposition: str = "neutral"
 
 
+class TavernKeeper(BaseModel):
+    """The lobby's greeter NPC, voiced by the narrator backend's optional
+    tavern_line(). Not part of the world's canon (WorldState), just a bit of
+    between-adventures colour. A bible without one gets this generic publican."""
+
+    name: str = "the keeper"
+    persona: str = "a weathered publican who has poured for a hundred doomed parties and remembers most of them"
+
+
 class Region(BaseModel):
     name: str
     description: str
@@ -85,6 +94,7 @@ class WorldBible(BaseModel):
     peoples: list[Region] = []
     glossary: list[GlossaryEntry] = []
     geography_notes: str = ""
+    tavern_keeper: TavernKeeper = TavernKeeper()
 
     def system_prompt_block(self) -> str:
         """Rendered once and appended to a NarratorBackend's system prompt

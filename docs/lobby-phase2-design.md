@@ -8,7 +8,14 @@ Phase 2 is two features. Both are lobby-only and never touch the turn queue.
 
 ---
 
-## 1. Tavern-keeper NPC
+## 1. Tavern-keeper NPC — SHIPPED (2026-09-06)
+
+Built as designed. `NarratorBackend.tavern_line(context)` (Anthropic + Ollama),
+`GameEngine._maybe_keeper_line` with a 20s `KEEPER_MIN_INTERVAL` rate limit
+(one rule covers both greeting and chat), `log_entry` kind `"keeper"`,
+`WorldBible.tavern_keeper` (Bruile, in isekai.json). Deferred items below still
+deferred.
+
 
 An AI-voiced greeter that makes the empty text buffer feel like a place:
 greets players by name, reacts to tavern chat, hands out the quest board (see

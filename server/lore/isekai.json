@@ -169,6 +169,10 @@
     }
   ],
   "geography_notes": "The Hollow March sits at the world's northern edge, six days' south road from Emberreach - the only reliable route, walked by every arrival before you. The Greywood borders the March eastward without a clear edge; the Drowned Fields lie west beyond Emberreach's dike, and south of them the maps stop pretending. Distances are measured in days on foot, rivers run toward Emberreach from everywhere, and nobody has ever charted the world's far side - the Veil-edge country wraps around the known lands like a shoreline with no ocean.",
+  "tavern_keeper": {
+    "name": "Bruile",
+    "persona": "Keeps the Lantern-and-Veil, the last inn on Emberreach's south road where new parties gather before they walk out. A broad, unhurried Emberreach woman who lost an arm to something in the Drowned Fields years ago and now pours instead of fights. Has seen a thousand Veil-Touched off down that road and remembers the ones who came back. Warm but never soft - tells arrivals the road's real dangers plainly, the way Ashwren would, then refills their cup. Dry humour, short sentences, no riddles."
+  },
   "central_tension": "The way home is not a secret - the Veil genuinely does open again, on its own uncertain rhythm, at sites Ashwren can name outright. But stepping through costs something real: a memory, a name, a piece of who you were before you arrived, chosen unknowing by the Veil itself, never by the one crossing it. Every Veil-Touched eventually has to decide, honestly, whether going home is worth what it takes - or whether Aetherfall has already become home enough to stay.",
   "who_what_where_when_why": {
     "who": "You were, until moments ago, living an entirely ordinary life - whatever it was that nearly ended it, an accident, an illness, a violence you didn't choose, doesn't matter anymore. Only that it nearly did.",

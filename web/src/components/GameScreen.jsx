@@ -17,6 +17,7 @@ const LOG_STYLES = {
   dice: "text-sky-300",
   outcome: "text-emerald-300",
   chat: "text-purple-300",
+  keeper: "text-dungeon-gold/90 italic",
   system: "text-dungeon-blood/90",
 };
 

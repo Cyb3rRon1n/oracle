@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -59,6 +60,10 @@ SendTo = Callable[[str, Envelope], Awaitable[None]]
 
 # Resolved turns between campaign-summary rebuilds (window holds ~6).
 CAMPAIGN_SUMMARY_INTERVAL = 10
+
+# Tavern-keeper (lobby only): the shortest gap between keeper lines. Deliberately
+# long - a keeper that answers every message is the research anti-pattern.
+KEEPER_MIN_INTERVAL = 20.0
 
 # Fact-ledger injection: newest facts always reach the DM; older ones only
 # when one of their 5+ char words appears in the current action/location.
@@ -159,6 +164,9 @@ class GameEngine:
         # Players with at least one live connection. handle_disconnect fires
         # only on a player's last connection, so this is multi-tab safe.
         self._connected_players: set[str] = set()
+        # Rate-limit clock for the lobby tavern-keeper. monotonic seconds of the
+        # last keeper line; 0 = never spoken. Engine-local, resets with the lobby.
+        self._last_keeper_ts: float = 0.0
         # World-context lorebook (docs/protocol.md): empty until context_select;
         # rebuilt from disk on every selection change and on load.
         self._world_context_dir = Path(os.environ.get("WORLD_CONTEXT_DIR", "world_context"))
@@ -421,6 +429,9 @@ class GameEngine:
         # this player's presence line without parsing prose. Fires on reconnect
         # too, so a roster that missed an earlier player_left still corrects.
         await self._broadcast(self._player_joined_envelope(character))
+
+        if not self._has_started():
+            await self._maybe_keeper_line("greeting")
 
         # Turn-taking is only visible once the adventure has started; a reconnect
         # into a started game should still see whose turn it is.
@@ -1264,9 +1275,46 @@ class GameEngine:
             logger.exception("Campaign summary update failed for session %s", session.session_id)
 
     async def _on_chat_message(self, envelope: Envelope) -> None:
-        await self._broadcast(self._log_envelope("chat", envelope.payload.get("text", "")))
+        text = envelope.payload.get("text", "")
+        await self._broadcast(self._log_envelope("chat", text))
         # Sending a message means you're present and not mid-typing.
         await self._broadcast(self._presence_envelope(envelope.sender_id, typing=False))
+        # A rate-limited tavern-keeper reply, lobby only. Skips near-empty lines.
+        if not self._has_started() and len(text.strip()) >= 4:
+            await self._maybe_keeper_line("chat", recent=text)
+
+    async def _maybe_keeper_line(self, trigger: str, recent: str = "") -> None:
+        """Best-effort lobby tavern-keeper chatter. Rate-limited hard (one line
+        per KEEPER_MIN_INTERVAL, greeting bypasses only on the very first call).
+        No-op without a backend `tavern_line`, or once the adventure has started.
+        Any failure is swallowed - the keeper is decoration, never load-bearing."""
+        if self._has_started():
+            return
+        tavern_line = getattr(self._dm, "tavern_line", None)
+        if tavern_line is None:
+            return
+        now = time.monotonic()
+        if now - self._last_keeper_ts < KEEPER_MIN_INTERVAL:
+            return
+        self._last_keeper_ts = now
+        keeper = self._world_bible.tavern_keeper
+        party = ", ".join(
+            " ".join(p for p in (c.name, "the", c.race, c.character_class) if p)
+            for c in self._session.characters.values()
+        )
+        try:
+            line = (await tavern_line({
+                "trigger": trigger,
+                "keeper": {"name": keeper.name, "persona": keeper.persona},
+                "party": party,
+                "recent_chat": recent,
+                "campaign_summary": self._session.campaign_summary or self._session.world.summary,
+            })).strip()
+        except Exception:
+            logger.exception("Tavern-keeper line failed")
+            return
+        if line:
+            await self._broadcast(self._log_envelope("keeper", f"{keeper.name}: {line}"))
 
     async def _on_player_ready(self, envelope: Envelope) -> None:
         """Lobby ready-check toggle. When every connected player is ready the

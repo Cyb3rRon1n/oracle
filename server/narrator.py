@@ -18,6 +18,35 @@ def _turns_to_text(turns: list[dict]) -> str:
     return "\n".join(f"{'Player' if m.get('role') == 'user' else 'DM'}: {m.get('content', '')}" for m in turns)
 
 
+def _tavern_keeper_system(context: dict) -> str:
+    """Shared system prompt for the lobby tavern-keeper line (both backends)."""
+    k = context.get("keeper") or {}
+    return (
+        f"You are {k.get('name', 'the keeper')}, the keeper of the tavern where "
+        f"adventuring parties gather before they set out. {k.get('persona', 'A weathered publican.')}\n"
+        "Say one or two sentences aloud, in character - a greeting or an offhand "
+        "reaction, the kind of thing a busy publican actually says in passing. "
+        "No stage directions, no describing the room, no asking what they'd like "
+        "to drink every time. Just the spoken line."
+    )
+
+
+def _tavern_keeper_user(context: dict) -> str:
+    trigger = context.get("trigger", "chat")
+    parts = []
+    if context.get("party"):
+        parts.append(f"Tonight's party: {context['party']}.")
+    if context.get("campaign_summary"):
+        parts.append(f"Where their story stands: {context['campaign_summary']}")
+    if context.get("recent_chat"):
+        parts.append(f"Someone at the table just said: {context['recent_chat']}")
+    parts.append(
+        "Greet them as they gather." if trigger == "greeting"
+        else "React briefly, if it's worth a word. Otherwise a short nothing-in-particular line is fine."
+    )
+    return "\n".join(parts)
+
+
 DM_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 Narrate outcomes vividly but concisely (3-5 sentences per turn). Track consequences
 of the player's actions, introduce complications, and always end by implicitly or
@@ -546,6 +575,17 @@ class NarratorBackend(Protocol):
         """
         return None
 
+    async def tavern_line(self, context: dict) -> str:
+        """Optional (getattr at the call site).
+
+        One short spoken line from the lobby's tavern-keeper NPC - a greeting
+        when the party gathers, or a brief reaction to tavern chatter. `context`:
+        `trigger` ("greeting"/"chat"), `keeper` ({name, persona}), `party`,
+        `recent_chat`, `campaign_summary`. Plain prose, no tools, ~1-2 sentences.
+        Best-effort: the engine swallows any exception and shows nothing.
+        """
+        return ""
+
 
 class AnthropicNarrator:
     # Optional-capability flags, read via getattr - this backend takes
@@ -712,6 +752,16 @@ class AnthropicNarrator:
                 apply_update(block.input)
                 corrected = True
         return corrected
+
+    async def tavern_line(self, context: dict) -> str:
+        """See NarratorBackend.tavern_line. One un-streamed, tool-free call."""
+        response = await self._client.messages.create(
+            model=self._model,
+            max_tokens=120,
+            system=_tavern_keeper_system(context),
+            messages=[{"role": "user", "content": _tavern_keeper_user(context)}],
+        )
+        return response.content[0].text.strip()
 
     def _run_tool(
         self,
