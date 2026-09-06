@@ -192,6 +192,15 @@ The gap named and explicitly deferred twice already (this doc's own former note 
 - **The bonus is wired into real math, not just stored.** `_compute_ac()` (`server/engine.py`) adds the equipped armor's and shield's own `magic_bonus` on top of their SRD base stats; `request_roll`'s weapon-damage resolution (see "Structured equipment" above) adds the acting character's own carried copy of that weapon's `magic_bonus` to the damage roll. `srd.json` currently has no armor/shield entries with a magic version of their own, so the armor/shield half of this mechanism has no data to exercise yet in practice - it's real and general (any base item the DM names via `add_item` can carry a bonus), just not yet demonstrated end-to-end the way the weapon-damage path is.
 - **Client**: `CharacterSheetPanel._format_item_label()` renders a stack as `"Longsword +1 x2"` (name, then bonus if nonzero, then count if more than one) everywhere an item name is shown - Equipped and Carried both.
 
+## Currency
+
+A single `CharacterSheet.gold` int, so an AI DM's "you find 40 gold" / "the smith wants 15 for the dagger" actually lands on the sheet.
+
+- **DM-only, via `update_character`'s new `gold_delta` integer** (`AnthropicNarrator` tool + the shared legacy Ollama tool; the Ollama structured schema doesn't carry it — same scope call as `temp_hp`/`inspiration`). Positive for loot/rewards/sales, negative for purchases/bribes. `CharacterSheet.apply_update` clamps at 0 — spending more than you hold just empties the purse.
+- **Not player-editable.** Unlike `notes`/inventory, `character_edit` has no `gold` field — a player's own gold is exactly the kind of state the DM should adjudicate. `gold` stays owner-only on the sheet (not in `_public_character_view`).
+- **ponytail: one coin type.** CP/SP/EP/PP are not modeled; add them only if a real coin economy shows up. The colour-coded outcome log treats a `gold_delta` change as the `item` category.
+- **Client**: the sheet overlay shows `N gp` in place of the old `planned` Currency tag.
+
 ## Mechanical conditions: disadvantage
 
 `server/rules/srd.json`'s five tracked conditions (poisoned, prone, grappled, frightened, stunned) have always had real SRD mechanical text — until this, `conditions` was purely a display list the DM narrated around, with nothing actually enforcing any of it.

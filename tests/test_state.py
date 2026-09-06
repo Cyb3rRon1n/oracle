@@ -360,6 +360,21 @@ def test_apply_update_inventory_add_and_remove():
     assert result.startswith("No changes applied")
 
 
+def test_apply_update_gold_delta_adds_and_spends():
+    character = make_character()
+    assert "gold +40 (now 40)" in character.apply_update({"gold_delta": 40})
+    assert character.gold == 40
+    character.apply_update({"gold_delta": -15})
+    assert character.gold == 25
+
+
+def test_apply_update_gold_delta_clamps_at_zero():
+    character = make_character(gold=10)
+    character.apply_update({"gold_delta": -100})  # can't overspend
+    assert character.gold == 0
+    assert character.apply_update({"gold_delta": 0}).startswith("No changes applied")
+
+
 def test_apply_update_heals_a_dead_character_back_to_life():
     character = make_character(hp=0, max_hp=10, dead=True)
 

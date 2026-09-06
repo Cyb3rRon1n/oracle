@@ -119,6 +119,7 @@ const FR = {
   "Nothing equipped.": "Rien d'équipé.",
   "Equipment": "Équipement",
   "Currency": "Argent",
+  "Gold": "Or",
   "Inspiration": "Inspiration",
   "Use on next roll": "Utiliser au prochain jet",
   "Armed — next roll": "Prête — prochain jet",

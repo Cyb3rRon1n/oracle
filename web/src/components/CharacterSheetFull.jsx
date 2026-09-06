@@ -196,7 +196,7 @@ export default function CharacterSheetFull({ onClose }) {
             </Section>
 
             <div className="flex gap-2">
-              <Planned box label={t("Currency")} />
+              <MiniStat box label={t("Gold")} value={`${sheet.gold ?? 0} gp`} />
               <Inspiration
                 held={!!sheet.inspiration}
                 armed={state.inspirationArmed}

@@ -27,7 +27,7 @@ paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-firs
 |---|---|---|
 | ~~**Temp HP**~~ | A separate pool absorbed before real HP | **Done.** `CharacterSheet.temp_hp`; `apply_update` drains it before real HP on damage, healing never touches it, a new source takes `max(current, new)` (no stacking). `update_character` gains a `temp_hp` field (Anthropic tool; the Ollama structured schema doesn't cover it — legacy tool-calling path can still send it). |
 | ~~**Speed**~~ | Movement rate in feet | **Done (display-only).** `speed` per race in `srd.json` (30, dwarves 25, wood elf 35), `CharacterSheet.speed: int`, set in `build_starting_character`. No positioning system, so it's a number on the sheet and nothing more. |
-| **Currency (CP/SP/EP/GP/PP)** | Five boxes; loot economy | `CharacterSheet.currency: dict[str,int]`; `update_character` gains `gold_delta` (or per-coin); DM system prompt gains "award/deduct coin when the fiction calls for it". Also wants a shop/price concept to be worth much. |
+| ~~**Currency**~~ | Five boxes; loot economy | **Done (gold only).** `CharacterSheet.gold: int`; DM-only `update_character` `gold_delta`, clamped at 0. CP/SP/EP/PP deliberately not modeled — `ponytail:` one coin type until a real coin economy shows up. See `docs/protocol.md` "Currency". |
 
 ## Medium (model + engine + SRD data + DM prompt work)
 

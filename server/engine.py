@@ -677,7 +677,7 @@ def _outcome_category(update: dict) -> str | None:
         return "condition"
     if update.get("cast_spell"):
         return "spell"
-    if update.get("add_item") or update.get("remove_item"):
+    if update.get("add_item") or update.get("remove_item") or update.get("gold_delta"):
         return "item"
     return None
 
