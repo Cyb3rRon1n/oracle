@@ -188,7 +188,12 @@ export default function CharacterSheetFull({ onClose }) {
 
             <div className="flex gap-2">
               <Planned box label={t("Currency")} />
-              <Planned box label={t("Inspiration")} />
+              <Inspiration
+                held={!!sheet.inspiration}
+                armed={state.inspirationArmed}
+                toggle={() => actions.toggleInspiration(!state.inspirationArmed)}
+                t={t}
+              />
             </div>
           </div>
 
@@ -260,6 +265,27 @@ export default function CharacterSheetFull({ onClose }) {
 }
 
 /* ---------- small pieces ---------- */
+
+function Inspiration({ held, armed, toggle, t }) {
+  return (
+    <div
+      className={`flex-1 rounded border p-2 text-center ${
+        held ? "bg-dungeon-bg border-dungeon-gold/50" : "bg-dungeon-bg border-dashed border-dungeon-edge opacity-60"
+      }`}
+    >
+      <div className="text-[10px] uppercase tracking-widest text-dungeon-ink/50">{t("Inspiration")}</div>
+      <div className="mt-1 text-lg">{held ? "✨" : "—"}</div>
+      {held && (
+        <button
+          className={`btn-gold !py-0.5 !px-2 text-[11px] mt-1 ${armed ? "" : "opacity-60"}`}
+          onClick={toggle}
+        >
+          {armed ? t("Armed — next roll") : t("Use on next roll")}
+        </button>
+      )}
+    </div>
+  );
+}
 
 function Planned({ label, box }) {
   const { t } = useLang();

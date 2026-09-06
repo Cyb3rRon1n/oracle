@@ -120,6 +120,8 @@ const FR = {
   "Equipment": "Équipement",
   "Currency": "Argent",
   "Inspiration": "Inspiration",
+  "Use on next roll": "Utiliser au prochain jet",
+  "Armed — next roll": "Prête — prochain jet",
   "None yet.": "Aucune pour l'instant.",
   "Origin": "Origine",
   "Personality": "Personnalité",

@@ -24,6 +24,7 @@ function initial() {
     inCombat: false,
     log: [],
     awaitingDM: false, // true between sending an action / starting and the DM's first word back
+    inspirationArmed: false, // player asked to spend their held Inspiration on the next roll
     scene: null, // latest scene_update payload
     pendingProposal: null,
     contextManifest: null,
@@ -86,10 +87,15 @@ function reducer(state, event) {
         }),
       };
 
-    case ET.CHARACTER_UPDATE:
-      return event.payload.player_id === state.me
-        ? { ...state, character: { ...state.character, ...event.payload.sheet_delta } }
-        : state;
+    case ET.CHARACTER_UPDATE: {
+      if (event.payload.player_id !== state.me) return state;
+      const character = { ...state.character, ...event.payload.sheet_delta };
+      // Token spent (or lost) -> nothing left to arm.
+      return { ...state, character, inspirationArmed: state.inspirationArmed && character.inspiration };
+    }
+
+    case "inspiration_armed":
+      return { ...state, inspirationArmed: event.armed };
 
     case ET.PLAYER_UPDATE:
     case ET.PLAYER_JOINED:
@@ -230,6 +236,10 @@ export function StoreProvider({ children }) {
       },
       deathSave() {
         connRef.current?.sendEvent(ET.DEATH_SAVE, {});
+      },
+      toggleInspiration(armed) {
+        connRef.current?.sendEvent(ET.USE_INSPIRATION, {});
+        dispatch({ type: "inspiration_armed", armed });
       },
       applyProposal() {
         connRef.current?.sendEvent(ET.APPLY_PROPOSED_CHANGE, {});

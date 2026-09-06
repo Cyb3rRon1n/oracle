@@ -2316,6 +2316,53 @@ async def test_dm_requested_roll_matches_conditions_case_insensitively():
     assert results[-1][2]["disadvantage"] is True
 
 
+async def test_armed_inspiration_gives_advantage_on_the_next_roll_and_is_spent():
+    dm = RequestRollDM({"dice": "1d20", "dc": 10, "reason": "leap the chasm"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inspiration = True
+    await engine.handle(Envelope(
+        type="use_inspiration", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    with patch("server.dice.random.randint", side_effect=[6, 17]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I run and jump"},
+        ))
+
+    payload = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"][-1][2]
+    assert payload["advantage"] is True and payload["inspiration"] is True
+    assert payload["rolls"] == [6, 17]
+    assert payload["result"] == 17  # kept the higher roll
+    assert session.characters[player_id].inspiration is False  # token spent
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "advantage: Inspiration" in dice_logs[-1][2]["text"]
+
+
+async def test_held_but_unarmed_inspiration_does_not_affect_the_roll():
+    dm = RequestRollDM({"dice": "1d20", "reason": "ordinary check"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inspiration = True  # held, but never armed
+
+    with patch("server.dice.random.randint", side_effect=[11]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I look around"},
+        ))
+
+    payload = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"][-1][2]
+    assert "advantage" not in payload
+    assert session.characters[player_id].inspiration is True  # not spent
+
+
 async def test_dm_requested_roll_multiple_disadvantage_conditions_still_only_apply_once():
     # Real 5e disadvantage never stacks - this locks that the mechanic
     # itself doesn't double-roll or otherwise behave differently with two
@@ -5034,6 +5081,18 @@ async def test_update_character_never_sets_personality():
     result = sheet.apply_update({"personality": "reckless"})
     assert sheet.personality == "cautious"
     assert result.startswith("No changes applied")
+
+
+async def test_apply_update_grants_inspiration_once_and_never_clears_it():
+    from server.state import CharacterSheet
+
+    sheet = CharacterSheet(player_id="p", name="x", hp=10, max_hp=10)
+    assert "Inspiration" in sheet.apply_update({"inspiration": True})
+    assert sheet.inspiration is True
+    # A second grant is a no-op; the DM can't clear it with inspiration: false.
+    assert sheet.apply_update({"inspiration": True}).startswith("No changes applied")
+    assert sheet.apply_update({"inspiration": False}).startswith("No changes applied")
+    assert sheet.inspiration is True
 
 
 async def test_character_edit_add_item_appends_to_inventory():

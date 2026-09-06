@@ -111,6 +111,9 @@ class CharacterSheet(BaseModel):
     # Free-text 5e alignment (e.g. "Chaotic Good"), player-set via character_edit.
     # Pure flavour / DM context, no mechanics.
     alignment: str = ""
+    # 5e Inspiration: a single held token the DM grants (via update_character)
+    # and the engine spends for advantage on the player's next d20 roll.
+    inspiration: bool = False
     stats: dict[str, int] = Field(default_factory=dict)
     # Stacks with quantity + magic_bonus, not plain name strings.
     inventory: list[InventoryItem] = Field(default_factory=list)
@@ -351,6 +354,13 @@ class CharacterSheet(BaseModel):
         if notes and notes != self.notes:
             self.notes = notes
             changes.append("notes updated")
+
+        # The DM grants Inspiration (a single held token) for playing to the
+        # character's traits/ideal/bond/flaw. Only ever set true here - it's
+        # spent by the engine on the player's next roll, not by the DM.
+        if update.get("inspiration") is True and not self.inspiration:
+            self.inspiration = True
+            changes.append(f"{self.name} gains Inspiration")
 
         disposition = update.get("disposition")
         # A real model-input boundary, not decorative: disposition is a

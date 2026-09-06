@@ -9,6 +9,7 @@ export const EventType = {
   CHARACTER_EDIT: "character_edit",
   DICE_ROLL: "dice_roll",
   DEATH_SAVE: "death_save",
+  USE_INSPIRATION: "use_inspiration",
   RECONNECT: "reconnect",
   START_SESSION: "start_session",
   START_COMBAT: "start_combat",

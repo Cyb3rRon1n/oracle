@@ -19,7 +19,7 @@ paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-firs
 | **Initiative** | Usually DEX mod | Not stored; the overlay shows `stat_modifiers.dex`. `_on_start_combat` already rolls real initiative — only the resting display was missing. |
 | ~~**XP to next level**~~ | Bar / number toward the next threshold | **Done.** `_owner_character_view` sends `xp_level_start` / `xp_next_level` from `rules.xp_thresholds()`; the overlay shows `xp / next`. |
 | ~~**Alignment**~~ | One field, no mechanics | **Done.** `CharacterSheet.alignment: str`, player-set via `character_edit` (in `CHARACTER_EDIT_TEXT_FIELDS`), fed to the DM through `character_summary`. |
-| **Inspiration** | A single yes/no token | `CharacterSheet.inspiration: bool = False`; DM grants/spends it via an `update_character` field. |
+| ~~**Inspiration**~~ | A single yes/no token | **Done.** `CharacterSheet.inspiration: bool`; DM grants via `update_character` (`inspiration: true`), player spends via `use_inspiration` for advantage on their next d20. See `docs/protocol.md` "Inspiration". |
 
 ## Small (one model field + a bit of engine logic)
 
@@ -33,7 +33,7 @@ paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-firs
 
 | Field | Paper sheet | Add it |
 |---|---|---|
-| ~~**Personality Traits / Ideals / Bonds / Flaws**~~ | Four short RP fields | **Done.** Four `str` fields on `CharacterSheet`, seeded from `origins.json` at creation, player-editable via `character_edit`, fed to the DM through `character_summary`. No Inspiration mechanic yet (see below). |
+| ~~**Personality Traits / Ideals / Bonds / Flaws**~~ | Four short RP fields | **Done.** Four `str` fields on `CharacterSheet`, seeded from `origins.json` at creation, player-editable via `character_edit`, fed to the DM through `character_summary`. The Inspiration reward for playing to them is wired up (see below). |
 | ~~**Attacks & Spellcasting table**~~ | Per-attack: name, to-hit bonus, damage + type | **Done.** `_owner_character_view` → `attacks: [{name, kind, to_hit, damage}]` — the equipped weapon (DEX for ranged, best of STR/DEX for finesse, else STR; magic bonus folded in; proficiency assumed) plus every attack-shaped known spell. Not covered: weapon-proficiency gating (Oracle tracks none — see below), cantrip damage scaling by level. |
 | **Proficiencies & Languages** | Armor/weapon/tool proficiencies; spoken languages | `class.proficiencies` and `race.languages` into `srd.json`; surface in `_owner_character_view`. Display-only unless a proficiency actually gates something. |
 | **Hit Dice pool** | `Nd<hit die>`, spent on a short rest, restored on a long rest | `CharacterSheet.hit_dice_total` (= level) / `hit_dice_remaining`. Replaces the current short-rest shortcut (`_apply_update`'s "heal half of what's missing") with the real "spend a die, roll it + CON" rule. Long rest restores half the pool. |

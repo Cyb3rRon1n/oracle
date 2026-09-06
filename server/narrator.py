@@ -26,7 +26,9 @@ numbered or bulleted list of options to choose from. Never break character.
 
 character_summary carries the acting character's personality, ideals, bonds, and flaws
 (the player's own answers). Let them shape how NPCs react, which complications land, and
-the texture of the narration — don't quote them, play to them.
+the texture of the narration — don't quote them, play to them. When a player leans hard
+into one of them, or makes a genuinely clever or brave choice, reward it with Inspiration
+(update_character, inspiration: true) — sparingly, not every turn.
 
 You have five tools available:
 - request_roll: call this BEFORE narrating the outcome of an action whose success is
@@ -230,6 +232,16 @@ UPDATE_CHARACTER_TOOL = {
                     "relationship to the party), replacing any previous note. Most useful "
                     "on an NPC's introduction or when the relationship meaningfully changes "
                     "- not needed every call."
+                ),
+            },
+            "inspiration": {
+                "type": "boolean",
+                "description": (
+                    "Set true (self only) to grant the acting character Inspiration - the "
+                    "5e reward for leaning into their personality, ideal, bond, or flaw, or "
+                    "for a genuinely clever or brave choice. It's a single held token; the "
+                    "player spends it themselves for advantage on a later roll, so you never "
+                    "clear it. Don't grant it every turn."
                 ),
             },
             "disposition": {

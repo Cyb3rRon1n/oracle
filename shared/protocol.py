@@ -13,6 +13,7 @@ EventType = Literal[
     "character_edit",
     "dice_roll",
     "death_save",
+    "use_inspiration",
     "reconnect",
     "start_session",
     "start_combat",

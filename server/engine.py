@@ -650,9 +650,10 @@ def _dice_roll_tags(roll: dict) -> str:
         roll_kind_label = f" ({roll_kind})" if roll_kind else ""
     disadvantage_reasons = roll.get("disadvantage_reasons")
     disadvantage_label = f" (disadvantage: {', '.join(disadvantage_reasons)})" if disadvantage_reasons else ""
+    inspiration_label = " (advantage: Inspiration)" if roll.get("inspiration") else ""
     return (
         damage_label + weapon_magic_label + ability_label + skill_label + spell_label
-        + roll_kind_label + disadvantage_label
+        + roll_kind_label + disadvantage_label + inspiration_label
     )
 
 
@@ -856,6 +857,9 @@ class GameEngine:
         # Feeds build_starting_character's random per-character origin.
         self._origin_table = origin_table or load_default_origin_table()
         self._pending_proposals: dict[str, dict] = {}
+        # player_ids who armed their held Inspiration; consumed by the next d20
+        # roll in request_roll. Engine-local, not persisted - re-arm on reconnect.
+        self._inspiration_armed: set[str] = set()
         # Players with at least one live connection. handle_disconnect fires
         # only on a player's last connection, so this is multi-tab safe.
         self._connected_players: set[str] = set()
@@ -1549,21 +1553,39 @@ class GameEngine:
             disadvantage_reasons = _has_disadvantage(character, roll_kind)
             disadvantage = bool(disadvantage_reasons)
 
+            # Inspiration: spent here (not by the DM) on the first real d20 roll
+            # after the player armed it. dice.roll cancels advantage+disadvantage
+            # per 5e, but the token is still consumed - that's the rule.
+            inspiration_used = (
+                player_id in self._inspiration_armed
+                and character.inspiration
+                and bool(re.match(r"\s*\d*d20\b", notation, re.IGNORECASE))
+            )
+
             try:
                 total, rolls, sides = dice.roll(
                     notation,
                     extra_modifier=(ability_mod or 0) + proficiency_bonus + weapon_magic_bonus,
+                    advantage=inspiration_used,
                     disadvantage=disadvantage,
                 )
             except dice.InvalidDiceNotation as exc:
                 return f"Invalid dice notation: {exc}"
 
+            if inspiration_used:
+                character.inspiration = False
+                self._inspiration_armed.discard(player_id)
+                sheet_changed = True
+
             success = None if dc is None else total >= dc
 
-            # Natural 20 on an attack roll. Under disadvantage `rolls` holds both
-            # d20s but only the worse counts, so use that. ponytail: announced
-            # only, no automatic damage-doubling.
-            kept_roll = min(rolls) if disadvantage else rolls[0]
+            advantage = inspiration_used and not disadvantage
+            # Natural 20 on an attack roll. Under advantage/disadvantage `rolls`
+            # holds both d20s but only the kept one counts.
+            # ponytail: announced only, no automatic damage-doubling.
+            kept_roll = (
+                max(rolls) if advantage else min(rolls) if disadvantage else rolls[0]
+            )
             critical = roll_kind == "attack" and sides == 20 and kept_roll == 20
 
             roll_entry = {
@@ -1574,6 +1596,7 @@ class GameEngine:
                 "skill": skill, "proficient": proficient, "proficiency_bonus": proficiency_bonus,
                 "spell": spell_entry["name"] if spell_entry and spell_entry.get("attack") else None,
                 "disadvantage": disadvantage, "disadvantage_reasons": disadvantage_reasons,
+                "advantage": advantage, "inspiration": inspiration_used,
                 "critical": critical,
                 "weapon_magic_bonus": weapon_magic_bonus or None,
             }
@@ -2175,6 +2198,34 @@ class GameEngine:
         await self._broadcast(self._player_update_envelope(character))
         await self._save(player_id)
 
+    async def _on_use_inspiration(self, envelope: Envelope) -> None:
+        """Toggle whether the player's held Inspiration is armed for their next
+        d20 roll. Exempt from turn order like death_save - the engine spends the
+        token in request_roll when that roll actually happens."""
+        player_id = envelope.sender_id
+        character = self._session.characters.get(player_id)
+        if character is None:
+            return
+        if not character.inspiration:
+            self._inspiration_armed.discard(player_id)
+            await self._send_to(
+                player_id, self._system_envelope("You have no Inspiration to use.", level="warning")
+            )
+            return
+        if player_id in self._inspiration_armed:
+            self._inspiration_armed.discard(player_id)
+            await self._send_to(
+                player_id, self._system_envelope("Inspiration set aside - it won't be used.", level="info")
+            )
+        else:
+            self._inspiration_armed.add(player_id)
+            await self._send_to(
+                player_id,
+                self._system_envelope(
+                    "Inspiration ready - your next d20 roll is made with advantage.", level="info"
+                ),
+            )
+
     async def _on_dice_roll(self, envelope: Envelope) -> None:
         player_id = envelope.sender_id
         character = self._session.characters.get(player_id)
@@ -2254,6 +2305,10 @@ class GameEngine:
         if roll.get("disadvantage"):
             payload["disadvantage"] = True
             payload["disadvantage_reasons"] = roll["disadvantage_reasons"]
+        if roll.get("advantage"):
+            payload["advantage"] = True
+        if roll.get("inspiration"):
+            payload["inspiration"] = True
         if roll.get("critical"):
             payload["critical"] = True
         if roll.get("weapon_magic_bonus"):

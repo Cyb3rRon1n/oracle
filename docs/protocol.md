@@ -28,6 +28,7 @@ Every message, both directions, uses the same wrapper:
 | `character_edit` | `{field, value}` | player-side bookkeeping (`notes`, `add_item`, `remove_item`) that doesn't need DM adjudication - see "Character edit" below |
 | `dice_roll` | `{dice: "1d20", reason}` | player-initiated roll (vs. DM-requested) |
 | `death_save` | `{}` | a dying player's own roll against death - see "Death saves" below |
+| `use_inspiration` | `{}` | toggle whether the player's held Inspiration is spent (for advantage) on their next d20 roll - see "Inspiration" below |
 | `reconnect` | `{player_id, last_event_id}` | resync log/state after a dropped connection |
 | `start_session` | `{}` | the pre-game lobby's "Start Adventure" trigger - any joined player may send this (no host/GM role exists). No-op if the adventure has already started (idempotent - see `session_started` below) |
 | `start_combat` | `{}` | begins formal initiative - any joined player may send this. No-op if already in combat (idempotent) - see "Formal initiative" below |
@@ -201,7 +202,7 @@ The gap named and explicitly deferred twice already (this doc's own former note 
 - **Roll-type-aware precision, closing the "broader than strict RAW" gap this section used to name as a known limitation.** `request_roll` gained an optional `roll_kind` field (`"attack"`/`"save"`/`"check"`, `AnthropicNarrator` only, same gating `ability`/`weapon` already have) — see "Roll kind" below. When given, `ROLL_KIND_DISADVANTAGE_EXCLUSIONS` (`server/engine.py`) narrows which conditions actually apply: poisoned/frightened's real SRD text never mentions saving throws, so a `roll_kind: "save"` roll isn't affected by either; prone's real text only ever mentions attack rolls, so both `"save"` and `"check"` are excluded for it. **Backward compatible, not a breaking change**: an omitted `roll_kind` (a plain `/roll`, or any request_roll call that doesn't set it) keeps the original broader "applies to any roll" behavior exactly as before.
 - Disadvantage never stacks (multiple qualifying conditions still just roll twice once, real 5e's own rule) — `disadvantage_reasons` names every condition that contributed, even though only one roll-twice happens.
 - **Both real d20s are always reported**, not just the kept one (`dice_result`'s `rolls` becomes a 2-entry list) — the discarded roll stays visible for transparency, matching this project's "explain the roll, don't just show a bare number" convention already established for `ability`/`damage_type`. **A real, subtle display bug this required getting right**: naively checking "does *any* entry in `rolls` equal the die's max/min" for the client's natural-20/natural-1 highlight would wrongly highlight off a high *discarded* roll even though the low *kept* roll is what the total (and the DC comparison) actually reflects — `client/app.py`'s `_dice_result_line()` narrows the highlight check to the genuinely-kept die when disadvantage applied.
-- **Not built (yet)**: advantage from any source (nothing currently grants it — the `dice.py` primitive supports it, ready for e.g. a future target-side "attacking a prone creature" effect, but nothing calls it that way yet), and stunned's incapacitation/auto-fail-saves/attacks-against-it-have-advantage effects (still a structurally different, bigger kind of mechanic than `roll_kind` alone can close — see "Roll kind" below).
+- **Advantage now has one source: Inspiration** (see "Inspiration" below) — a player spends their held token and the engine passes `advantage` to `roll()` on their next d20. Still not built: advantage from a circumstance (attacking a prone creature, etc.), and stunned's incapacitation/auto-fail-saves effects (a structurally different, bigger mechanic than `roll_kind` alone can close — see "Roll kind" below).
 
 ## Roll kind
 
@@ -318,6 +319,16 @@ Closes a gap that's existed since HP was first tracked: hitting 0 HP was previou
 - **A normal `player_action` is rejected outright while `hp == 0`** (dying, stabilized-but-unconscious, or dead — all three), the same "It's not your turn" rejection pattern applied to a different reason an action can't proceed, real 5e's own "an unconscious creature can't take actions" rule. Doesn't advance the turn, so a dying player keeps getting reprompted rather than silently skipped.
 - **A real, honestly-scoped limitation, not silently glossed over**: nothing in this protocol lets one player's turn apply healing to a *different* player's sheet — `update_character`'s `target` only ever resolves to the acting character or an NPC, a pre-existing limit this feature doesn't attempt to close. A downed player can only recover via their own natural-20 death save (or the DM narrating an external rescue outside the mechanical system entirely).
 - **Client**: `CharacterSheetPanel._hp_line()`/`_other_player_line()` gained a `DYING`/`STABLE`/`DEAD` status label next to HP (own sheet and Party rows both, since `dying`/`dead` are public) via a new shared `_death_status_label()`. A new `/deathsave` command (`SessionScreen` only) sends the bare envelope.
+
+## Inspiration
+
+Real 5e Inspiration — a single held token, tied to the personality/ideals/bonds/flaws feature.
+
+- **The DM grants it via `update_character` (`inspiration: true`, self only).** `CharacterSheet.apply_update` only ever *sets* the flag here — it's never cleared by the DM. The `DM_SYSTEM_PROMPT` (and `OLLAMA_SYSTEM_PROMPT`) tell the DM to award it sparingly for a player leaning into one of their RP anchors or making a clever/brave choice. Anthropic-tool + legacy-Ollama-tool only; the Ollama structured schema doesn't carry it (same scope call as `temp_hp`).
+- **The player spends it, not the DM.** `use_inspiration` (`{}`, empty payload) toggles an engine-local "armed" flag (`GameEngine._inspiration_armed`, not persisted — re-arm on reconnect). The first real d20 `request_roll` for that player while armed and holding the token consumes it: `character.inspiration` back to `false`, and `advantage=true` passed to `dice.roll()`. Advantage+disadvantage still cancel per 5e, but the token is spent either way — that's the rule.
+- **Exempt from turn order, like `death_save`.** The spend happens whenever the next adjudicated roll lands, not on the player's own turn.
+- **Reported** in the roll's own log line (`_dice_roll_tags` adds `(advantage: Inspiration)`) and as `advantage`/`inspiration` booleans on the `dice_result` envelope. `inspiration` stays owner-only on the sheet (`_owner_character_view`; not in the public view).
+- **Client**: the full character-sheet overlay shows the token (`✨` when held) with a "Use on next roll" toggle; `store.inspirationArmed` is a local optimistic flag, cleared when a `character_update` shows the token spent.
 
 ## Formal initiative
 
