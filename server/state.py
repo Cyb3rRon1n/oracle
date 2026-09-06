@@ -791,6 +791,13 @@ class Session(BaseModel):
     # among others) is correctly still recognized as already-started even
     # though it predates this field and would otherwise load as False.
     started: bool = False
+    # Times the party has finished an adventure and returned to the tavern
+    # (server/engine.py's _on_end_adventure). Doubles as the disambiguator the
+    # `started`-migration needs: a session with log history but started=False
+    # and this at 0 is a legacy pre-`started` save (migrate to started=True);
+    # the same shape with this > 0 is a party genuinely back in the lobby
+    # between adventures.
+    adventures_completed: int = 0
     # Lobby ready-check: player_ids who have toggled "ready". The adventure
     # auto-starts once every connected player is in here; cleared on start.
     # Persisted so a mid-lobby server restart doesn't silently drop it.

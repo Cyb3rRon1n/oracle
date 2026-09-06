@@ -18,6 +18,7 @@ export const EventType = {
   PLAYER_READY: "player_ready",
   SET_TYPING: "set_typing",
   TAVERN_REST: "tavern_rest",
+  END_ADVENTURE: "end_adventure",
 
   // protocol v2 (docs/protocol.md "Protocol v2 additions")
   CONTEXT_MANIFEST_REQUEST: "context_manifest_request",
@@ -35,6 +36,7 @@ export const EventType = {
   PLAYER_JOINED: "player_joined",
   PLAYER_LEFT: "player_left",
   SESSION_STARTED: "session_started",
+  SESSION_ENDED: "session_ended",
   SYSTEM_MESSAGE: "system_message",
   APPLY_PROPOSED_CHANGE: "apply_proposed_change",
   CONTEXT_MANIFEST: "context_manifest",

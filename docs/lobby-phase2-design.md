@@ -72,6 +72,13 @@ limit is the part to get right — err toward too quiet. No turn-loop changes.
 
 ## 2. Quest board
 
+**Prerequisite SHIPPED (2026-09-06):** `end_adventure` / `session_ended` +
+`Session.adventures_completed` + `WorldBible.next_adventure_prompt`. The quest
+board only makes sense between adventures, and that lobby state didn't exist —
+`_has_started()` was a one-way door. It now returns the party to `LobbyScreen`
+after `end_adventure`. The board's hook threads into `_on_start_session`'s
+`next_adventure_prompt` call (the `hook` param, already wired to accept it).
+
 The DM (AI) posts 2-3 available next missions with a one-line hook; players
 signal interest; a mission launches when enough are ready. This replaces the
 bare "Start now" with "start *into this hook*".

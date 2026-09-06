@@ -21,6 +21,7 @@ EventType = Literal[
     "player_ready",
     "set_typing",
     "tavern_rest",
+    "end_adventure",
 
     "state_sync",
     "log_entry",
@@ -33,6 +34,7 @@ EventType = Literal[
     "player_joined",
     "player_left",
     "session_started",
+    "session_ended",
     "system_message",
     "apply_proposed_change",
     "presence",

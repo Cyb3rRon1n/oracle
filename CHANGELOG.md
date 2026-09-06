@@ -7,6 +7,7 @@ only open work.
 
 ## v2 rebuild and after (2026-08)
 
+- **Return to the tavern between adventures** — `end_adventure` / `session_ended`: any player can wrap the current adventure and take the party back to the `LobbyScreen` (recap card, fresh ready-check). `campaign_summary` is refreshed and `history` cleared; the next start narrates a "new adventure begins" opening (`WorldBible.next_adventure_prompt`). `_has_started()` is now a plain flag (`Session.adventures_completed` disambiguates the legacy migration). Unblocks the quest board. (2026-09-06)
 - **Tavern-keeper NPC** — the lobby gains an AI-voiced greeter (optional `NarratorBackend.tavern_line`; `log_entry` kind `keeper`), hard rate-limited to one line per 20s, silent once the adventure starts. Keeper name/persona from `WorldBible.tavern_keeper`. (2026-09-06)
 - **`update_world` reliability** measured live on `qwen3:8b` — 10/10 across 2 repeats (was 4/12). (2026-08-25)
 - **Fact ledger** (AriGraph-lite): durable per-session facts captured with zero extra LLM calls. (2026-08-24)
