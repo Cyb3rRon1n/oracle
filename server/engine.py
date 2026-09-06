@@ -516,6 +516,7 @@ class GameEngine:
             self._session.content_preference = content_preference
 
         self._session.started = True
+        self._session.ready_players.clear()
         if self._seed_world_map():
             # Push the seeded map now - otherwise it only reaches a client on
             # its next full state_sync.
@@ -650,6 +651,20 @@ class GameEngine:
         character = self._session.characters.get(player_id)
         name = character.name if character else player_id
         await self._broadcast(self._player_left_envelope(player_id, name))
+
+        # In the lobby: the leaver drops their ready state (a reconnect
+        # re-readies), and if everyone still connected is ready, the wait is over
+        # - a party of two where one readies and the other just leaves still starts.
+        if not self._has_started():
+            if player_id in self._session.ready_players:
+                self._session.ready_players.remove(player_id)
+            connected = self._connected_players & self._session.characters.keys()
+            if connected and connected <= set(self._session.ready_players):
+                await self._on_start_session(Envelope(
+                    type="start_session", session_id=self._session.session_id,
+                    sender_id=next(iter(connected)), payload={},
+                ))
+                return
 
         if self._session.current_turn == player_id and await self._skip_absent_players():
             await self._broadcast(self._system_envelope(f"{name} is away - the turn passes on.", level="info"))
@@ -1250,6 +1265,64 @@ class GameEngine:
 
     async def _on_chat_message(self, envelope: Envelope) -> None:
         await self._broadcast(self._log_envelope("chat", envelope.payload.get("text", "")))
+        # Sending a message means you're present and not mid-typing.
+        await self._broadcast(self._presence_envelope(envelope.sender_id, typing=False))
+
+    async def _on_player_ready(self, envelope: Envelope) -> None:
+        """Lobby ready-check toggle. When every connected player is ready the
+        adventure auto-starts; anyone can still force it early via start_session.
+        A no-op once the adventure has started."""
+        if self._has_started():
+            return
+        player_id = envelope.sender_id
+        if player_id not in self._session.characters:
+            return
+        ready = bool(envelope.payload.get("ready"))
+        in_list = player_id in self._session.ready_players
+        if ready and not in_list:
+            self._session.ready_players.append(player_id)
+        elif not ready and in_list:
+            self._session.ready_players.remove(player_id)
+        else:
+            return
+        await self._broadcast(self._player_update_envelope(self._session.characters[player_id]))
+        await self._save(player_id)
+
+        connected = self._connected_players & self._session.characters.keys()
+        if connected and connected <= set(self._session.ready_players):
+            await self._on_start_session(envelope)
+
+    async def _on_tavern_rest(self, envelope: Envelope) -> None:
+        """A long rest taken in the lobby, between adventures - full HP, half
+        the hit-dice pool back, spell slots refilled, for every party character.
+        A no-op once the adventure has started (use the DM's `rest` field then).
+        Idempotent: a party already rested just gets "nothing to recover"."""
+        if self._has_started() or not self._session.characters:
+            return
+        rested = []
+        for player_id, character in self._session.characters.items():
+            result = character.apply_update({"rest": "long"})
+            if not result.startswith("No changes applied"):
+                rested.append(character.name)
+                await self._send_to(player_id, self._character_update_envelope(player_id, character))
+                await self._broadcast(self._player_update_envelope(character))
+        if rested:
+            await self._broadcast(self._system_envelope(
+                "The party takes a long rest. Wounds close, spells return.", level="info"
+            ))
+            await self._save(envelope.sender_id)
+        else:
+            await self._send_to(envelope.sender_id, self._system_envelope(
+                "Everyone's already rested - nothing to recover.", level="info"
+            ))
+
+    async def _on_set_typing(self, envelope: Envelope) -> None:
+        """Ephemeral lobby typing indicator - broadcast, never stored. The
+        client re-sends while still typing and auto-hides on its own if a
+        'false' is dropped, so no server-side expiry sweep is needed."""
+        await self._broadcast(
+            self._presence_envelope(envelope.sender_id, typing=bool(envelope.payload.get("typing")))
+        )
 
     async def _on_character_edit(self, envelope: Envelope) -> None:
         """Player-side bookkeeping that doesn't need DM adjudication: the RP
@@ -1646,6 +1719,7 @@ class GameEngine:
                 # _has_started(), not the raw field - covers the empty-log
                 # started case (see _has_started()).
                 "started": self._has_started(),
+                "ready_players": list(self._session.ready_players),
             },
         )
 
@@ -1663,8 +1737,13 @@ class GameEngine:
             type="player_joined",
             session_id=self._session.session_id,
             sender_id="server",
-            payload=_public_character_view(character),
+            payload=self._public_view_with_lobby(character),
         )
+
+    def _public_view_with_lobby(self, character: CharacterSheet) -> dict:
+        # The shared public view plus the lobby ready flag (session state, so
+        # it can't live on _public_character_view, which only sees the sheet).
+        return {**_public_character_view(character), "ready": character.player_id in self._session.ready_players}
 
     def _player_left_envelope(self, player_id: str, name: str) -> Envelope:
         return Envelope(
@@ -1672,6 +1751,14 @@ class GameEngine:
             session_id=self._session.session_id,
             sender_id="server",
             payload={"player_id": player_id, "name": name},
+        )
+
+    def _presence_envelope(self, player_id: str, typing: bool) -> Envelope:
+        return Envelope(
+            type="presence",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload={"player_id": player_id, "typing": typing},
         )
 
     def _session_started_envelope(self) -> Envelope:
@@ -1690,7 +1777,7 @@ class GameEngine:
             type="player_update",
             session_id=self._session.session_id,
             sender_id="server",
-            payload=_public_character_view(character),
+            payload=self._public_view_with_lobby(character),
         )
 
     def _npc_update_envelope(self, name: str, npc: CharacterSheet) -> Envelope:

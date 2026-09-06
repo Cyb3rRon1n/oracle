@@ -12,6 +12,7 @@ let logSeq = 0;
 function initial() {
   return {
     status: "offline", // offline | connecting | connected | reconnecting
+    synced: false, // first state_sync received - until then we don't know started
     started: false,
     sessionId: null,
     me: null,
@@ -25,6 +26,7 @@ function initial() {
     log: [],
     awaitingDM: false, // true between sending an action / starting and the DM's first word back
     inspirationArmed: false, // player asked to spend their held Inspiration on the next roll
+    typing: {}, // player_id -> bool, ephemeral lobby typing indicator
     scene: null, // latest scene_update payload
     pendingProposal: null,
     contextManifest: null,
@@ -56,9 +58,15 @@ function reducer(state, event) {
     case "ws_status":
       return { ...state, status: event.status };
 
-    case ET.STATE_SYNC:
+    case ET.STATE_SYNC: {
+      const ready = new Set(event.payload.ready_players || []);
+      const players = { ...state.players };
+      for (const [pid, view] of Object.entries(event.payload.characters || {})) {
+        players[pid] = { ...players[pid], ...view, ready: ready.has(pid) };
+      }
       return {
         ...state,
+        synced: true,
         started: event.payload.started,
         turnOrder: event.payload.turn_order || [],
         currentTurn: event.payload.current_turn ?? null,
@@ -66,12 +74,13 @@ function reducer(state, event) {
         // characters/npcs arrive as dicts keyed by player_id / display name
         // (server/engine.py _state_sync_envelope) - owner view for our own
         // entry, redacted public views for everyone else.
-        players: { ...state.players, ...(event.payload.characters || {}) },
+        players,
         npcs: { ...state.npcs, ...(event.payload.npcs || {}) },
         world: { ...state.world, ...(event.payload.world_state || {}) },
         log: (event.payload.log_tail || []).map((e) => ({ id: ++logSeq, ...e })),
         character: (event.payload.characters || {})[state.me] ?? state.character,
       };
+    }
 
     case ET.LOG_ENTRY:
       return {
@@ -107,8 +116,16 @@ function reducer(state, event) {
     case ET.PLAYER_LEFT: {
       const players = { ...state.players };
       delete players[event.payload.player_id];
-      return { ...state, players };
+      const typing = { ...state.typing };
+      delete typing[event.payload.player_id];
+      return { ...state, players, typing };
     }
+
+    case ET.PRESENCE:
+      return {
+        ...state,
+        typing: { ...state.typing, [event.payload.player_id]: !!event.payload.typing },
+      };
 
     case ET.NPC_UPDATE:
       return { ...state, npcs: { ...state.npcs, [event.payload.name]: { ...state.npcs[event.payload.name], ...event.payload } } };
@@ -130,7 +147,7 @@ function reducer(state, event) {
     // there's no separate roller widget to feed.
 
     case ET.SESSION_STARTED:
-      return { ...state, started: true };
+      return { ...state, started: true, typing: {} };
 
     case ET.SYSTEM_MESSAGE:
       return {
@@ -230,6 +247,15 @@ export function StoreProvider({ children }) {
       },
       sendChat(text) {
         connRef.current?.sendEvent(ET.CHAT_MESSAGE, { text });
+      },
+      setReady(ready) {
+        connRef.current?.sendEvent(ET.PLAYER_READY, { ready });
+      },
+      setTyping(typing) {
+        connRef.current?.sendEvent(ET.SET_TYPING, { typing });
+      },
+      tavernRest() {
+        connRef.current?.sendEvent(ET.TAVERN_REST, {});
       },
       editCharacter(field, value) {
         connRef.current?.sendEvent(ET.CHARACTER_EDIT, { field, value });

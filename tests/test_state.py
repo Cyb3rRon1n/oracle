@@ -249,6 +249,16 @@ def test_long_rest_restores_half_the_hit_dice_pool():
     assert "4/6 hit dice" in result
 
 
+def test_long_rest_refills_spell_slots():
+    character = make_character(
+        hp=10, max_hp=10,
+        spell_slots={"1": 0, "2": 1}, max_spell_slots={"1": 3, "2": 2},
+    )
+    result = character.apply_update({"rest": "long"})
+    assert character.spell_slots == {"1": 3, "2": 2}
+    assert "spell slots restored" in result
+
+
 def test_apply_update_rest_leaves_conditions_untouched():
     # Deliberate: most SRD conditions don't just expire with time under
     # the actual rules, so a rest silently clearing them would be a real

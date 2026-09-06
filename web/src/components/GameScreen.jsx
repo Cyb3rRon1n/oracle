@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import CharacterSheet from "./CharacterSheet.jsx";
 import CharacterSheetFull from "./CharacterSheetFull.jsx";
-import ContextPicker from "./ContextPicker.jsx";
 import ExportButtons from "./ExportButtons.jsx";
 import MapPanel from "./MapPanel.jsx";
 import ScenePanel from "./ScenePanel.jsx";
@@ -99,18 +98,6 @@ export default function GameScreen() {
         </div>
       )}
 
-      {!state.started ? (
-        <div className="panel p-6 text-center space-y-3">
-          <p className="italic text-dungeon-ink/70">{t("The party has gathered.")}</p>
-          <button className="btn-gold" onClick={actions.startAdventure} disabled={state.awaitingDM}>
-            {t("Begin the adventure")}
-          </button>
-        </div>
-      ) : null}
-
-      <ContextPicker />
-
-
       <main className="panel flex-1 min-h-[40vh] overflow-y-auto p-4 space-y-3">
         {state.log.map((entry) => (
           <LogLine key={entry.id} entry={entry} />
@@ -139,11 +126,9 @@ export default function GameScreen() {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder={
-            !state.started
-              ? t("Wait for the adventure to begin…")
-              : isMyTurn
-                ? `${myName ?? ""}${t(", what do you do?")}`
-                : t("It's not your turn — chat out of character…")
+            isMyTurn
+              ? `${myName ?? ""}${t(", what do you do?")}`
+              : t("It's not your turn — chat out of character…")
           }
           autoFocus
         />

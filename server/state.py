@@ -303,6 +303,10 @@ class CharacterSheet(BaseModel):
             if regained > 0:
                 self.hit_dice_remaining += regained
                 changes.append(f"long rest: {self.hit_dice_remaining}/{self.hit_dice_total} hit dice")
+            # Real 5e: a long rest also refills every spell slot.
+            if self.spell_slots != self.max_spell_slots:
+                self.spell_slots = dict(self.max_spell_slots)
+                changes.append("long rest: spell slots restored")
         elif rest == "short" and self.hp < self.max_hp:
             if self.hit_die and self.hit_dice_remaining > 0:
                 spent = healed = 0
@@ -787,6 +791,10 @@ class Session(BaseModel):
     # among others) is correctly still recognized as already-started even
     # though it predates this field and would otherwise load as False.
     started: bool = False
+    # Lobby ready-check: player_ids who have toggled "ready". The adventure
+    # auto-starts once every connected player is in here; cleared on start.
+    # Persisted so a mid-lobby server restart doesn't silently drop it.
+    ready_players: list[str] = Field(default_factory=list)
     # Real 5e formal initiative (server/engine.py's _on_start_combat/
     # _on_end_combat) - deliberately narrow scope: only replaces the
     # mechanical turn_order/current_turn-index cycling for the duration of
