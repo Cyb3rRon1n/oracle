@@ -40,12 +40,8 @@ class Transport:
     def __init__(self, engine_factory: EngineFactory):
         self._engine_factory = engine_factory
         self._engines: dict[str, GameEngine] = {}
-        # player_id -> (session_id, connection)
-        self._connections: dict[str, set[ServerConnection]] = {}
-        # A connection is removable when its owning player closes it. The
-        # session map is needed because the same player_id can sit in
-        # different sessions' engines only if they join multiple sessions.
-        self._connection_sessions: dict[ServerConnection, str] = {}
+        self._connections: dict[str, set[ServerConnection]] = {}  # player_id -> its open connections
+        self._connection_sessions: dict[ServerConnection, str] = {}  # connection -> its session_id
 
     def _get_or_create_engine(self, session_id: str) -> GameEngine:
         engine = self._engines.get(session_id)

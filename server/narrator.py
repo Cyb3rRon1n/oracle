@@ -500,62 +500,36 @@ class NarratorBackend(Protocol):
         Session.add_facts for injection into later turns' world_summary.
 
         `world_summary` is the current location and active objectives
-        (WorldState.narrator_context(), server/state.py), given directly
-        rather than left for the DM to infer from `history` alone. Built
-        to test whether completing an objective (update_world's
-        complete_objective, matched by exact text) would go more reliably
-        if the DM could copy that text directly instead of recalling it
-        from several turns back - real --repeat testing found that wasn't
-        the actual bottleneck (see server/narrator_ollama.py's
-        WORLD_UPDATE_PROMPT_ADDENDUM comment for the full writeup), so
-        this is kept as real, defensible grounding for the DM rather than
-        a proven fix for that specific gap. Empty/None when there's
-        nothing to report yet (a fresh session) or the caller has no
-        world-tracking to offer.
+        (WorldState.narrator_context(), server/state.py), given directly so
+        complete_objective can copy exact text rather than recall it. Empty/None
+        for a fresh session or a caller with no world-tracking.
         """
 
     async def check_missed_change(
         self, narration: str, character_summary: str, apply_update: ApplyUpdate
     ) -> bool:
-        """Optional - not every backend needs to implement this (checked via
-        getattr at the call site, server/engine.py's `_narrate_and_apply`).
+        """Optional (getattr at the call site).
 
-        A narrower follow-up check, not a full turn: called only when
-        `POSSIBLE_UNTRACKED_CHANGE_PATTERN` matches a turn's narration with
-        no real `apply_update` call already made this turn (server/
-        engine.py) - gives the DM one real chance to self-correct with a
-        genuine tool call before falling back to the passive "may be out
-        of sync" warning, rather than trying to parse a specific number out
-        of `narration`'s own prose (this project's own "the engine/model
-        decides via a real mechanism, never guessed from text" convention,
-        applied here the same way it already governs ability scores, XP,
-        and damage rolls elsewhere). Returns whether a correction was
-        actually applied - server/engine.py branches its own follow-up
-        messaging on this.
+        A narrow follow-up, not a full turn: given the just-streamed narration
+        and no apply_update this turn, the DM gets one chance to self-correct
+        with a real tool call before the passive "may be out of sync" warning.
+        Returns whether a correction was applied.
         """
 
     async def propose_correction(self, narration: str, character_summary: str) -> dict | None:
-        """Optional - not every backend needs this (getattr at the call
-        site, server/engine.py).
+        """Optional (getattr at the call site).
 
-        Called right before the passive missed-change advisory is sent -
-        after check_missed_change already declined to auto-correct. Returns
-        a best-guess update_character-shaped dict (any of update_character's
-        own fields) the player can confirm and apply via /apply, or None
-        when there's genuinely nothing to propose. Deliberately framed as a
-        hypothesis for the player to weigh against what they actually saw,
-        not a decision the model is confident in - it already decided not to
-        act. Never a regex parse of narration text, the same
-        "the engine/model decides via a real mechanism" convention
-        check_missed_change documents above.
+        Called just before the passive missed-change advisory, after
+        check_missed_change declined to auto-correct. Returns a best-guess
+        update_character-shaped dict the player can confirm via /apply, or None.
+        A hypothesis for the player to weigh, not a decision the model made.
         """
         return None
 
 
 class AnthropicNarrator:
-    # Optional-capability flag (engine reads it via getattr): this backend
-    # extracts scene facts in a post-turn call and therefore takes the
-    # scene_sink argument.
+    # Optional-capability flags, read via getattr - this backend takes
+    # scene_sink / fact_sink and extracts them in a post-turn call.
     supports_scene_facts = True
 
     supports_fact_ledger = True
@@ -570,11 +544,8 @@ class AnthropicNarrator:
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._model = model
         self._rules = rules or RulesIndex.load_default()
-        # Computed once, not per-call - present on every narrate() call
-        # regardless of the rolling history window's size, so the world's
-        # own facts (server/lore/__init__.py's WorldBible) can't scroll out
-        # of context and drift or get reinvented inconsistently over a
-        # long session.
+        # World bible on the system prompt so its facts can't scroll out of
+        # the rolling history window.
         self._system_prompt = DM_SYSTEM_PROMPT + (world_bible or load_default_world_bible()).system_prompt_block()
 
     async def narrate(
@@ -631,11 +602,8 @@ class AnthropicNarrator:
                 return
             messages.append({"role": "user", "content": tool_results})
 
-        # Scene facts (docs/protocol.md "Protocol v2 additions - Scene
-        # envelope"). This backend's tool loop already interleaved decisions
-        # with prose, so the facts come from one small post-turn structured
-        # call over what actually streamed - best-effort, never fatal, and
-        # skipped entirely when nobody is listening.
+        # Scene facts (docs/protocol.md "Scene envelope") from one post-turn
+        # structured call over what streamed - best-effort, never fatal.
         if scene_sink is not None:
             try:
                 response = await self._client.messages.create(
@@ -672,13 +640,9 @@ class AnthropicNarrator:
                 logger.exception("Scene-fact extraction failed")
 
     async def summarize(self, prior_summary: str, turns: list[dict]) -> str:
-        """Optional (getattr at the call site) - the rolling campaign-summary
-        hook behind docs/REBUILD_PLAN.md's memory summarizer. Called by the
-        engine roughly every CAMPAIGN_SUMMARY_INTERVAL resolved turns with
-        the summary so far plus the history window that's about to age out;
-        returns a compressed durable recap (names, debts, unresolved
-        threads). A backend without it simply never updates the summary -
-        the same optional-capability convention as check_missed_change."""
+        """Optional (getattr at the call site). Called ~every
+        CAMPAIGN_SUMMARY_INTERVAL turns with the summary so far plus the aging-out
+        history window; returns a compressed durable recap."""
         raise NotImplementedError
 
     async def summarize(self, prior_summary: str, turns: list[dict]) -> str:
@@ -701,15 +665,9 @@ class AnthropicNarrator:
     async def check_missed_change(
         self, narration: str, character_summary: str, apply_update: ApplyUpdate
     ) -> bool:
-        """See NarratorBackend.check_missed_change's own docstring for the
-        full "why" - a real, separate, non-streamed call, not part of
-        narrate()'s own tool-round loop above. Only offers update_character
-        (not request_roll/lookup_rule/update_world) - this is a correction
-        check on narration that already happened, not a new narrative turn,
-        so nothing else is relevant. `max_tokens` is small since the only
-        useful response is a tool call or nothing; a bare text reply (the
-        model deciding not to correct anything) is deliberately discarded,
-        never shown to the player - the real narration already streamed."""
+        """See NarratorBackend.check_missed_change. A separate non-streamed
+        call offering only update_character; a bare text reply (no correction)
+        is discarded, never shown."""
         prompt = (
             f"Character:\n{character_summary}\n\n"
             f"You just narrated this, but didn't call update_character:\n{narration}\n\n"
