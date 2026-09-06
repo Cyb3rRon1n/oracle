@@ -15,6 +15,8 @@ export const EventType = {
   START_SESSION: "start_session",
   START_COMBAT: "start_combat",
   END_COMBAT: "end_combat",
+  PLAYER_READY: "player_ready",
+  SET_TYPING: "set_typing",
 
   // protocol v2 (docs/protocol.md "Protocol v2 additions")
   CONTEXT_MANIFEST_REQUEST: "context_manifest_request",
@@ -36,6 +38,7 @@ export const EventType = {
   APPLY_PROPOSED_CHANGE: "apply_proposed_change",
   CONTEXT_MANIFEST: "context_manifest",
   SCENE_UPDATE: "scene_update",
+  PRESENCE: "presence",
 };
 
 export function makeEnvelope(type, sessionId, senderId, payload = {}) {

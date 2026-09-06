@@ -3716,6 +3716,87 @@ async def start_session(engine, player_id, content_preference=None):
     ))
 
 
+async def _ready(engine, player_id, ready=True):
+    await engine.handle(Envelope(
+        type="player_ready", session_id="test-session", sender_id=player_id, payload={"ready": ready},
+    ))
+
+
+async def test_player_ready_toggles_and_broadcasts():
+    engine, session, received = make_engine(OpeningSceneDM())
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)  # a party of 2, so one ready doesn't auto-start
+    await _ready(engine, a)
+    assert session.ready_players == [a]
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
+    assert updates[-1][2]["ready"] is True
+
+    await _ready(engine, a, ready=False)
+    assert session.ready_players == []
+
+
+async def test_a_solo_player_readying_up_starts_the_adventure():
+    engine, session, _ = make_engine(OpeningSceneDM())
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    await _ready(engine, p)
+    assert session.started
+
+
+async def test_adventure_auto_starts_when_every_connected_player_is_ready():
+    engine, session, _ = make_engine(OpeningSceneDM())
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)
+    await _ready(engine, a)
+    assert not session.started  # b hasn't readied
+    await _ready(engine, b)
+    assert session.started
+    assert session.ready_players == []  # cleared on start
+
+
+async def test_a_second_ready_from_the_same_player_is_a_no_op():
+    engine, session, received = make_engine(OpeningSceneDM())
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)
+    await _ready(engine, a)
+    await _ready(engine, a)  # duplicate - must not "complete" the party of 2
+    assert not session.started
+
+
+async def test_disconnect_of_the_last_unready_player_starts_the_adventure():
+    engine, session, _ = make_engine(OpeningSceneDM())
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)
+    await _ready(engine, a)
+    await engine.handle_disconnect(b)  # a is the only one left, and a is ready
+    assert session.started
+
+
+async def test_set_typing_broadcasts_presence_without_storing_anything():
+    engine, session, received = make_engine(StubDM())
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    received.clear()
+    await engine.handle(Envelope(
+        type="set_typing", session_id="test-session", sender_id=p, payload={"typing": True},
+    ))
+    presence = [r for r in received if r[0] == "broadcast" and r[1] == "presence"]
+    assert presence[-1][2] == {"player_id": p, "typing": True}
+
+
+async def test_player_ready_is_a_no_op_after_the_adventure_has_started():
+    engine, session, _ = make_engine(OpeningSceneDM())
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    await start_session(engine, p)
+    await _ready(engine, p)
+    assert session.ready_players == []
+
+
 async def test_start_session_sets_a_recognized_content_preference():
     dm = OpeningSceneDM()
     engine, session, received = make_engine(dm)

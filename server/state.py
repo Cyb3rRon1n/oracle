@@ -787,6 +787,10 @@ class Session(BaseModel):
     # among others) is correctly still recognized as already-started even
     # though it predates this field and would otherwise load as False.
     started: bool = False
+    # Lobby ready-check: player_ids who have toggled "ready". The adventure
+    # auto-starts once every connected player is in here; cleared on start.
+    # Persisted so a mid-lobby server restart doesn't silently drop it.
+    ready_players: list[str] = Field(default_factory=list)
     # Real 5e formal initiative (server/engine.py's _on_start_combat/
     # _on_end_combat) - deliberately narrow scope: only replaces the
     # mechanical turn_order/current_turn-index cycling for the duration of
