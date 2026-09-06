@@ -31,10 +31,11 @@ ledger. A reproducible tool-call reliability harness. Full list: CHANGELOG.md.
   anthropic --out evidence/postv2/claude_sonnet5_combat_r1.json` (and
   `--backend openai`).
 - **Re-measure after any prompt-context change.** Two-phase turns, the
-  summarizer, the fact ledger, and the `num_ctx` pin all change what the model
-  sees — `scripts/live_reliability_check.py --repeat 5` keeps the CHANGELOG
-  percentages honest. The `num_ctx` pin especially wants a GPU-box `--repeat 5`
-  run: it may move the number more than any prompt experiment did.
+  summarizer, the fact ledger all change what the model sees —
+  `scripts/live_reliability_check.py --repeat 5` keeps the CHANGELOG
+  percentages honest. The `num_ctx` pin has now been measured (74% pooled,
+  qwen2.5:7b combat `--repeat 5`, up from ~66% — see CHANGELOG); a real,
+  reproducible gain, though not the outsized move this note used to speculate.
 - **Long-session memory frequency.** The tool-call side is solved
   (`update_world` measured 100% on `qwen3:8b`); the open question is whether
   the DM actually updates `summary` often enough across 20+ turn sessions, and
