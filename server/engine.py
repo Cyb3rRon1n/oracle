@@ -779,6 +779,7 @@ def build_starting_character(
         hp=max_hp,
         max_hp=max_hp,
         character_class=class_entry["name"],
+        hit_die=class_entry["hit_die"],
         race=race_name,
         speed=speed,
         stats=stats,
@@ -986,6 +987,10 @@ class GameEngine:
             hp_gain = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod) * levels_gained
             character.max_hp += hp_gain
             character.hp += hp_gain
+            # Hit-dice pool tracks level; the new dice arrive unspent.
+            character.hit_die = class_entry["hit_die"]
+            character.hit_dice_total = character.level
+            character.hit_dice_remaining += levels_gained
             # ponytail: AC doesn't recompute when a post-creation ASI changes DEX.
             asi_abilities = _apply_ability_score_improvements(character, old_level, character.level)
             # Slots grow by the old->new max delta, not a reset - a level-up

@@ -183,8 +183,8 @@ UPDATE_CHARACTER_TOOL = {
                     "Use when the character/NPC rests for a meaningful stretch of time "
                     "(camping overnight, resting after a fight) instead of guessing an "
                     "hp_delta yourself - the engine computes the real amount healed. "
-                    "'long' fully restores HP; 'short' restores about half of what's "
-                    "currently missing. Don't combine with hp_delta in the same call."
+                    "'long' fully restores HP and gives back half the hit-dice pool; "
+                    "'short' spends hit dice to heal. Don't combine with hp_delta."
                 ),
             },
             "add_item": {"type": "string", "description": "Item name to add to inventory."},

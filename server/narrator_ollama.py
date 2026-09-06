@@ -104,8 +104,8 @@ _OUTCOME_PROPERTIES = {
         "description": (
             "Set when the character/NPC rests for a meaningful stretch of time (camping "
             "overnight, resting after a fight) instead of guessing hp_delta - the engine "
-            "computes the real amount healed. 'long' fully restores HP; 'short' restores "
-            "about half of what's missing. Empty string if not applicable. Don't combine "
+            "computes the real amount healed. 'long' fully restores HP; 'short' spends "
+            "hit dice to heal. Empty string if not applicable. Don't combine "
             "with a non-zero hp_delta in the same response."
         ),
     },

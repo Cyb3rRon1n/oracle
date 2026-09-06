@@ -215,6 +215,40 @@ def test_apply_update_short_rest_never_overshoots_max_hp():
     assert character.hp == 9
 
 
+def test_short_rest_spends_hit_dice_to_heal(monkeypatch):
+    monkeypatch.setattr("server.dice.random.randint", lambda a, b: 5)  # each d8 -> 5
+    character = make_character(
+        hp=3, max_hp=30, hit_die="d8", hit_dice_total=4, hit_dice_remaining=4,
+        stats={"con": 14},  # +2
+    )
+    result = character.apply_update({"rest": "short"})
+    # heals 7/die (5 + 2 CON); missing 27 -> spends 4 dice for 28, capped at 27.
+    assert character.hp == 30
+    assert character.hit_dice_remaining == 0
+    assert "spent 4 hit dice" in result
+
+
+def test_short_rest_stops_at_full_hp_without_wasting_dice(monkeypatch):
+    monkeypatch.setattr("server.dice.random.randint", lambda a, b: 8)
+    character = make_character(hp=25, max_hp=30, hit_die="d8", hit_dice_total=4, hit_dice_remaining=4)
+    character.apply_update({"rest": "short"})
+    assert character.hp == 30
+    assert character.hit_dice_remaining == 3  # one die covered the 5 missing
+
+
+def test_short_rest_with_no_hit_die_falls_back_to_half_missing():
+    character = make_character(hp=2, max_hp=10)  # classless: hit_die ""
+    character.apply_update({"rest": "short"})
+    assert character.hp == 6
+
+
+def test_long_rest_restores_half_the_hit_dice_pool():
+    character = make_character(hp=10, max_hp=10, hit_die="d10", hit_dice_total=6, hit_dice_remaining=1)
+    result = character.apply_update({"rest": "long"})
+    assert character.hit_dice_remaining == 4  # +3 (half of 6)
+    assert "4/6 hit dice" in result
+
+
 def test_apply_update_rest_leaves_conditions_untouched():
     # Deliberate: most SRD conditions don't just expire with time under
     # the actual rules, so a rest silently clearing them would be a real

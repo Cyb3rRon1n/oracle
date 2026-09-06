@@ -134,7 +134,16 @@ export default function CharacterSheetFull({ onClose }) {
                 <span className="text-dungeon-ink/60">
                   {t("Temp HP")} <b className="text-dungeon-ink">{sheet.temp_hp || 0}</b>
                 </span>
-                <Planned label={t("Hit dice")} />
+                {sheet.hit_die ? (
+                  <span className="text-dungeon-ink/60">
+                    {t("Hit dice")}{" "}
+                    <b className="text-dungeon-ink">
+                      {sheet.hit_dice_remaining ?? 0}/{sheet.hit_dice_total ?? 0} {sheet.hit_die}
+                    </b>
+                  </span>
+                ) : (
+                  <Planned label={t("Hit dice")} />
+                )}
               </div>
             </Section>
 
