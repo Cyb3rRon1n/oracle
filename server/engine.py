@@ -601,6 +601,10 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
         "saving_throw_proficiencies": list(CLASS_SAVING_THROW_PROFICIENCIES.get(class_key, ())),
         "spell_attack_bonus": spell_attack_bonus,
         "attacks": _attack_lines(character, rules, spell_attack_bonus),
+        # Display-only SRD data (srd.json): armor/weapon/tool proficiency from
+        # the class, spoken languages from the race. Nothing gates on them yet.
+        "class_proficiencies": (class_entry or {}).get("proficiencies", {}),
+        "languages": list((race_entry or {}).get("languages", [])),
     }
 
 

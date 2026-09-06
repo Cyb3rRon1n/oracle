@@ -250,6 +250,7 @@ Closes the second gap `roll_kind` was built to unblock (see above) — real 5e s
 - **Reported on `dice_result` as `skill`/`proficient`/`proficiency_bonus`** (the bonus field only present when actually proficient — the same "don't carry an always-false/zero field" convention `roll_kind`/`disadvantage` already follow), and rendered as a `(Stealth)` or `(Athletics, +2 proficiency)` tag by `client/app.py`'s `_dice_result_line()`, the same transparency convention every other roll tag here already established.
 - **An unrecognized skill name is a graceful no-op**, the same convention every other name-based `request_roll` lookup already follows — no `ability` is auto-resolved either, since there's no real skill to resolve one from.
 - **Not built (yet)**: player-chosen proficiency allocation, and proficiency's other real 5e uses (saving throws, tool checks) — `CharacterSheet.proficiency_bonus` is a real, level-correct number available for either, but nothing wires it into saves or tool checks yet.
+- **Armor/weapon/tool proficiency and spoken languages are display-only.** `srd.json` gained `classes[*].proficiencies` (`armor`/`weapons`/`tools` string lists, SRD 5.1) and `races[*].languages`; `_owner_character_view` sends them as `class_proficiencies` and `languages` for the sheet overlay to list. Nothing gates on them — a wizard swinging a greatsword still just rolls normally.
 
 ## Character edit: notes and inventory bookkeeping
 
