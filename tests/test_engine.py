@@ -217,20 +217,20 @@ def test_seed_world_map_is_a_no_op_for_a_bible_without_coordinates():
 @pytest.mark.parametrize(
     "character_class,expected_hp,expected_inventory,expected_stats,expected_ac",
     [
-        # HP is the SRD hit_die max + a real CON modifier now (every class
-        # places CON second in its own priority order - see
-        # CLASS_ABILITY_PRIORITY - so each gets the Standard Array's 14,
-        # a +2 modifier, uniformly): fighter d10+2=12, rogue d8+2=10,
-        # cleric d8+2=10, wizard d6+2=8. AC is 11 (leather armor's base)
+        # HP is the SRD hit_die max + a real CON modifier + STARTING_HP_CUSHION
+        # (10). Every class places CON second in its own priority order (see
+        # CLASS_ABILITY_PRIORITY) so each gets the Standard Array's 14, a +2
+        # modifier, uniformly: fighter d10+2+10=22, rogue d8+2+10=20,
+        # cleric d8+2+10=20, wizard d6+2+10=18. AC is 11 (leather armor's base)
         # + DEX modifier for the three classes whose starting kit includes
         # it, or 10 (unarmored) + DEX modifier for wizard, which doesn't.
-        ("fighter", 100, ["Longsword", "Leather Armor"],
+        ("fighter", 22, ["Longsword", "Leather Armor"],
          {"str": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "int": 8}, 12),
-        ("rogue", 100, ["Shortbow", "Leather Armor"],
+        ("rogue", 20, ["Shortbow", "Leather Armor"],
          {"dex": 15, "con": 14, "int": 13, "wis": 12, "cha": 10, "str": 8}, 13),
-        ("cleric", 100, ["Leather Armor", "Potion of Healing"],
+        ("cleric", 20, ["Leather Armor", "Potion of Healing"],
          {"wis": 15, "con": 14, "str": 13, "dex": 12, "cha": 10, "int": 8}, 12),
-        ("wizard", 100, ["Potion of Healing"],
+        ("wizard", 18, ["Potion of Healing"],
          {"int": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "str": 8}, 11),
     ],
 )
@@ -238,11 +238,11 @@ def test_build_starting_character_gives_a_real_class_kit(
     character_class, expected_hp, expected_inventory, expected_stats, expected_ac
 ):
     # Closes the "no character sheet at all" gap: previously every fresh
-    # character was just name + hp=100/100 with nothing else, since stats/
+    # character was just name + a bare HP with nothing else, since stats/
     # inventory otherwise only get populated if the DM's update_character
     # tool happens to fire mid-narration - unreliable per this project's
     # whole tool-call investigation. HP is the SRD hit_die's max value
-    # plus a real CON modifier (ability scores closed that gap).
+    # plus a real CON modifier plus a flat cushion (STARTING_HP_CUSHION).
     rules = RulesIndex.load_default()
     sheet = build_starting_character("p1", "Rook", character_class, rules)
 
@@ -251,6 +251,7 @@ def test_build_starting_character_gives_a_real_class_kit(
     assert [item.name for item in sheet.inventory] == expected_inventory
     assert all(item.quantity == 1 and item.magic_bonus == 0 for item in sheet.inventory)
     assert sheet.character_class  # the SRD's display name, e.g. "Fighter"
+    assert sheet.hit_die.startswith("d") and sheet.hit_dice_total == 1 and sheet.hit_dice_remaining == 1
     assert sheet.stats == expected_stats
     assert sheet.stat_modifiers["con"] == 2  # (14 - 10) // 2
     assert sheet.ac == expected_ac
@@ -264,8 +265,8 @@ def test_build_starting_character_falls_back_on_blank_or_unknown_class(character
     rules = RulesIndex.load_default()
     sheet = build_starting_character("p1", "Rook", character_class, rules)
 
-    assert sheet.hp == 100
-    assert sheet.max_hp == 100
+    assert sheet.hp == 20  # 10 bare baseline + STARTING_HP_CUSHION (10)
+    assert sheet.max_hp == 20
     assert sheet.inventory == []
     assert sheet.character_class == ""
     assert sheet.stats == {}
@@ -352,8 +353,8 @@ def test_build_starting_character_applies_race_ability_bonus_and_display_name():
 
     assert sheet.race == "Dwarf"  # the SRD's display name, e.g. character_class
     assert sheet.stats["con"] == 16
-    assert sheet.hp == 100
-    assert sheet.max_hp == 100
+    assert sheet.hp == 23  # d10 max (10) + CON mod (+3) + cushion (10)
+    assert sheet.max_hp == 23
 
 
 def test_build_starting_character_applies_a_subrace_combined_ability_bonus():
@@ -379,6 +380,24 @@ def test_build_starting_character_falls_back_on_blank_or_unknown_race(race):
 
     assert sheet.race == ""
     assert sheet.stats["con"] == 14  # unchanged from the plain-fighter baseline
+
+
+@pytest.mark.parametrize(
+    ("race", "expected_speed"),
+    [("human", 30), ("dwarf", 25), ("wood_elf", 35), ("", 30), ("not-a-real-race", 30)],
+)
+def test_build_starting_character_sets_speed_from_race(race, expected_speed):
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules, race=race)
+    assert sheet.speed == expected_speed
+
+
+def test_owner_character_view_sends_xp_thresholds_bracketing_the_level():
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules)
+    view = _owner_character_view(sheet, rules)
+    assert view["xp_level_start"] == 0  # level 1
+    assert view["xp_next_level"] == 300  # level 2 threshold
 
 
 def test_build_starting_character_records_race_independent_of_class():
@@ -414,7 +433,7 @@ async def test_join_with_character_class_builds_real_starting_sheet_end_to_end()
     ))
 
     character = session.characters[player_id]
-    assert character.hp == 100  # flat 100 starting HP (project default)
+    assert character.hp == 22  # d10 max (10) + CON mod (+2) + cushion (10)
     assert character.character_class == "Fighter"
     assert [item.name for item in character.inventory] == ["Longsword", "Leather Armor"]
 
@@ -507,7 +526,7 @@ async def test_join_with_race_builds_a_real_racial_bonus_end_to_end():
     character = session.characters[player_id]
     assert character.race == "Dwarf"
     assert character.stats["con"] == 16
-    assert character.hp == 100
+    assert character.hp == 23
 
 
 async def test_join_with_unrecognized_race_warns_the_player_privately():
@@ -841,7 +860,7 @@ async def test_update_character_tool_call_applies_and_pushes_character_update():
     ))
 
     character = session.characters[player_id]
-    assert character.hp == 96  # 100 - 4
+    assert character.hp == 16  # 20 - 4
     assert character.find_item("torch") is not None
     assert "HP -4" in dm.tool_result
 
@@ -850,7 +869,7 @@ async def test_update_character_tool_call_applies_and_pushes_character_update():
         if r[0] == "send_to" and r[2] == "character_update" and r[1] == player_id
     ]
     assert updates, "a real sheet change should push a character_update to the player"
-    assert updates[-1][3]["sheet_delta"]["hp"] == 96
+    assert updates[-1][3]["sheet_delta"]["hp"] == 16
     assert updates[-1][3]["sheet_delta"]["inventory"] == [{"name": "torch", "quantity": 1, "magic_bonus": 0}]
 
 
@@ -858,13 +877,13 @@ async def test_update_character_rest_heals_the_acting_character_through_a_real_t
     dm = UpdateSequenceDM([{"hp_delta": -7}])
     engine, session, _ = make_engine(dm)
     player_id = str(uuid.uuid4())
-    await join(engine, player_id)  # blank class, hp=100/max_hp=100
+    await join(engine, player_id)  # blank class, hp=20/max_hp=20
 
     await engine.handle(Envelope(
         type="player_action", session_id="test-session", sender_id=player_id,
         payload={"text": "I take a bad hit"},
     ))
-    assert session.characters[player_id].hp == 93
+    assert session.characters[player_id].hp == 13
 
     dm._updates = [{"rest": "long"}]
     await engine.handle(Envelope(
@@ -872,7 +891,7 @@ async def test_update_character_rest_heals_the_acting_character_through_a_real_t
         payload={"text": "I make camp and rest for the night"},
     ))
 
-    assert session.characters[player_id].hp == 100
+    assert session.characters[player_id].hp == 20
     assert "long rest" in dm.tool_results[-1]
 
 
@@ -949,8 +968,8 @@ async def test_update_character_npc_target_defaults_max_hp_when_omitted():
     ))
 
     rat = session.npcs["rat"]
-    assert rat.max_hp == 100  # DEFAULT_NPC_HP - NPCs default to the same flat-100 pool players start at
-    assert rat.hp == 98
+    assert rat.max_hp == 10  # DEFAULT_NPC_HP - a CR-1/4 mook's SRD HP, not a 100-HP sponge
+    assert rat.hp == 8
 
 
 async def test_update_character_npc_target_disposition_persists_and_updates():
@@ -1305,6 +1324,24 @@ async def test_party_split_levels_up_every_member_who_crosses_the_threshold():
     assert "Lyra reaches level 4" in text
 
 
+async def test_level_up_hp_growth_has_no_cushion_only_level_1_does():
+    # STARTING_HP_CUSHION is a one-time level-1 add. A fighter starts at
+    # d10(10) + CON(+2) + cushion(10) = 22, but each level-up adds only the
+    # pure SRD amount, d10(10) + CON(+2) = 12 - no cushion.
+    dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 300}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Brick", "character_class": "fighter"},
+    ))
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id, payload={"text": "finish it"},
+    ))
+    assert session.characters[player_id].level == 2
+    assert session.characters[player_id].max_hp == 34  # 22 + 12, not 22 + 22
+
+
 async def test_level_up_grows_hp_by_class_hit_die_and_broadcasts_level_up():
     dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 300}])
     engine, session, received = make_engine(dm)
@@ -1315,7 +1352,7 @@ async def test_level_up_grows_hp_by_class_hit_die_and_broadcasts_level_up():
     ))
     character = session.characters[player_id]
     assert character.level == 1
-    assert character.max_hp == 100  # flat 100 starting HP (project default)
+    assert character.max_hp == 22  # fighter: d10 max + CON mod + cushion
 
     await engine.handle(Envelope(
         type="player_action", session_id="test-session", sender_id=player_id,
@@ -1324,8 +1361,11 @@ async def test_level_up_grows_hp_by_class_hit_die_and_broadcasts_level_up():
 
     assert character.xp == 300  # exactly the level-2 threshold
     assert character.level == 2
-    assert character.max_hp == 112  # 100 + 12 (fighter's d10 max + CON mod) per level
-    assert character.hp == 112
+    assert character.max_hp == 34  # 22 + 12 (fighter's d10 max + CON mod) per level
+    assert character.hp == 34
+    assert character.hit_die == "d10"
+    assert character.hit_dice_total == 2  # tracks level
+    assert character.hit_dice_remaining == 2  # the new die arrives unspent
 
     level_ups = [
         r for r in received
@@ -1555,6 +1595,52 @@ async def test_owner_character_view_includes_class_features_and_skill_proficienc
     view = _owner_character_view(session.characters[player_id], engine._rules)
     assert "Arcane Recovery" in " ".join(view["class_features"])
     assert view["skill_proficiencies"] == ["arcana", "investigation"]
+    # Also surfaced for the character sheet: which saves this class is
+    # proficient in, and (for a caster) the spell attack bonus.
+    assert view["saving_throw_proficiencies"] == ["int", "wis"]
+    assert view["spell_attack_bonus"] == (
+        session.characters[player_id].proficiency_bonus
+        + session.characters[player_id].stat_modifiers["int"]
+    )
+
+
+def test_attack_lines_resolve_weapon_and_spell_rows():
+    from server.engine import _attack_lines
+
+    rules = RulesIndex.load_default()
+    fighter = build_starting_character("p", "Bry", "fighter", rules)  # Longsword, STR
+    rows = _attack_lines(fighter, rules, None)
+    assert rows == [
+        {"name": "Longsword", "kind": "weapon", "to_hit": "+4", "damage": "1d8+2 slashing"}
+    ]
+
+    wizard = build_starting_character("p", "El", "wizard", rules)  # no weapon, attack cantrips
+    view = _owner_character_view(wizard, rules)
+    spell_rows = view["attacks"]
+    assert all(r["kind"] == "spell" for r in spell_rows)
+    assert {"name": "Fire Bolt", "kind": "spell", "to_hit": "+4", "damage": "1d10 fire"} in spell_rows
+
+
+def test_attack_lines_use_dex_for_a_ranged_weapon():
+    from server.engine import _attack_lines
+
+    rules = RulesIndex.load_default()
+    rogue = build_starting_character("p", "Sly", "rogue", rules)  # Shortbow, ranged -> DEX
+    assert _attack_lines(rogue, rules, None) == [
+        {"name": "Shortbow", "kind": "weapon", "to_hit": "+4", "damage": "1d6+2 piercing"}
+    ]
+
+
+async def test_owner_character_view_spell_attack_bonus_is_none_for_a_non_caster():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Grok", "character_class": "fighter"},
+    ))
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["spell_attack_bonus"] is None
+    assert view["saving_throw_proficiencies"] == ["str", "con"]
 
 
 async def test_owner_character_view_still_includes_everything_model_dump_has():
@@ -1582,6 +1668,8 @@ async def test_owner_character_view_handles_a_blank_or_unrecognized_class():
     view = _owner_character_view(session.characters[player_id], engine._rules)
     assert view["class_features"] == []
     assert view["skill_proficiencies"] == []
+    assert view["saving_throw_proficiencies"] == []
+    assert view["spell_attack_bonus"] is None
 
 
 async def test_owner_character_view_class_features_grow_with_level():
@@ -1676,6 +1764,28 @@ async def test_owner_character_view_includes_subrace_traits_combined_with_base_r
     assert "Cantrip" in traits_text  # high elf's own subrace trait
 
 
+async def test_owner_character_view_includes_class_proficiencies_and_languages():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "Bree", "character_class": "rogue", "race": "wood_elf"},
+    ))
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert "thieves' tools" in view["class_proficiencies"]["tools"]
+    assert "light armor" in view["class_proficiencies"]["armor"]
+    assert view["languages"] == ["Common", "Elvish"]
+
+
+async def test_owner_character_view_proficiencies_empty_for_blank_class_and_race():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)  # no class, no race
+    view = _owner_character_view(session.characters[player_id], engine._rules)
+    assert view["class_proficiencies"] == {}
+    assert view["languages"] == []
+
+
 async def test_owner_character_view_handles_a_blank_or_unrecognized_race():
     # No race_entry in the SRD dataset for a character who never picked
     # one - the same graceful "not present isn't an error" fallback
@@ -1724,7 +1834,7 @@ async def test_update_character_explicit_self_target_still_updates_own_sheet():
         payload={"text": "I stub my toe"},
     ))
 
-    assert session.characters[player_id].hp == 99
+    assert session.characters[player_id].hp == 19
     assert session.npcs == {}
 
 
@@ -1743,7 +1853,7 @@ async def test_update_character_target_matching_own_player_id_treated_as_self():
         payload={"text": "I take a hit"},
     ))
 
-    assert session.characters[player_id].hp == 97
+    assert session.characters[player_id].hp == 17
     assert session.npcs == {}
 
 
@@ -1762,7 +1872,7 @@ async def test_update_character_target_matching_own_name_treated_as_self():
         payload={"text": "I take a hit"},
     ))
 
-    assert session.characters[player_id].hp == 97
+    assert session.characters[player_id].hp == 17
     assert session.npcs == {}
 
 
@@ -1789,7 +1899,7 @@ async def test_update_character_target_matching_own_condition_treated_as_self():
     ))
 
     character = session.characters[player_id]
-    assert character.hp == 98
+    assert character.hp == 18
     assert character.conditions == ["Veil-Touched"]
     assert session.npcs == {}
 
@@ -1831,7 +1941,7 @@ async def test_join_broadcasts_player_joined_with_public_view_only():
     assert payload["player_id"] == player_id
     assert payload["name"] == "Rook"
     assert payload["character_class"] == "Fighter"
-    assert payload["hp"] == payload["max_hp"] == 100  # flat 100 starting HP (project default)
+    assert payload["hp"] == payload["max_hp"] == 22  # fighter starting HP
     assert payload["conditions"] == []
     # A fighter starts with real inventory (Longsword, Leather Armor) - the
     # public view must never leak it, or anyone's own stats/notes.
@@ -1857,7 +1967,7 @@ async def test_second_players_state_sync_redacts_first_players_inventory():
     ]
     others_view = syncs[-1][3]["characters"][player_id]
     assert others_view["name"] == "Rook"
-    assert others_view["hp"] == others_view["max_hp"] == 100  # flat 100 starting HP (project default)
+    assert others_view["hp"] == others_view["max_hp"] == 22  # fighter starting HP
     assert "inventory" not in others_view, "another player's inventory must never reach a non-owning client"
     assert "stats" not in others_view
     assert "notes" not in others_view
@@ -1889,7 +1999,7 @@ async def test_sheet_change_broadcasts_public_player_update_alongside_private_ch
     assert public_updates, "a sheet change should also broadcast the public view to everyone else"
     payload = public_updates[-1][2]
     assert payload["player_id"] == player_id
-    assert payload["hp"] == 97
+    assert payload["hp"] == 17
     assert "inventory" not in payload
 
 
@@ -2230,6 +2340,53 @@ async def test_dm_requested_roll_matches_conditions_case_insensitively():
 
     results = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"]
     assert results[-1][2]["disadvantage"] is True
+
+
+async def test_armed_inspiration_gives_advantage_on_the_next_roll_and_is_spent():
+    dm = RequestRollDM({"dice": "1d20", "dc": 10, "reason": "leap the chasm"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inspiration = True
+    await engine.handle(Envelope(
+        type="use_inspiration", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    with patch("server.dice.random.randint", side_effect=[6, 17]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I run and jump"},
+        ))
+
+    payload = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"][-1][2]
+    assert payload["advantage"] is True and payload["inspiration"] is True
+    assert payload["rolls"] == [6, 17]
+    assert payload["result"] == 17  # kept the higher roll
+    assert session.characters[player_id].inspiration is False  # token spent
+
+    dice_logs = [
+        r for r in received
+        if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "dice"
+    ]
+    assert "advantage: Inspiration" in dice_logs[-1][2]["text"]
+
+
+async def test_held_but_unarmed_inspiration_does_not_affect_the_roll():
+    dm = RequestRollDM({"dice": "1d20", "reason": "ordinary check"})
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].inspiration = True  # held, but never armed
+
+    with patch("server.dice.random.randint", side_effect=[11]):
+        await engine.handle(Envelope(
+            type="player_action", session_id="test-session", sender_id=player_id,
+            payload={"text": "I look around"},
+        ))
+
+    payload = [r for r in received if r[0] == "broadcast" and r[1] == "dice_result"][-1][2]
+    assert "advantage" not in payload
+    assert session.characters[player_id].inspiration is True  # not spent
 
 
 async def test_dm_requested_roll_multiple_disadvantage_conditions_still_only_apply_once():
@@ -3741,7 +3898,7 @@ async def test_tracked_npc_roster_excludes_the_dead_and_omits_neutral_dispositio
     summary = recorder.world_summaries[-1]
     assert "bandit" not in summary, "a dead NPC has left active play"
     assert "- guard: HP 6/8, poisoned" in summary
-    assert "- innkeeper: HP 100/100, friendly" in summary
+    assert "- innkeeper: HP 10/10, friendly" in summary
     assert "w" * 100 not in summary, "notes are truncated in the roster"
 
 
@@ -4682,7 +4839,7 @@ async def test_apply_proposed_change_applies_confirmed_npc_proposal():
         type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
     ))
 
-    assert session.npcs["bandit"].hp == 96, "DEFAULT_NPC_HP 100 - 4 once the player confirms"
+    assert session.npcs["bandit"].hp == 6, "DEFAULT_NPC_HP 10 - 4 once the player confirms"
     npc_updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
     assert npc_updates, "a confirmed proposal should broadcast like a real tool call"
     confirms = [r for r in received if r[0] == "send_to" and r[1] == player_id
@@ -4708,7 +4865,7 @@ async def test_apply_proposed_change_applies_confirmed_self_proposal():
         type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
     ))
 
-    assert session.characters[player_id].hp == 97, "default 100 - 3 once confirmed"
+    assert session.characters[player_id].hp == 17, "default 20 - 3 once confirmed"
     char_updates = [r for r in received if r[0] == "send_to" and r[1] == player_id
                     and r[2] == "character_update"]
     assert char_updates
@@ -4907,6 +5064,61 @@ async def test_character_edit_notes_updates_own_sheet_privately():
     # notes is never in the public view - no player_update/player_joined
     # broadcast should fire for a purely private bookkeeping edit.
     assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_character_edit_sets_rp_fields_privately():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    for field, value in [
+        ("personality", "reckless when cornered"),
+        ("ideals", "no one gets left behind"),
+        ("bonds", "the sister I never told I was leaving"),
+        ("flaws", "I'd rather be right than kind"),
+        ("alignment", "Chaotic Good"),
+    ]:
+        await engine.handle(Envelope(
+            type="character_edit", session_id="test-session", sender_id=player_id,
+            payload={"field": field, "value": value},
+        ))
+        assert getattr(session.characters[player_id], field) == value
+
+    # Pure fiction, like notes - private character_update only, no broadcast.
+    assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_new_character_gets_rp_fields_seeded_from_its_origin():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    sheet = session.characters[player_id]
+    assert sheet.personality  # reuses the origin's rolled trait
+    assert sheet.ideals and sheet.bonds and sheet.flaws
+
+
+async def test_update_character_never_sets_personality():
+    # The DM reads personality/ideals/bonds/flaws but never writes them -
+    # they're not update_character fields, so a stray one is a plain no-op.
+    from server.state import CharacterSheet
+
+    sheet = CharacterSheet(player_id="p", name="x", hp=10, max_hp=10, personality="cautious")
+    result = sheet.apply_update({"personality": "reckless"})
+    assert sheet.personality == "cautious"
+    assert result.startswith("No changes applied")
+
+
+async def test_apply_update_grants_inspiration_once_and_never_clears_it():
+    from server.state import CharacterSheet
+
+    sheet = CharacterSheet(player_id="p", name="x", hp=10, max_hp=10)
+    assert "Inspiration" in sheet.apply_update({"inspiration": True})
+    assert sheet.inspiration is True
+    # A second grant is a no-op; the DM can't clear it with inspiration: false.
+    assert sheet.apply_update({"inspiration": True}).startswith("No changes applied")
+    assert sheet.apply_update({"inspiration": False}).startswith("No changes applied")
+    assert sheet.inspiration is True
 
 
 async def test_character_edit_add_item_appends_to_inventory():
@@ -5228,7 +5440,7 @@ async def test_character_edit_rejects_a_mechanical_field_not_in_the_allowed_set(
         payload={"field": "hp", "value": 999},
     ))
 
-    assert session.characters[player_id].hp == 100
+    assert session.characters[player_id].hp == 20
     warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
     assert warnings
     assert not any(r[0] == "send_to" and r[2] == "character_update" for r in received)

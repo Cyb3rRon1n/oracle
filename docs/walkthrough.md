@@ -41,6 +41,12 @@ and the process sitting there quietly. It idles safely with zero clients, and
 each session's state saves to `sessions/<session id>.json` as it's played — a
 restart resumes where you left off.
 
+**Optional — world context.** Drop campaign notes (`.txt` / `.md` / `.json` /
+`.csv`) into `world_context/` on the server machine. The client's **World
+context** panel (in the lobby) lists them; toggle the ones you want, and the
+server keyword-injects the relevant parts into the DM's prompt each turn
+(`server/lorebook.py`). `WORLD_CONTEXT_DIR` overrides the location.
+
 ## 3. The web client
 
 Build and serve it on any machine — the developer's laptop or the server
@@ -81,10 +87,13 @@ shows the join screen — "Oracle — An AI Dungeon Master awaits…".
 3. **Join**. Anyone can then hit **Begin the adventure** once the party is
    in, and the DM narrates the opening scene live.
 4. Play in plain English. The engine computes HP, AC, XP, spell slots,
-   initiative, and disadvantage from tracked conditions — the model narrates,
-   it never gets trusted with arithmetic. The scene panel's suggested-action
-   chips, the dice tray, and the export buttons are the in-client tools; the
-   FR/EN flag switches the interface live.
+   initiative, hit dice, and disadvantage from tracked conditions — the model
+   narrates, it never gets trusted with arithmetic. The scene panel's
+   suggested-action chips, the 📜 Sheet overlay (full D&D-style sheet, with
+   inline editing of the RP fields and inventory), and the export buttons are
+   the in-client tools; the FR/EN flag switches the interface live. There is no
+   player-facing dice roller — the DM calls for rolls and the engine resolves
+   them.
 
 **What working looks like**: narration streams in after your action, the sheet
 tabs reflect real state changes (a hit actually lowers HP), and every window

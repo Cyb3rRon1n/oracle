@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Protocol
 
@@ -48,8 +49,27 @@ class JSONFileSessionStore:
         path = self._path(session_id)
         if not path.exists():
             return None
-        return Session.model_validate_json(path.read_text())
+        try:
+            return Session.model_validate_json(path.read_text())
+        except ValueError:
+            # A truncated/corrupt file (crash mid-write on the pre-atomic
+            # code path, manual edit, disk error). Fall back to the last
+            # good copy rather than crashing every join for this session.
+            backup = path.with_suffix(".json.bak")
+            if backup.exists():
+                return Session.model_validate_json(backup.read_text())
+            raise
 
     def save(self, session: Session) -> None:
+        # Atomic: write a temp file in the same directory, fsync, then
+        # os.replace() it over the target - a crash or full disk mid-write
+        # can't leave a half-written session.json. The previous good file
+        # is kept as <id>.json.bak for load()'s fallback.
         path = self._path(session.session_id)
-        path.write_text(session.model_dump_json(indent=2))
+        tmp = path.with_suffix(f".json.{os.getpid()}.tmp")
+        tmp.write_text(session.model_dump_json(indent=2))
+        with open(tmp, "rb") as handle:
+            os.fsync(handle.fileno())
+        if path.exists():
+            os.replace(path, path.with_suffix(".json.bak"))
+        os.replace(tmp, path)

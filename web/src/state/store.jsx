@@ -23,8 +23,9 @@ function initial() {
     currentTurn: null,
     inCombat: false,
     log: [],
+    awaitingDM: false, // true between sending an action / starting and the DM's first word back
+    inspirationArmed: false, // player asked to spend their held Inspiration on the next roll
     scene: null, // latest scene_update payload
-    lastRoll: null,
     pendingProposal: null,
     contextManifest: null,
   };
@@ -75,6 +76,8 @@ function reducer(state, event) {
     case ET.LOG_ENTRY:
       return {
         ...state,
+        // Any real DM output ends the "DM is thinking" state.
+        awaitingDM: state.awaitingDM && event.payload.kind !== "narration",
         log: appendLog(state.log, {
           kind: event.payload.kind,
           text: event.payload.text,
@@ -84,10 +87,15 @@ function reducer(state, event) {
         }),
       };
 
-    case ET.CHARACTER_UPDATE:
-      return event.payload.player_id === state.me
-        ? { ...state, character: { ...state.character, ...event.payload.sheet_delta } }
-        : state;
+    case ET.CHARACTER_UPDATE: {
+      if (event.payload.player_id !== state.me) return state;
+      const character = { ...state.character, ...event.payload.sheet_delta };
+      // Token spent (or lost) -> nothing left to arm.
+      return { ...state, character, inspirationArmed: state.inspirationArmed && character.inspiration };
+    }
+
+    case "inspiration_armed":
+      return { ...state, inspirationArmed: event.armed };
 
     case ET.PLAYER_UPDATE:
     case ET.PLAYER_JOINED:
@@ -111,15 +119,15 @@ function reducer(state, event) {
     case ET.TURN_PROMPT:
       return {
         ...state,
+        awaitingDM: false,
         currentTurn: event.payload.player_id,
         turnOrder: event.payload.turn_order || state.turnOrder,
         inCombat: event.payload.in_combat ?? state.inCombat,
       };
 
-    case ET.DICE_RESULT:
-      // The engine already broadcasts a kind:dice log_entry for every roll
-      // (engine.py broadcasts both); this payload only drives the roller UI.
-      return { ...state, lastRoll: event.payload };
+    // dice_result is still emitted by the server (death saves, DM-requested
+    // rolls) but the client shows those via their kind:"dice" log_entry -
+    // there's no separate roller widget to feed.
 
     case ET.SESSION_STARTED:
       return { ...state, started: true };
@@ -131,17 +139,28 @@ function reducer(state, event) {
         // ({target, hp_delta, add_condition}) - held until applied or
         // replaced by the player's next action server-side.
         pendingProposal: event.payload.proposed_change ?? state.pendingProposal,
+        // An error/warning ("The DM couldn't respond", "Couldn't generate an
+        // opening scene") also ends the wait.
+        awaitingDM: state.awaitingDM && event.payload.level === "info",
         log: [...state.log, { id: ++logSeq, kind: "system", text: event.payload.text, level: event.payload.level }],
       };
 
     case "proposal_applied":
       return { ...state, pendingProposal: null };
 
+    case "dm_pending":
+      return { ...state, awaitingDM: true };
+
     case ET.SCENE_UPDATE:
       return { ...state, scene: event.payload };
 
     case ET.CONTEXT_MANIFEST:
       return { ...state, contextManifest: event.payload };
+
+    case "context_selected":
+      return state.contextManifest
+        ? { ...state, contextManifest: { ...state.contextManifest, selected: event.files } }
+        : state;
 
     case "local_session":
       return { ...state, sessionId: event.sessionId, me: event.playerId };
@@ -206,13 +225,11 @@ export function StoreProvider({ children }) {
         dispatch({ type: "ws_status", status: "connected" });
       },
       sendAction(text) {
+        dispatch({ type: "dm_pending" });
         connRef.current?.sendEvent(ET.PLAYER_ACTION, { text });
       },
       sendChat(text) {
         connRef.current?.sendEvent(ET.CHAT_MESSAGE, { text });
-      },
-      rollDice(dice, reason) {
-        connRef.current?.sendEvent(ET.DICE_ROLL, { dice, reason });
       },
       editCharacter(field, value) {
         connRef.current?.sendEvent(ET.CHARACTER_EDIT, { field, value });
@@ -220,11 +237,16 @@ export function StoreProvider({ children }) {
       deathSave() {
         connRef.current?.sendEvent(ET.DEATH_SAVE, {});
       },
+      toggleInspiration(armed) {
+        connRef.current?.sendEvent(ET.USE_INSPIRATION, {});
+        dispatch({ type: "inspiration_armed", armed });
+      },
       applyProposal() {
         connRef.current?.sendEvent(ET.APPLY_PROPOSED_CHANGE, {});
         dispatch({ type: "proposal_applied" });
       },
       startAdventure() {
+        dispatch({ type: "dm_pending" });
         connRef.current?.sendEvent(ET.START_SESSION, {});
       },
       requestContextManifest() {
@@ -232,6 +254,7 @@ export function StoreProvider({ children }) {
       },
       selectContext(files) {
         connRef.current?.sendEvent(ET.CONTEXT_SELECT, { files });
+        dispatch({ type: "context_selected", files }); // server sends no fresh manifest back
       },
     }),
     [],

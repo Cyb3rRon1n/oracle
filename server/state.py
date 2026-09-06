@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field
 
+from . import dice
+
 # The six SRD ability scores, in the SRD's own conventional order - shared
 # by both player CharacterSheets (stats, populated by
 # server/engine.py's build_starting_character) and NPC stat blocks
@@ -100,108 +102,68 @@ class CharacterSheet(BaseModel):
     name: str
     hp: int
     max_hp: int
+    # Buffer drained before real HP on damage, untouched by healing, no stacking.
+    temp_hp: int = 0
     character_class: str = ""
-    # A real, deliberately separate concept from character_class - server/
-    # rules/srd.json's own "races" table (server/engine.py's
-    # build_starting_character reads it the same way it already reads
-    # "classes"). Blank means no recognized race was chosen, the same
-    # graceful-miss convention character_class's own blank default already
-    # establishes - no ability bonus, no racial traits, not an error.
-    # Explicitly deferred when the tabbed character sheet shipped
-    # (ROADMAP.md item 7) until a real race system existed to back it.
+    # The class hit die, e.g. "d10", set at creation. Blank for a classless
+    # character - short rests fall back to the flat "heal half" stand-in.
+    hit_die: str = ""
+    # 5e hit-dice pool: total == level, spent one at a time on a short rest to
+    # heal (roll + CON), half restored on a long rest.
+    hit_dice_total: int = 1
+    hit_dice_remaining: int = 1
+    # Independent of class; blank = no recognized race (no bonus/traits, not an error).
     race: str = ""
+    # Walking speed in feet, from the race (default 30). Display-only - Oracle
+    # has no positioning system.
+    speed: int = 30
+    # Free-text 5e alignment (e.g. "Chaotic Good"), player-set via character_edit.
+    # Pure flavour / DM context, no mechanics.
+    alignment: str = ""
+    # 5e Inspiration: a single held token the DM grants (via update_character)
+    # and the engine spends for advantage on the player's next d20 roll.
+    inspiration: bool = False
     stats: dict[str, int] = Field(default_factory=dict)
-    # A list of InventoryItem stacks, not plain name strings - closes the
-    # "structured item objects with real special properties" gap named
-    # and explicitly deferred twice already (ROADMAP.md items 9 and 13):
-    # real quantities (a stack, not N duplicate entries) and a real
-    # magic_bonus, both previously impossible to represent.
+    # Stacks with quantity + magic_bonus, not plain name strings.
     inventory: list[InventoryItem] = Field(default_factory=list)
-    # Pointers into inventory by name (find_item, above), not a separate
-    # item store or an id - still just strings, since the equip/unequip
-    # mechanic only ever needs "which name is currently worn/wielded",
-    # not a reference to one specific stack among several sharing that
-    # name (InventoryItem's own docstring covers that edge case). None
-    # means nothing in that slot (unarmored, or fighting bare-handed).
+    # Which owned item name is currently worn/wielded (None = empty slot).
     equipped_weapon: str | None = None
     equipped_armor: str | None = None
-    # A real second equipment slot, not another armor pointer - a shield's
-    # +2 AC (server/rules/srd.json's own "shield" entry) is additive on
-    # top of whatever's in equipped_armor, not a replacement base value
-    # the way equipped_armor's own `ac` field is - see _compute_ac
-    # (server/engine.py) for the real formula this feeds. Closes a real,
-    # previously-documented gap: "Structured Equipment" (ROADMAP.md)
-    # originally shipped a single equipped_armor slot specifically
-    # because a shield couldn't be represented in it without silently
-    # computing AC wrong.
+    # Additive on top of equipped_armor's base AC, not a replacement (see _compute_ac).
     equipped_shield: str | None = None
     conditions: list[str] = Field(default_factory=list)
     notes: str = ""
-    # Who this character was before Aetherfall - generated once at
-    # creation (server/engine.py's build_starting_character, via
-    # server/lore's random_origin) and never regenerated, a fixed fact
-    # about the character rather than something that should drift.
-    # Blank for an NPC (server/engine.py's introduce-on-first-mention
-    # path never sets this) and for any character sheet predating this
-    # field - real, old sessions/*.json data, not required by
-    # model_validate_json's own default.
+    # Pre-Aetherfall identity, rolled once at creation, never regenerated. Blank on an NPC.
     background: str = ""
+    # The paper sheet's "Personal Characteristics". Seeded from the origin
+    # table, player-editable via character_edit, read by the DM via
+    # character_summary but never written by it. Blank on an NPC.
+    personality: str = ""
+    ideals: str = ""
+    bonds: str = ""
+    flaws: str = ""
     xp: int = 0
     level: int = 1
-    # Real 5e's own unarmored baseline (10 + DEX modifier), or an equipped
-    # armor's own base AC + DEX modifier - computed by server/engine.py's
-    # _compute_ac (both at character creation and again on every
-    # equip/unequip via _on_character_edit), which has both the SRD
-    # equipment data and the character's own stats in hand; a plain stored
-    # field, not a computed one like stat_modifiers, since a real 5e
-    # monster's AC (copied verbatim from srd.json onto a tracked NPC) is a
-    # flat authored value, not a formula derived from its own stats/gear -
-    # the two need genuinely different sources, so one field can't be
-    # computed from the sheet alone for both roles. Now genuinely live
-    # (recomputed on every equip/unequip), closing the gap this comment
-    # used to flag - see docs/protocol.md's "Structured equipment" section.
+    # Gold pieces. The DM adjudicates loot/rewards/purchases via gold_delta;
+    # ponytail: one coin type, add cp/sp/pp if a real coin economy shows up.
+    gold: int = 0
+    # A stored field, not computed: for a player it's set by _compute_ac
+    # (armor + DEX) on creation/equip; for a tracked NPC it's the monster's
+    # flat authored value copied from srd.json - two different sources.
     ac: int = 10
-    # Real 5e's death-saving-throw mechanic, closing the gap that's existed
-    # since HP was first tracked: hitting 0 HP was previously just a number
-    # sitting there, cosmetically red on the client's HP bar, with no real
-    # stakes attached. Deliberately scoped to player characters only, never
-    # NPCs - a defeated NPC already has its own, different, already-shipped
-    # 0-HP behavior (server/engine.py's apply_update closure treats an
-    # NPC's own hp>0-to-0 crossing as "defeated", awarding XP immediately -
-    # real 5e's own actual rule for ordinary monsters, which die outright
-    # at 0 HP rather than making death saves; only player characters -  and,
-    # in real 5e, important NPCs the DM chooses to grant the same treatment
-    # to, not modeled here - get this). dying is true from the moment HP
-    # first reaches 0 until either 3 successes stabilize it or 3 failures
-    # end it - a stable-but-unconscious character (3 successes reached) has
-    # dying=False and hp==0 simultaneously, distinct from a fresh full-
-    # health sheet the same way dead below is.
+    # 5e death saves, player-characters only (an NPC just dies at 0 HP and
+    # awards XP). dying is true from HP first hitting 0 until 3 successes
+    # (stabilize, hp stays 0) or 3 failures (dead).
     dying: bool = False
     dead: bool = False
     death_save_successes: int = 0
     death_save_failures: int = 0
-    # A structured, cheaper alternative to the who-knows-whom relationship
-    # graph flagged as real future work (see ROADMAP.md) - not who an NPC
-    # knows or a full personality, just a coarse attitude the DM can stay
-    # consistent against turn to turn instead of only inferring it from
-    # free-text notes. Meaningful for a tracked NPC (Session.npcs); on a
-    # real player character it just sits at its default, unused - the same
-    # shared-model tradeoff notes/ac already make (see their own comments)
-    # rather than a second, NPC-only sheet class for one field.
+    # A coarse attitude the DM stays consistent against. Meaningful for a
+    # tracked NPC; unused on a player character (shared model).
     disposition: Literal["hostile", "neutral", "friendly"] = "neutral"
-    # Spellcasting - real 5e's own two mechanical resources, both plain
-    # stored fields (not computed, unlike stat_modifiers/proficiency_bonus)
-    # since both genuinely mutate over a session: known_spells is set once
-    # at creation (server/engine.py's build_starting_character, the same
-    # "no player-chosen allocation yet" scope every other stat-generation
-    # step here already has) but spell_slots is spent and restored
-    # constantly (casting, resting, leveling up). max_spell_slots is a
-    # separate stored field, not derived live from level, because
-    # spell_slots itself needs a persistent "how many are currently spent"
-    # number that survives a save/reload independent of level - the same
-    # reason max_hp is a real field, not computed from hit_die+level either.
-    # Empty for a non-caster (fighter/rogue, or a blank/unrecognized
-    # class) - the same fallback stats/inventory already use.
+    # Stored, not computed: spell_slots is spent/restored constantly and
+    # max_spell_slots needs to persist "how many are spent" across a
+    # save/reload independent of level. Empty for a non-caster.
     known_spells: list[str] = Field(default_factory=list)
     spell_slots: dict[str, int] = Field(default_factory=dict)
     max_spell_slots: dict[str, int] = Field(default_factory=dict)
@@ -223,55 +185,22 @@ class CharacterSheet(BaseModel):
     @computed_field
     @property
     def stat_modifiers(self) -> dict[str, int]:
-        """Precomputed ability modifiers, included in model_dump()/
-        model_dump_json() output automatically (a pydantic v2
-        @computed_field) - so the DM's character_summary, and the
-        engine's own request_roll closure, both read a modifier directly
-        rather than recomputing floor((score-10)/2) themselves. This
-        project's whole XP-award design already rejected relying on an
-        LLM to get arithmetic right when the engine can just do it
-        (server/engine.py's DEFAULT_NPC_XP/apply_update comments); this is
-        the same principle applied to ability scores. Empty when `stats`
-        is empty (a blank/unrecognized class, or any NPC/legacy sheet with
-        no stats populated) - not an error, the same "not present isn't
-        an error" convention the rest of this codebase already follows."""
+        """floor((score-10)/2) per ability, in model_dump_json() so neither
+        the DM nor the engine recomputes it. Empty when stats is empty."""
         return {key: ability_modifier(score) for key, score in self.stats.items()}
 
     @computed_field
     @property
     def proficiency_bonus(self) -> int:
-        """Precomputed from the real level-based formula (see
-        proficiency_bonus_for_level above), included in model_dump()/
-        model_dump_json() automatically - the same "don't rely on the LLM
-        to get arithmetic right when the engine can just do it" reasoning
-        stat_modifiers already follows, applied to skill proficiencies.
-        Present on every character regardless of class or whether it has
-        any proficient skills at all - it's purely a function of level,
-        real 5e's own actual rule (proficiency bonus applies to saving
-        throws and other proficient rolls too, not just skills)."""
+        """5e proficiency bonus, a pure function of level. In model_dump_json()."""
         return proficiency_bonus_for_level(self.level)
 
     def gain_xp(self, amount: int, xp_thresholds: dict[int, int]) -> int:
-        """Awards XP and applies any level-ups the new total crosses -
-        looped, not a single if, since one award (a tough kill, or several
-        stacked awards in one turn) can plausibly cross more than one
-        threshold at once. Returns how many levels were gained (0 if none)
-        so a caller can decide whether to announce a level-up.
-
-        xp_thresholds is a level -> cumulative-XP-required-to-reach-it
-        table (server/rules/srd.json's "leveling.xp_by_level", the SRD's
-        own real Character Advancement table) passed in rather than looked
-        up here - this module has no access to rules data, and reaching for
-        it directly would make CharacterSheet depend on server.rules for a
-        single method, which server/engine.py (the only real caller,
-        already holding a RulesIndex) is better placed to own.
-
-        Deliberately no HP growth here - that needs the character's class
-        hit die, which lives in rules data alongside the XP tables, not on
-        the sheet itself. server/engine.py applies HP growth right after
-        calling this, the same "state.py owns mechanical bookkeeping,
-        engine.py owns anything needing rules data" split
-        build_starting_character already follows."""
+        """Adds XP and applies every level-up the new total crosses (looped
+        - one award can cross several). Returns levels gained. xp_thresholds
+        is level -> cumulative-XP (passed in; this module has no rules data).
+        No HP growth here - engine.py does that right after, since it needs
+        the class hit die."""
         if amount <= 0:
             return 0
         self.xp += amount
@@ -283,25 +212,15 @@ class CharacterSheet(BaseModel):
         return levels_gained
 
     def find_item(self, name: str | None) -> InventoryItem | None:
-        """The first inventory stack whose name matches (case-insensitive) -
-        "whichever comes first" is the same resolution equip/unequip/
-        remove_item all use for a name that could match more than one
-        stack (see InventoryItem's own docstring on why that can happen).
-        None for a blank name or no match, the same graceful-miss
-        convention every other name-based lookup in this project follows."""
+        """First inventory stack whose name matches (case-insensitive), or None."""
         if not name:
             return None
         normalized = name.strip().lower()
         return next((item for item in self.inventory if item.name.strip().lower() == normalized), None)
 
     def add_item(self, name: str, magic_bonus: int = 0) -> InventoryItem:
-        """Adds one of `name` to inventory - stacks onto an existing entry
-        with the same name AND the same magic_bonus (real 5e's own
-        "identical items stack" convention), rather than always appending
-        a new entry the way a plain string list used to force. A
-        genuinely different item (the same base name but a different
-        enchantment) gets its own separate stack instead of merging into
-        one that would misrepresent it."""
+        """Adds one of `name`, stacking onto an entry with the same name AND
+        magic_bonus; a different enchantment gets its own stack."""
         for item in self.inventory:
             if item.name.strip().lower() == name.strip().lower() and item.magic_bonus == magic_bonus:
                 item.quantity += 1
@@ -311,13 +230,8 @@ class CharacterSheet(BaseModel):
         return item
 
     def remove_item(self, name: str) -> bool:
-        """Removes one of `name` from whichever stack matches first
-        (find_item, above) - decrements its quantity, dropping the stack
-        entirely once it reaches zero rather than leaving a zero-quantity
-        entry behind. Returns whether a matching stack actually existed,
-        so callers (apply_update below, server/engine.py's character_edit
-        handling) can tell a real removal from a no-op the same way the
-        old `remove_item in self.inventory` check already did."""
+        """Removes one of `name` from the first matching stack, dropping the
+        stack at zero. Returns whether a match existed (real removal vs no-op)."""
         item = self.find_item(name)
         if item is None:
             return False
@@ -332,13 +246,29 @@ class CharacterSheet(BaseModel):
         the DM sees back."""
         changes: list[str] = []
 
+        # Temp HP - a separate buffer real 5e drains before real HP on
+        # damage, and that healing never touches. Doesn't stack: a new
+        # source takes the higher of the two, not the sum.
+        new_temp = update.get("temp_hp")
+        if isinstance(new_temp, int) and not isinstance(new_temp, bool) and new_temp > self.temp_hp:
+            self.temp_hp = new_temp
+            changes.append(f"temp HP now {self.temp_hp}")
+
         hp_delta = update.get("hp_delta")
         if hp_delta:
             prior_hp = self.hp
             prior_dying = self.dying
-            self.hp = max(0, min(self.max_hp, self.hp + int(hp_delta)))
-            sign = "+" if hp_delta > 0 else ""
-            changes.append(f"HP {sign}{hp_delta} (now {self.hp}/{self.max_hp})")
+            delta = int(hp_delta)
+            if delta < 0 and self.temp_hp > 0:
+                absorbed = min(self.temp_hp, -delta)
+                self.temp_hp -= absorbed
+                delta += absorbed
+                if absorbed:
+                    changes.append(f"{absorbed} absorbed by temp HP ({self.temp_hp} left)")
+            self.hp = max(0, min(self.max_hp, self.hp + delta))
+            if delta:
+                sign = "+" if delta > 0 else ""
+                changes.append(f"HP {sign}{delta} (now {self.hp}/{self.max_hp})")
 
             if hp_delta < 0 and prior_hp == 0 and prior_dying and not self.dead:
                 # Already down and dying - taking more damage while at 0 HP
@@ -356,32 +286,43 @@ class CharacterSheet(BaseModel):
                 self.death_save_failures = 0
                 changes.append(f"{self.name} drops to 0 HP and begins dying - roll a death save")
 
-        # A real recovery mechanic, closing a gap that's existed since HP
-        # was first tracked: healing had always meant the DM narrating a
-        # positive hp_delta and doing that arithmetic itself - the same
-        # "don't rely on the model to get numbers right when the engine
-        # can just compute them" reasoning ability scores/XP already
-        # follow, applied here. Deliberately simplified from real 5e (no
-        # hit-dice pool, no per-die CON-modifier healing) - a long rest is
-        # a full, unconditional HP restore (real 5e's own actual rule, not
-        # a simplification); a short rest restores half of whatever's
-        # currently missing, a proportional stand-in for "spend some hit
-        # dice" that needs no new resource tracked on the sheet.
-        # Deliberately doesn't touch conditions - unlike HP, most SRD
-        # conditions (poisoned, frightened, ...) don't just expire with
-        # time under the actual rules, so silently clearing them here
-        # would be a real rules error, not a simplification; the DM can
-        # still pair this with an explicit remove_condition in the same
-        # call when the fiction actually calls for it.
+        # The engine computes the heal, not the DM. A long rest is a full HP
+        # restore (real 5e) and gives back half the hit-dice pool. A short rest
+        # spends hit dice one at a time - roll the die + CON, min 0 per die -
+        # until full or the pool is empty; a classless character (no hit_die)
+        # falls back to the old flat "half of what's missing" stand-in.
+        # Deliberately doesn't touch conditions - most SRD conditions don't
+        # expire with time, so clearing them here would be a rules error.
         rest = update.get("rest")
-        if rest == "long" and self.hp < self.max_hp:
-            self.hp = self.max_hp
-            changes.append(f"long rest: HP restored to {self.hp}/{self.max_hp}")
-        elif rest == "short":
-            healed = (self.max_hp - self.hp) // 2
-            if healed > 0:
-                self.hp += healed
-                changes.append(f"short rest: HP +{healed} (now {self.hp}/{self.max_hp})")
+        con_mod = self.stat_modifiers.get("con", 0)
+        if rest == "long":
+            if self.hp < self.max_hp:
+                self.hp = self.max_hp
+                changes.append(f"long rest: HP restored to {self.hp}/{self.max_hp}")
+            regained = min(max(1, self.hit_dice_total // 2), self.hit_dice_total - self.hit_dice_remaining)
+            if regained > 0:
+                self.hit_dice_remaining += regained
+                changes.append(f"long rest: {self.hit_dice_remaining}/{self.hit_dice_total} hit dice")
+        elif rest == "short" and self.hp < self.max_hp:
+            if self.hit_die and self.hit_dice_remaining > 0:
+                spent = healed = 0
+                while self.hit_dice_remaining > 0 and self.hp < self.max_hp:
+                    _, rolls, _ = dice.roll(self.hit_die)
+                    gain = min(max(0, rolls[0] + con_mod), self.max_hp - self.hp)
+                    self.hp += gain
+                    self.hit_dice_remaining -= 1
+                    spent += 1
+                    healed += gain
+                changes.append(
+                    f"short rest: spent {spent} hit {'die' if spent == 1 else 'dice'}, "
+                    f"HP +{healed} (now {self.hp}/{self.max_hp}, "
+                    f"{self.hit_dice_remaining}/{self.hit_dice_total} hit dice)"
+                )
+            else:
+                healed = (self.max_hp - self.hp) // 2
+                if healed > 0:
+                    self.hp += healed
+                    changes.append(f"short rest: HP +{healed} (now {self.hp}/{self.max_hp})")
 
         # Healing above 0 HP - whether from hp_delta or either rest branch
         # above, checked once here rather than duplicated in both - clears
@@ -422,6 +363,12 @@ class CharacterSheet(BaseModel):
         if remove_item and self.remove_item(remove_item):
             changes.append(f"lost '{remove_item}'")
 
+        gold_delta = update.get("gold_delta")
+        if isinstance(gold_delta, int) and not isinstance(gold_delta, bool) and gold_delta:
+            applied = max(0, self.gold + gold_delta) - self.gold  # can't go below 0
+            self.gold += applied
+            changes.append(f"gold {'+' if applied >= 0 else ''}{applied} (now {self.gold})")
+
         add_condition = update.get("add_condition")
         if add_condition and add_condition not in self.conditions:
             self.conditions.append(add_condition)
@@ -436,6 +383,13 @@ class CharacterSheet(BaseModel):
         if notes and notes != self.notes:
             self.notes = notes
             changes.append("notes updated")
+
+        # The DM grants Inspiration (a single held token) for playing to the
+        # character's traits/ideal/bond/flaw. Only ever set true here - it's
+        # spent by the engine on the player's next roll, not by the DM.
+        if update.get("inspiration") is True and not self.inspiration:
+            self.inspiration = True
+            changes.append(f"{self.name} gains Inspiration")
 
         disposition = update.get("disposition")
         # A real model-input boundary, not decorative: disposition is a

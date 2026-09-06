@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import CharacterSheet from "./CharacterSheet.jsx";
-import DiceTray from "./DiceTray.jsx";
+import CharacterSheetFull from "./CharacterSheetFull.jsx";
+import ContextPicker from "./ContextPicker.jsx";
 import ExportButtons from "./ExportButtons.jsx";
 import MapPanel from "./MapPanel.jsx";
 import ScenePanel from "./ScenePanel.jsx";
@@ -35,21 +36,27 @@ export default function GameScreen() {
   const { state, actions } = useStore();
   const { t } = useLang();
   const [draft, setDraft] = useState("");
-  const [showMap, setShowMap] = useState(true);
+  const [showMap, setShowMap] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const logEndRef = useRef(null);
+  const hasMap = (state.world.map?.nodes?.length ?? 0) > 0;
 
   const isMyTurn = state.currentTurn && state.currentTurn === state.me;
   const myName = state.players[state.me]?.name;
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [state.log]);
+  }, [state.log, state.awaitingDM]);
 
   function submit(e) {
     e.preventDefault();
     if (!draft.trim()) return;
-    if (isMyTurn) actions.sendAction(draft.trim());
-    else actions.sendChat(draft.trim());
+    if (isMyTurn) {
+      if (state.awaitingDM) return; // a turn is already resolving
+      actions.sendAction(draft.trim());
+    } else {
+      actions.sendChat(draft.trim());
+    }
     setDraft("");
   }
 
@@ -58,12 +65,21 @@ export default function GameScreen() {
       <header className="flex items-center justify-between panel px-4 py-2">
         <h1 className="text-lg">{t("Oracle")}</h1>
         <div className="flex items-center gap-3 text-sm">
+          <button
+            className="px-2 py-1 rounded border border-dungeon-edge hover:border-dungeon-gold transition text-xs"
+            onClick={() => setSheetOpen(true)}
+            disabled={!state.character}
+          >
+            📜 {t("Sheet")}
+          </button>
           <ExportButtons />
           <LangFlags />
           <Presence players={state.players} me={state.me} />
           <ConnectionBadge status={state.status} />
         </div>
       </header>
+
+      {sheetOpen && <CharacterSheetFull onClose={() => setSheetOpen(false)} />}
 
       {state.pendingProposal && (
         <div className="panel border-dungeon-gold/50 p-3 flex items-center justify-between gap-3 text-sm">
@@ -86,26 +102,35 @@ export default function GameScreen() {
       {!state.started ? (
         <div className="panel p-6 text-center space-y-3">
           <p className="italic text-dungeon-ink/70">{t("The party has gathered.")}</p>
-          <button className="btn-gold" onClick={actions.startAdventure}>
+          <button className="btn-gold" onClick={actions.startAdventure} disabled={state.awaitingDM}>
             {t("Begin the adventure")}
           </button>
         </div>
       ) : null}
 
+      <ContextPicker />
+
+
       <main className="panel flex-1 min-h-[40vh] overflow-y-auto p-4 space-y-3">
         {state.log.map((entry) => (
           <LogLine key={entry.id} entry={entry} />
         ))}
+        {state.awaitingDM && (
+          <p className="flex items-center gap-2 text-dungeon-gold/80 italic">
+            <span className="inline-flex gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-dungeon-gold animate-bounce [animation-delay:-0.3s]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-dungeon-gold animate-bounce [animation-delay:-0.15s]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-dungeon-gold animate-bounce" />
+            </span>
+            {t("The DM is weaving the scene…")}
+          </p>
+        )}
         <div ref={logEndRef} />
       </main>
 
       <div className="grid grid-cols-[1fr_320px] gap-3 items-start max-h-[38vh] overflow-hidden">
         <ScenePanel onSuggest={(text) => setDraft(text)} />
         <CharacterSheet />
-      </div>
-
-      <div className="panel px-3 py-2">
-        <DiceTray />
       </div>
 
       <form onSubmit={submit} className="panel p-3 flex gap-2">
@@ -127,7 +152,10 @@ export default function GameScreen() {
         </button>
       </form>
 
-      {showMap ? (
+      {/* Minimap overlay: only offered once the DM has actually charted a
+          location - an empty "not charted yet" box floating over the input
+          is just clutter. */}
+      {hasMap && showMap && (
         <div className="fixed bottom-4 right-4 z-30 w-64 panel p-2 shadow-lg">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-display tracking-wide text-dungeon-gold">{t("Map")}</span>
@@ -140,7 +168,8 @@ export default function GameScreen() {
           </div>
           <MapPanel />
         </div>
-      ) : (
+      )}
+      {hasMap && !showMap && (
         <button
           className="fixed bottom-4 right-4 z-30 btn-gold !py-1 !px-2 text-xs shadow-lg"
           onClick={() => setShowMap(true)}

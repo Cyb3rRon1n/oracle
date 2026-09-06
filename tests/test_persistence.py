@@ -128,3 +128,27 @@ async def test_server_resumes_existing_character_on_reconnect(tmp_path):
 
     assert resumed_session.characters[player_id].hp == 3
     assert len(resumed_session.turn_order) == 1, "rejoin must not create a duplicate character"
+
+
+def test_save_is_atomic_and_keeps_a_backup(tmp_path):
+    store = JSONFileSessionStore(tmp_path)
+    store.save(Session(session_id="s", turn_order=["a"]))
+    store.save(Session(session_id="s", turn_order=["a", "b"]))
+
+    assert (tmp_path / "s.json").exists()
+    assert (tmp_path / "s.json.bak").exists()
+    assert store.load("s").turn_order == ["a", "b"]
+    # backup holds the prior good copy
+    assert Session.model_validate_json((tmp_path / "s.json.bak").read_text()).turn_order == ["a"]
+    # no temp files left behind
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_load_falls_back_to_backup_on_a_corrupt_file(tmp_path):
+    store = JSONFileSessionStore(tmp_path)
+    store.save(Session(session_id="s", turn_order=["a"]))
+    store.save(Session(session_id="s", turn_order=["a", "b"]))
+
+    (tmp_path / "s.json").write_text("{ truncated garba")
+
+    assert store.load("s").turn_order == ["a"]

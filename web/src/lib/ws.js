@@ -1,6 +1,5 @@
 import { makeEnvelope, parseEnvelope } from "./protocol.js";
-
-const SERVER_URI = import.meta.env.VITE_SERVER_URI || "ws://localhost:8765";
+import { loadServer } from "./storage.js";
 
 // Reconnect backoff - starts at 1s, doubles to a 10s ceiling. The server
 // resumes seats from the join envelope's player_id, so every attempt is a
@@ -17,7 +16,9 @@ export function createConnection({ sessionId, senderId, onEvent, onStatus }) {
 
   function connect() {
     if (closedByUser) return;
-    ws = new WebSocket(SERVER_URI);
+    // Resolved per-connection, not at module load, so a server-address
+    // change on the join screen takes effect on the next connect.
+    ws = new WebSocket(loadServer());
     ws.onopen = () => {
       attempt = 0;
       onStatus?.("connected");

@@ -132,6 +132,37 @@ def test_apply_update_hp_delta_damage_and_healing():
     assert character.hp == 5
 
 
+def test_apply_update_temp_hp_absorbs_damage_before_real_hp():
+    character = make_character(hp=10, max_hp=10)
+    character.apply_update({"temp_hp": 5})
+    assert character.temp_hp == 5
+
+    # 3 damage: all soaked by temp HP, real HP untouched.
+    character.apply_update({"hp_delta": -3})
+    assert character.temp_hp == 2 and character.hp == 10
+
+    # 6 more: 2 soaked, 4 through to real HP.
+    character.apply_update({"hp_delta": -6})
+    assert character.temp_hp == 0 and character.hp == 6
+
+
+def test_apply_update_temp_hp_does_not_stack_and_healing_ignores_it():
+    character = make_character(hp=6, max_hp=10)
+    character.apply_update({"temp_hp": 8})
+    character.apply_update({"temp_hp": 3})  # lower - ignored
+    assert character.temp_hp == 8
+
+    character.apply_update({"hp_delta": 3})  # healing
+    assert character.hp == 9 and character.temp_hp == 8
+
+
+def test_apply_update_temp_hp_soak_prevents_dying():
+    character = make_character(hp=2, max_hp=10)
+    character.apply_update({"temp_hp": 10})
+    character.apply_update({"hp_delta": -5})
+    assert character.hp == 2 and not character.dying
+
+
 def test_apply_update_clamps_hp_to_valid_range():
     character = make_character(hp=2, max_hp=10)
     character.apply_update({"hp_delta": -100})
@@ -182,6 +213,40 @@ def test_apply_update_short_rest_never_overshoots_max_hp():
     character = make_character(hp=9, max_hp=10)
     character.apply_update({"rest": "short"})
     assert character.hp == 9
+
+
+def test_short_rest_spends_hit_dice_to_heal(monkeypatch):
+    monkeypatch.setattr("server.dice.random.randint", lambda a, b: 5)  # each d8 -> 5
+    character = make_character(
+        hp=3, max_hp=30, hit_die="d8", hit_dice_total=4, hit_dice_remaining=4,
+        stats={"con": 14},  # +2
+    )
+    result = character.apply_update({"rest": "short"})
+    # heals 7/die (5 + 2 CON); missing 27 -> spends 4 dice for 28, capped at 27.
+    assert character.hp == 30
+    assert character.hit_dice_remaining == 0
+    assert "spent 4 hit dice" in result
+
+
+def test_short_rest_stops_at_full_hp_without_wasting_dice(monkeypatch):
+    monkeypatch.setattr("server.dice.random.randint", lambda a, b: 8)
+    character = make_character(hp=25, max_hp=30, hit_die="d8", hit_dice_total=4, hit_dice_remaining=4)
+    character.apply_update({"rest": "short"})
+    assert character.hp == 30
+    assert character.hit_dice_remaining == 3  # one die covered the 5 missing
+
+
+def test_short_rest_with_no_hit_die_falls_back_to_half_missing():
+    character = make_character(hp=2, max_hp=10)  # classless: hit_die ""
+    character.apply_update({"rest": "short"})
+    assert character.hp == 6
+
+
+def test_long_rest_restores_half_the_hit_dice_pool():
+    character = make_character(hp=10, max_hp=10, hit_die="d10", hit_dice_total=6, hit_dice_remaining=1)
+    result = character.apply_update({"rest": "long"})
+    assert character.hit_dice_remaining == 4  # +3 (half of 6)
+    assert "4/6 hit dice" in result
 
 
 def test_apply_update_rest_leaves_conditions_untouched():
@@ -293,6 +358,21 @@ def test_apply_update_inventory_add_and_remove():
     result = character.apply_update({"remove_item": "nonexistent"})
     assert character.find_item("nonexistent") is None
     assert result.startswith("No changes applied")
+
+
+def test_apply_update_gold_delta_adds_and_spends():
+    character = make_character()
+    assert "gold +40 (now 40)" in character.apply_update({"gold_delta": 40})
+    assert character.gold == 40
+    character.apply_update({"gold_delta": -15})
+    assert character.gold == 25
+
+
+def test_apply_update_gold_delta_clamps_at_zero():
+    character = make_character(gold=10)
+    character.apply_update({"gold_delta": -100})  # can't overspend
+    assert character.gold == 0
+    assert character.apply_update({"gold_delta": 0}).startswith("No changes applied")
 
 
 def test_apply_update_heals_a_dead_character_back_to_life():

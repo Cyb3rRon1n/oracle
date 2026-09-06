@@ -21,10 +21,8 @@ class Region(BaseModel):
     description: str
     borders: list[str] = []
     landmarks: list[str] = []
-    # Optional canvas coordinates (0-1000) - present on the default bible's
-    # regions so the engine can seed the campaign map with the known world
-    # at session start; absent (None) means "no placement", and a custom
-    # bible without coords simply seeds nothing.
+    # Optional canvas coordinates (0-1000) for seeding the campaign map at
+    # session start; None means no placement.
     x: int | None = None
     y: int | None = None
 
@@ -183,6 +181,11 @@ class Origin(BaseModel):
     background: str
     trait: str
     near_death: str
+    # The 5e RP anchors alongside `trait`. Seeded here, then player-editable
+    # via character_edit (see engine.py's CHARACTER_EDIT_FIELDS).
+    ideal: str = ""
+    bond: str = ""
+    flaw: str = ""
 
     def sheet_summary(self) -> str:
         """Player/DM-facing text for the character sheet's Features &
@@ -197,6 +200,10 @@ class OriginTable(BaseModel):
     backgrounds: list[str]
     traits: list[str]
     near_death_events: list[str]
+    # Optional so an older custom origins.json still loads (blank ideal/bond/flaw).
+    ideals: list[str] = []
+    bonds: list[str] = []
+    flaws: list[str] = []
 
 
 def load_default_origin_table() -> OriginTable:
@@ -204,14 +211,13 @@ def load_default_origin_table() -> OriginTable:
 
 
 def random_origin(table: OriginTable) -> Origin:
-    # random.choice, not the engine's own dice.roll() - this isn't a game
-    # mechanic with a real probability distribution to get right, just an
-    # even pick from a curated table, the same "plain random.choice" this
-    # project's other flavor-text generation (none existed before this)
-    # would use. Mockable the same way tests/test_engine.py already mocks
-    # server.dice.random.randint for reproducible dice-roll tests.
+    # Plain random.choice - flavour-text pick from a curated table, not a
+    # game mechanic. Mockable like server.dice.random in the engine tests.
     return Origin(
         background=random.choice(table.backgrounds),
         trait=random.choice(table.traits),
         near_death=random.choice(table.near_death_events),
+        ideal=random.choice(table.ideals) if table.ideals else "",
+        bond=random.choice(table.bonds) if table.bonds else "",
+        flaw=random.choice(table.flaws) if table.flaws else "",
     )

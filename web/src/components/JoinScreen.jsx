@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { LangFlags, useLang } from "../i18n.jsx";
-import { CLASSES, RACES, DEFAULT_SERVER } from "../config.js";
-import { newId } from "../lib/storage.js";
+import { CLASSES, RACES } from "../config.js";
+import { newId, loadServer, saveServer } from "../lib/storage.js";
 import { useStore } from "../state/store.jsx";
 
 export default function JoinScreen() {
@@ -11,8 +11,10 @@ export default function JoinScreen() {
   const [sessionId, setSessionId] = useState(() => newId());
   const [characterClass, setClass] = useState("fighter");
   const [race, setRace] = useState("human");
+  const [server, setServer] = useState(() => loadServer());
   const [imported, setImported] = useState(null);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
 
   function importFile(file) {
     file
@@ -30,10 +32,7 @@ export default function JoinScreen() {
     e.preventDefault();
     if (!name.trim()) return setError(t("A hero needs a name."));
     try {
-      // The server URI is a page-level setting; the store's connection
-      // factory reads it from the module default. A custom server requires
-      // VITE_SERVER_URI at build time - fine for now, revisit with a
-      // settings panel if anyone actually needs two servers.
+      saveServer(server); // ws.js reads this per-connection
       const playerId = newId();
       const conn = actions.startSession(sessionId, playerId);
       actions.join(conn, {
@@ -74,6 +73,21 @@ export default function JoinScreen() {
               value={sessionId}
               onChange={(e) => setSessionId(e.target.value)}
             />
+            <button
+              type="button"
+              className="btn-gold !px-3"
+              onClick={() => {
+                navigator.clipboard?.writeText(sessionId).then(
+                  () => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  },
+                  () => {},
+                );
+              }}
+            >
+              {copied ? t("Copied") : t("Copy")}
+            </button>
             <button type="button" className="btn-gold !px-3" onClick={() => setSessionId(newId())}>
               {t("New")}
             </button>
@@ -124,6 +138,19 @@ export default function JoinScreen() {
           />
           {imported && <span className="text-xs text-dungeon-gold">{t("Loaded:")} {imported.name}</span>}
         </label>
+
+        <details className="text-sm">
+          <summary className="cursor-pointer text-dungeon-ink/60">{t("Server address")}</summary>
+          <input
+            className="mt-2 w-full bg-dungeon-bg border border-dungeon-edge rounded px-3 py-2 focus:border-dungeon-gold outline-none font-mono text-xs"
+            value={server}
+            onChange={(e) => setServer(e.target.value)}
+            placeholder="ws://localhost:8765"
+          />
+          <span className="text-xs text-dungeon-ink/50">
+            {t("Point this page at your own server — e.g. ws://192.168.1.10:8765.")}
+          </span>
+        </details>
 
         {error && <p className="text-dungeon-blood text-sm">{error}</p>}
 

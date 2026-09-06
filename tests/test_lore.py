@@ -158,6 +158,24 @@ def test_load_default_origin_table_parses_the_bundled_file():
     assert len(table.backgrounds) >= 1
     assert len(table.traits) >= 1
     assert len(table.near_death_events) >= 1
+    assert len(table.ideals) >= 1
+    assert len(table.bonds) >= 1
+    assert len(table.flaws) >= 1
+
+
+def test_random_origin_picks_ideal_bond_flaw_when_the_table_has_them():
+    table = OriginTable(
+        backgrounds=["a baker"], traits=["stubborn"], near_death_events=["a fall"],
+        ideals=["bread for all"], bonds=["my oven"], flaws=["never rests"],
+    )
+    origin = random_origin(table)
+    assert (origin.ideal, origin.bond, origin.flaw) == ("bread for all", "my oven", "never rests")
+
+
+def test_random_origin_leaves_ideal_bond_flaw_blank_when_the_table_omits_them():
+    table = OriginTable(backgrounds=["a baker"], traits=["stubborn"], near_death_events=["a fall"])
+    origin = random_origin(table)
+    assert (origin.ideal, origin.bond, origin.flaw) == ("", "", "")
 
 
 def test_random_origin_picks_from_the_given_table():

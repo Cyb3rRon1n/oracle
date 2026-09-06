@@ -96,7 +96,7 @@ separate. Clients just need a browser — no clone, no Python, no install.
 | `SESSION_STORE_DIR` | `sessions/` | Session persistence |
 | `SERVER_HOST` / `SERVER_PORT` | `localhost` / `8765` | Server bind address/port — `SERVER_HOST=0.0.0.0` accepts clients from other machines |
 | `OLLAMA_TWO_PHASE` | `true` | `"0"` restores the single-call path (kept for A/B measurement) |
-| `OLLAMA_FACT_LEDGER` | `false` | `"1"` opts the decide call into recording durable session facts (measured reliability cost on qwen2.5:7b — see ROADMAP item 36); hosted backends always have it |
+| `OLLAMA_FACT_LEDGER` | `false` | `"1"` opts the decide call into recording durable session facts (measured reliability cost on qwen2.5:7b — see CHANGELOG); hosted backends always have it |
 
 ## Repository layout
 
@@ -121,7 +121,7 @@ separate. Clients just need a browser — no clone, no Python, no install.
 
 ## The tool-call reliability investigation
 
-The [ROADMAP](ROADMAP.md) documents a repeatable harness (`scripts/live_reliability_check.py`) measuring whether small local models actually fire `update_character` when narration demands it — baseline percentages across models, a two-request split tried and reverted, and what moved the needle (structured output roughly doubled real tool-call correctness). The v2 narrator changes (two-phase turns, lorebook injection, campaign summaries) change the prompt context those baselines were measured against; the post-v2 re-run is logged as ROADMAP item 32 (two-phase decide phase: 4/7 on the combat scenario vs ~66% single-call, after fixing a narration-instructing-decide-prompt bug and a target-scoring artifact) — pre/post numbers remain separate eras.
+The [ROADMAP](ROADMAP.md) documents a repeatable harness (`scripts/live_reliability_check.py`) measuring whether small local models actually fire `update_character` when narration demands it — baseline percentages across models, a two-request split tried and reverted, and what moved the needle (structured output roughly doubled real tool-call correctness). The v2 narrator changes (two-phase turns, lorebook injection, campaign summaries) change the prompt context those baselines were measured against; the post-v2 re-run is in CHANGELOG (two-phase decide phase measured; a silent decide-prompt bug fixed) — pre/post numbers remain separate eras.
 
 ## Contributing
 
