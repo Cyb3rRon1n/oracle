@@ -137,7 +137,7 @@ function TavernChat({ state, actions, t }) {
   const [draft, setDraft] = useState("");
   const endRef = useRef(null);
   const lastTyping = useRef(0);
-  const lines = state.log.filter((e) => e.kind === "chat" || e.kind === "system");
+  const lines = state.log.filter((e) => e.kind === "chat" || e.kind === "system" || e.kind === "keeper");
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -167,8 +167,8 @@ function TavernChat({ state, actions, t }) {
       <div className="flex-1 overflow-y-auto space-y-1 text-sm max-h-64">
         {lines.length === 0 && <p className="text-dungeon-ink/40 italic">{t("The fire crackles. Someone should say something.")}</p>}
         {lines.map((e) => (
-          <p key={e.id} className={e.kind === "system" ? "text-dungeon-blood/80" : "text-purple-300"}>
-            {e.kind === "system" ? `⚠ ${e.text}` : renderChat(e.text)}
+          <p key={e.id} className={LINE_STYLE[e.kind] || "text-purple-300"}>
+            {e.kind === "system" ? `⚠ ${e.text}` : e.kind === "keeper" ? `🍺 ${e.text}` : renderChat(e.text)}
           </p>
         ))}
         <div ref={endRef} />
@@ -186,6 +186,12 @@ function TavernChat({ state, actions, t }) {
     </div>
   );
 }
+
+const LINE_STYLE = {
+  system: "text-dungeon-blood/80",
+  keeper: "text-dungeon-gold/90 italic",
+  chat: "text-purple-300",
+};
 
 function renderChat(text) {
   if (text.startsWith("/me ")) {

@@ -7,6 +7,7 @@ only open work.
 
 ## v2 rebuild and after (2026-08)
 
+- **Tavern-keeper NPC** — the lobby gains an AI-voiced greeter (optional `NarratorBackend.tavern_line`; `log_entry` kind `keeper`), hard rate-limited to one line per 20s, silent once the adventure starts. Keeper name/persona from `WorldBible.tavern_keeper`. (2026-09-06)
 - **`update_world` reliability** measured live on `qwen3:8b` — 10/10 across 2 repeats (was 4/12). (2026-08-25)
 - **Fact ledger** (AriGraph-lite): durable per-session facts captured with zero extra LLM calls. (2026-08-24)
 - **World-bible deepening** — Aetherfall gains layered history, factions, peoples, naming rules, a real map; five optional depth fields on `WorldBible`. (2026-08-23)

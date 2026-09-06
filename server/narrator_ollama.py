@@ -716,6 +716,21 @@ class OllamaNarrator:
             return None
         return _outcome_update(data)
 
+    async def tavern_line(self, context: dict) -> str:
+        """See NarratorBackend.tavern_line (server/narrator.py). One free-form
+        non-streamed call - no schema, the keeper just talks."""
+        from .narrator import _tavern_keeper_system, _tavern_keeper_user
+
+        response = await self._chat(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": _tavern_keeper_system(context)},
+                {"role": "user", "content": _tavern_keeper_user(context)},
+            ],
+            stream=False,
+        )
+        return (response.message.content or "").strip()
+
     async def _narrate_structured(
         self,
         history: list[dict],

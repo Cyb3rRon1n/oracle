@@ -3840,6 +3840,87 @@ async def test_player_ready_is_a_no_op_after_the_adventure_has_started():
     assert session.ready_players == []
 
 
+class KeeperDM(StubDM):
+    """StubDM that also implements the optional tavern_line capability."""
+
+    def __init__(self, line="Evening. Mind the draught by the door."):
+        super().__init__()
+        self._line = line
+        self.tavern_calls: list[dict] = []
+
+    async def tavern_line(self, context):
+        self.tavern_calls.append(context)
+        return self._line
+
+
+def _keeper_lines(received):
+    return [r for r in received if r[0] == "broadcast" and r[1] == "log_entry" and r[2].get("kind") == "keeper"]
+
+
+async def _chat(engine, player_id, text):
+    await engine.handle(Envelope(
+        type="chat_message", session_id="test-session", sender_id=player_id, payload={"text": text},
+    ))
+
+
+async def test_tavern_keeper_greets_the_party_on_join():
+    dm = KeeperDM()
+    engine, session, received = make_engine(dm)
+    await join(engine, str(uuid.uuid4()))
+    lines = _keeper_lines(received)
+    assert len(lines) == 1
+    assert dm._line in lines[0][2]["text"]
+    assert dm.tavern_calls[0]["trigger"] == "greeting"
+
+
+async def test_tavern_keeper_reply_is_rate_limited():
+    dm = KeeperDM()
+    engine, session, received = make_engine(dm)
+    p = str(uuid.uuid4())
+    await join(engine, p)  # greeting
+    engine._last_keeper_ts -= 100  # fast-forward past the cooldown
+    received.clear()
+    await _chat(engine, p, "So where are we headed this time?")
+    assert len(_keeper_lines(received)) == 1
+    assert dm.tavern_calls[-1]["trigger"] == "chat"
+    assert "headed this time" in dm.tavern_calls[-1]["recent_chat"]
+    await _chat(engine, p, "Anyone bring rope?")  # within the cooldown now
+    assert len(_keeper_lines(received)) == 1
+
+
+async def test_tavern_keeper_ignores_near_empty_chatter():
+    dm = KeeperDM()
+    engine, session, received = make_engine(dm)
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    engine._last_keeper_ts -= 100
+    received.clear()
+    await _chat(engine, p, "ok")
+    assert _keeper_lines(received) == []
+
+
+async def test_tavern_keeper_is_silent_once_the_adventure_starts():
+    dm = KeeperDM()
+    engine, session, received = make_engine(dm)
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    await start_session(engine, p)
+    engine._last_keeper_ts -= 100
+    received.clear()
+    await _chat(engine, p, "Did that really just happen?")
+    assert _keeper_lines(received) == []
+
+
+async def test_tavern_keeper_failure_is_swallowed():
+    class BoomKeeper(StubDM):
+        async def tavern_line(self, context):
+            raise RuntimeError("keeper is on break")
+
+    engine, session, received = make_engine(BoomKeeper())
+    await join(engine, str(uuid.uuid4()))  # must not raise
+    assert _keeper_lines(received) == []
+
+
 async def test_start_session_sets_a_recognized_content_preference():
     dm = OpeningSceneDM()
     engine, session, received = make_engine(dm)
