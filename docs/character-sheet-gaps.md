@@ -15,10 +15,10 @@ paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-firs
 | **Full 18-skill block** | Every skill listed with its ability + a proficiency dot + total | Done in the overlay: fixed skill→ability map in `web/src/lib/dnd5e.js`, total = ability mod + (proficient ? prof bonus : 0). Server already sends `skill_proficiencies`. |
 | **Saving throw proficiencies** | Two marked saves per class | Done: `saving_throw_proficiencies` added to `_owner_character_view` (constant `CLASS_SAVING_THROW_PROFICIENCIES` already existed). |
 | **Spell attack bonus** | prof + spellcasting mod | Done: `spell_attack_bonus` added to `_owner_character_view` (save DC was already a computed field). |
-| **Passive Perception** | 10 + WIS mod + (prof if Perception proficient) | Client-derived in the overlay from data already sent. Passive Investigation/Insight the same way if wanted. |
+| ~~**Passive Perception / Investigation / Insight**~~ | 10 + ability mod + (prof if proficient) | **Done.** Client-derived in the overlay (`dnd5e.js` `passiveScore`) from data already sent. |
 | **Initiative** | Usually DEX mod | Not stored; the overlay shows `stat_modifiers.dex`. `_on_start_combat` already rolls real initiative — only the resting display was missing. |
-| **XP to next level** | Bar / number toward the next threshold | `xp` and `level` are sent; the SRD threshold table lives in `srd.json` (`leveling.xp_by_level`). Send `xp_to_next` from `_owner_character_view`, or ship the fixed table client-side. |
-| **Alignment** | One field, no mechanics | `CharacterSheet.alignment: str = ""`, set at creation or via `character_edit`. Pure flavor / DM context. |
+| ~~**XP to next level**~~ | Bar / number toward the next threshold | **Done.** `_owner_character_view` sends `xp_level_start` / `xp_next_level` from `rules.xp_thresholds()`; the overlay shows `xp / next`. |
+| ~~**Alignment**~~ | One field, no mechanics | **Done.** `CharacterSheet.alignment: str`, player-set via `character_edit` (in `CHARACTER_EDIT_TEXT_FIELDS`), fed to the DM through `character_summary`. |
 | **Inspiration** | A single yes/no token | `CharacterSheet.inspiration: bool = False`; DM grants/spends it via an `update_character` field. |
 
 ## Small (one model field + a bit of engine logic)
@@ -26,7 +26,7 @@ paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-firs
 | Field | Paper sheet | Add it |
 |---|---|---|
 | ~~**Temp HP**~~ | A separate pool absorbed before real HP | **Done.** `CharacterSheet.temp_hp`; `apply_update` drains it before real HP on damage, healing never touches it, a new source takes `max(current, new)` (no stacking). `update_character` gains a `temp_hp` field (Anthropic tool; the Ollama structured schema doesn't cover it — legacy tool-calling path can still send it). |
-| **Speed** | Movement rate in feet | `race.speed` into `srd.json`, `CharacterSheet.speed: int`. Display-only until Oracle has any positioning/movement system — which it deliberately doesn't. Cheap to show, large to make mechanical. |
+| ~~**Speed**~~ | Movement rate in feet | **Done (display-only).** `speed` per race in `srd.json` (30, dwarves 25, wood elf 35), `CharacterSheet.speed: int`, set in `build_starting_character`. No positioning system, so it's a number on the sheet and nothing more. |
 | **Currency (CP/SP/EP/GP/PP)** | Five boxes; loot economy | `CharacterSheet.currency: dict[str,int]`; `update_character` gains `gold_delta` (or per-coin); DM system prompt gains "award/deduct coin when the fiction calls for it". Also wants a shop/price concept to be worth much. |
 
 ## Medium (model + engine + SRD data + DM prompt work)

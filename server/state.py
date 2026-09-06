@@ -105,6 +105,12 @@ class CharacterSheet(BaseModel):
     character_class: str = ""
     # Independent of class; blank = no recognized race (no bonus/traits, not an error).
     race: str = ""
+    # Walking speed in feet, from the race (default 30). Display-only - Oracle
+    # has no positioning system.
+    speed: int = 30
+    # Free-text 5e alignment (e.g. "Chaotic Good"), player-set via character_edit.
+    # Pure flavour / DM context, no mechanics.
+    alignment: str = ""
     stats: dict[str, int] = Field(default_factory=dict)
     # Stacks with quantity + magic_bonus, not plain name strings.
     inventory: list[InventoryItem] = Field(default_factory=list)

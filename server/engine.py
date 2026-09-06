@@ -77,7 +77,7 @@ ROLL_KIND_DISADVANTAGE_EXCLUSIONS: dict[str, frozenset[str]] = {
 # equip/unequip change AC as a side effect but the player only names an
 # owned item, never a number (_compute_ac does the rest). The DM reads the
 # RP text fields via character_summary but never writes them.
-CHARACTER_EDIT_TEXT_FIELDS = frozenset({"notes", "personality", "ideals", "bonds", "flaws"})
+CHARACTER_EDIT_TEXT_FIELDS = frozenset({"notes", "personality", "ideals", "bonds", "flaws", "alignment"})
 CHARACTER_EDIT_FIELDS = CHARACTER_EDIT_TEXT_FIELDS | frozenset(
     {"add_item", "remove_item", "equip", "unequip"}
 )
@@ -568,18 +568,10 @@ def _attack_lines(character: CharacterSheet, rules: RulesIndex, spell_attack_bon
 
 
 def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
-    """The owner's own full sheet - everything model_dump() already has,
-    plus two fields that exist but were never actually sent: real class
-    features (_class_features_for, above: srd.json's own per-class feature
-    text accumulated through the character's current level, so a level-up
-    automatically adds what it granted) and a persistent skill-
-    proficiency list (CLASS_SKILL_PROFICIENCIES, which already drives real
-    roll bonuses but previously only ever showed up transiently in a
-    roll's own label text, never as something a player could just look
-    at). Built for the tabbed character sheet UI (ROADMAP.md item 7) -
-    backs both _state_sync_envelope's and _character_update_envelope's
-    owner-only payloads, the same "one place defines the shape" reasoning
-    _public_character_view already follows for the public side."""
+    """The owner's own full sheet: model_dump() plus derived fields the sheet
+    UI needs - class features, skill/save proficiencies, spell attack bonus,
+    resolved attacks, and the XP thresholds bracketing the current level.
+    Backs both the state_sync and character_update owner payloads."""
     class_entry = rules.get_entry("class", character.character_class)
     race_entry = rules.get_entry("race", character.race) if character.race else None
     class_key = character.character_class.strip().lower()
@@ -593,10 +585,15 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
         if spell_ability and spell_ability in character.stat_modifiers
         else None
     )
+    # XP bar bounds: cumulative XP to reach the current level and the next.
+    # xp_next is None at max level (no entry past 20).
+    thresholds = rules.xp_thresholds()
     return {
         **character.model_dump(),
         "class_features": _class_features_for(class_entry, character.level),
         "racial_traits": list((race_entry or {}).get("traits", [])),
+        "xp_level_start": thresholds.get(character.level, 0),
+        "xp_next_level": thresholds.get(character.level + 1),
         "skill_proficiencies": list(CLASS_SKILL_PROFICIENCIES.get(class_key, ())),
         # Which two saving throws this class is proficient in - already used
         # for real save rolls (CLASS_SAVING_THROW_PROFICIENCIES), now also
@@ -749,6 +746,7 @@ def build_starting_character(
 
     race_entry = rules.get_entry("race", race) if race else None
     race_name = race_entry["name"] if race_entry else ""
+    speed = (race_entry or {}).get("speed", 30)
 
     class_entry = rules.get_entry("class", character_class) if character_class else None
     if class_entry is None:
@@ -757,7 +755,7 @@ def build_starting_character(
         blank_hp = 10 + STARTING_HP_CUSHION
         return CharacterSheet(
             player_id=player_id, name=name, hp=blank_hp, max_hp=blank_hp, background=background,
-            race=race_name, **rp_fields,
+            race=race_name, speed=speed, **rp_fields,
         )
 
     stats = _apply_race_bonus(_generate_stats(character_class, stat_priority), race_entry)
@@ -781,6 +779,7 @@ def build_starting_character(
         max_hp=max_hp,
         character_class=class_entry["name"],
         race=race_name,
+        speed=speed,
         stats=stats,
         inventory=inventory,
         equipped_weapon=equipped_weapon,

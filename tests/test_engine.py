@@ -381,6 +381,24 @@ def test_build_starting_character_falls_back_on_blank_or_unknown_race(race):
     assert sheet.stats["con"] == 14  # unchanged from the plain-fighter baseline
 
 
+@pytest.mark.parametrize(
+    ("race", "expected_speed"),
+    [("human", 30), ("dwarf", 25), ("wood_elf", 35), ("", 30), ("not-a-real-race", 30)],
+)
+def test_build_starting_character_sets_speed_from_race(race, expected_speed):
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules, race=race)
+    assert sheet.speed == expected_speed
+
+
+def test_owner_character_view_sends_xp_thresholds_bracketing_the_level():
+    rules = RulesIndex.load_default()
+    sheet = build_starting_character("p1", "Rook", "fighter", rules)
+    view = _owner_character_view(sheet, rules)
+    assert view["xp_level_start"] == 0  # level 1
+    assert view["xp_next_level"] == 300  # level 2 threshold
+
+
 def test_build_starting_character_records_race_independent_of_class():
     # race and character_class are genuinely independent choices - a
     # classless character (blank/unrecognized class) still gets their race
@@ -4986,6 +5004,7 @@ async def test_character_edit_sets_rp_fields_privately():
         ("ideals", "no one gets left behind"),
         ("bonds", "the sister I never told I was leaving"),
         ("flaws", "I'd rather be right than kind"),
+        ("alignment", "Chaotic Good"),
     ]:
         await engine.handle(Envelope(
             type="character_edit", session_id="test-session", sender_id=player_id,

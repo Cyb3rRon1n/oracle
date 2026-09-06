@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
-import { ABILITIES, ABILITY_LABEL, SKILLS, skillLabel, fmtMod, passivePerception } from "../lib/dnd5e.js";
+import { ABILITIES, ABILITY_LABEL, SKILLS, skillLabel, fmtMod, passivePerception, passiveScore } from "../lib/dnd5e.js";
 
 export default function CharacterSheetFull({ onClose }) {
   const { state, actions } = useStore();
@@ -42,8 +42,11 @@ export default function CharacterSheetFull({ onClose }) {
             </div>
           </div>
           <div className="flex items-center gap-3 text-sm">
-            <MiniStat label={t("XP")} value={sheet.xp} />
-            <Planned label={t("Alignment")} />
+            <MiniStat
+              label={t("XP")}
+              value={sheet.xp_next_level ? `${sheet.xp} / ${sheet.xp_next_level}` : sheet.xp}
+            />
+            {sheet.alignment && <MiniStat label={t("Alignment")} value={sheet.alignment} />}
             <button
               className="btn-gold !py-1 !px-3 text-sm"
               onClick={onClose}
@@ -98,9 +101,17 @@ export default function CharacterSheetFull({ onClose }) {
               })}
             </Section>
 
-            <div className="panel p-3 text-sm flex justify-between">
-              <span className="text-dungeon-ink/60">{t("Passive perception")}</span>
-              <span className="font-semibold">{passivePerception(sheet)}</span>
+            <div className="panel p-3 text-sm space-y-1">
+              {[
+                [t("Passive perception"), passivePerception(sheet)],
+                [t("Passive investigation"), passiveScore(sheet, "investigation")],
+                [t("Passive insight"), passiveScore(sheet, "insight")],
+              ].map(([label, val]) => (
+                <div key={label} className="flex justify-between">
+                  <span className="text-dungeon-ink/60">{label}</span>
+                  <span className="font-semibold">{val}</span>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -109,7 +120,7 @@ export default function CharacterSheetFull({ onClose }) {
             <div className="grid grid-cols-3 gap-2">
               <MiniStat box label={t("Armor class")} value={sheet.ac} />
               <MiniStat box label={t("Initiative")} value={fmtMod(mod("dex"))} />
-              <Planned box label={t("Speed")} />
+              <MiniStat box label={t("Speed")} value={`${sheet.speed ?? 30} ${t("ft")}`} />
             </div>
 
             <Section title={t("Hit points")}>
@@ -206,6 +217,7 @@ export default function CharacterSheetFull({ onClose }) {
                   ["ideals", t("Ideals")],
                   ["bonds", t("Bonds")],
                   ["flaws", t("Flaws")],
+                  ["alignment", t("Alignment")],
                 ].map(([field, label]) => (
                   <RpField
                     key={field}
