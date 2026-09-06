@@ -437,10 +437,23 @@ Names spelled out exactly. Leave it empty for passing scene detail, ordinary com
 already captured by mechanical_change/world_change/scene fields - most turns add nothing here."""
 
 
-STRUCTURED_OUTPUT_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
-Respond with a single JSON object matching the given schema - never prose outside that JSON,
-never a tool call. `narration` is your in-character response (3-5 sentences, open-ended prose,
-never a numbered or bulleted list of options). Set `mechanical_change` to true whenever the
+# The structured-output prompt is composed from named fragments rather than
+# written as one literal (or, worse, derived by .replace()) so the two-phase
+# DECIDE variant can share the mechanical-fields body verbatim - swapping only
+# the intro and dropping the "never break character" tail - and neither can
+# drift from the other.
+_SO_HEADER = "You are the Dungeon Master for a solo tabletop RPG session.\n"
+_SO_INTRO_NARRATE = (
+    "Respond with a single JSON object matching the given schema - never prose outside that JSON,\n"
+    "never a tool call. `narration` is your in-character response (3-5 sentences, open-ended prose,\n"
+    "never a numbered or bulleted list of options). "
+)
+_SO_INTRO_DECIDE = (
+    "Decide the outcome of this turn. Respond with a single JSON object matching the given schema -\n"
+    "never prose outside that JSON, never a tool call. Do NOT write narration; your structured\n"
+    "decisions are narrated in a separate step. "
+)
+_SO_MECHANICS = """Set `mechanical_change` to true whenever the
 narration describes something that should change a sheet - damage, healing, gaining or losing
 an item, or a new/cleared condition - and fill in `target`/`hp_delta`/`add_condition`
 accordingly. `target` is whoever actually got hurt or changed, not simply whoever acted - if
@@ -456,7 +469,10 @@ actual effect. When you introduce a new NPC worth remembering, or a recurring on
 relationship to the party meaningfully changes, set `notes` (a sentence on personality/goal/
 relationship) and `disposition` (hostile/neutral/friendly) - these two can be the only real
 change on a turn, independent of mechanical_change. Leave rest/notes/disposition/cast_spell as
-empty strings when not applicable. Never break character in `narration`."""
+empty strings when not applicable."""
+_SO_NEVER_BREAK = " Never break character in `narration`."
+
+STRUCTURED_OUTPUT_SYSTEM_PROMPT = _SO_HEADER + _SO_INTRO_NARRATE + _SO_MECHANICS + _SO_NEVER_BREAK
 
 # Opt-in (few_shot_example, off - see OllamaNarrator.__init__): one static
 # worked example baked into the system prompt once. Demonstrates the self-vs-NPC
@@ -502,45 +518,40 @@ task like this. Leave narration/mechanical_change as placeholders when requestin
 get the real roll result and a chance to narrate it properly in a follow-up."""
 )
 
-STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
-You decided the player's last action needed a dice roll before narrating it, and that roll has
-now genuinely happened - its real result is given below. Respond with a single JSON object
-matching the given schema - never prose outside that JSON. Write `narration` (3-5 sentences,
-open-ended prose, never a numbered/bulleted list) that matches the real roll result given to
-you - if it says failure, the character does not simply succeed anyway. Set `mechanical_change`
-and fill in `target`/`hp_delta`/`add_condition`/`rest`/`notes`/`disposition`/`cast_spell` the
-same way a normal turn would, now informed by whether the roll actually succeeded. Never break
-character."""
-
-# Two-phase decide variants (docs/REBUILD_PLAN.md): the prompts above with every
-# narration instruction stripped, to match the narration-free DECIDE schemas.
-# A prompt ordering "Write `narration`" against a schema without the field
-# measurably degrades the fields that do exist on small models.
-DECIDE_SYSTEM_PROMPT = (
-    STRUCTURED_OUTPUT_SYSTEM_PROMPT
-    .replace(
-        "Respond with a single JSON object matching the given schema - never prose outside that JSON,\n"
-        "never a tool call. `narration` is your in-character response (3-5 sentences, open-ended prose,\n"
-        "never a numbered or bulleted list of options). ",
-        "Decide the outcome of this turn. Respond with a single JSON object matching the given schema -\n"
-        "never prose outside that JSON, never a tool call. Do NOT write narration; your structured\n"
-        "decisions are narrated in a separate step. ",
-    )
-    .replace(" Never break character in `narration`.", "")
+# Same fragment approach as the base prompt, for the post-roll follow-up call.
+_FU_HEADER = (
+    "You are the Dungeon Master for a solo tabletop RPG session.\n"
+    "You decided the player's last action needed a dice roll before narrating it, and that roll has\n"
+    "now genuinely happened - its real result is given below. "
 )
-DECIDE_FOLLOWUP_SYSTEM_PROMPT = (
-    STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT
-    .replace(
-        "Respond with a single JSON object\nmatching the given schema - never prose outside that JSON. Write `narration` (3-5 sentences,\nopen-ended prose, never a numbered/bulleted list) that matches the real roll result given to\nyou - if it says failure, the character does not simply succeed anyway.",
-        "Respond with a single JSON object matching the given schema - never prose outside that JSON.\nDo NOT write narration; your structured decisions are narrated in a separate step. Decide the\noutcome to match the real roll result given to you - if it says failure, the character does not\nsimply succeed anyway.",
-    )
-    .replace(" Never break\ncharacter.", "")
+_FU_INTRO_NARRATE = (
+    "Respond with a single JSON object\n"
+    "matching the given schema - never prose outside that JSON. Write `narration` (3-5 sentences,\n"
+    "open-ended prose, never a numbered/bulleted list) that matches the real roll result given to\n"
+    "you - if it says failure, the character does not simply succeed anyway."
 )
+_FU_INTRO_DECIDE = (
+    "Respond with a single JSON object matching the given schema - never prose outside that JSON.\n"
+    "Do NOT write narration; your structured decisions are narrated in a separate step. Decide the\n"
+    "outcome to match the real roll result given to you - if it says failure, the character does not\n"
+    "simply succeed anyway."
+)
+_FU_MECHANICS = (
+    " Set `mechanical_change`\n"
+    "and fill in `target`/`hp_delta`/`add_condition`/`rest`/`notes`/`disposition`/`cast_spell` the\n"
+    "same way a normal turn would, now informed by whether the roll actually succeeded."
+)
+_FU_NEVER_BREAK = " Never break\ncharacter."
 
-# Guard: the .replace()s above must actually fire - a silent no-op would put a
-# "write narration" instruction back against a narration-free schema.
-for _p in (DECIDE_SYSTEM_PROMPT, DECIDE_FOLLOWUP_SYSTEM_PROMPT):
-    assert "Do NOT write narration" in _p, "decide-prompt replace() no-op'd"
+STRUCTURED_OUTPUT_FOLLOWUP_SYSTEM_PROMPT = _FU_HEADER + _FU_INTRO_NARRATE + _FU_MECHANICS + _FU_NEVER_BREAK
+
+# Two-phase decide variants (docs/REBUILD_PLAN.md): the same body as the prompts
+# above but with the decide intro and no "never break character" tail, to match
+# the narration-free DECIDE schemas. A prompt ordering "Write `narration`"
+# against a schema without the field measurably degrades the fields that do
+# exist on small models.
+DECIDE_SYSTEM_PROMPT = _SO_HEADER + _SO_INTRO_DECIDE + _SO_MECHANICS
+DECIDE_FOLLOWUP_SYSTEM_PROMPT = _FU_HEADER + _FU_INTRO_DECIDE + _FU_MECHANICS
 
 
 class OllamaNarrator:
