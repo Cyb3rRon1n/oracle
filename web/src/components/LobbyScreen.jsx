@@ -64,6 +64,13 @@ export default function LobbyScreen() {
           >
             📜 {t("Review my character")}
           </button>
+          <button
+            className="px-3 py-1.5 rounded border border-dungeon-edge hover:border-dungeon-gold text-sm"
+            onClick={actions.tavernRest}
+            title={t("Full HP, half your hit dice back, spell slots refilled")}
+          >
+            🛏 {t("Long rest")}
+          </button>
           <div className="flex-1" />
           <span className="text-sm text-dungeon-ink/60">
             {t("Ready")}: <b className="text-dungeon-ink">{readyCount}</b> / {roster.length}

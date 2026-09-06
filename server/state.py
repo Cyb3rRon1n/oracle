@@ -303,6 +303,10 @@ class CharacterSheet(BaseModel):
             if regained > 0:
                 self.hit_dice_remaining += regained
                 changes.append(f"long rest: {self.hit_dice_remaining}/{self.hit_dice_total} hit dice")
+            # Real 5e: a long rest also refills every spell slot.
+            if self.spell_slots != self.max_spell_slots:
+                self.spell_slots = dict(self.max_spell_slots)
+                changes.append("long rest: spell slots restored")
         elif rest == "short" and self.hp < self.max_hp:
             if self.hit_die and self.hit_dice_remaining > 0:
                 spent = healed = 0

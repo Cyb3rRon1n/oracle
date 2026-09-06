@@ -3788,6 +3788,49 @@ async def test_set_typing_broadcasts_presence_without_storing_anything():
     assert presence[-1][2] == {"player_id": p, "typing": True}
 
 
+async def test_tavern_rest_long_rests_the_whole_party():
+    engine, session, received = make_engine(StubDM())
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)
+    session.characters[a].hp = 1
+    session.characters[b].hp = 3
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="tavern_rest", session_id="test-session", sender_id=a, payload={},
+    ))
+
+    assert session.characters[a].hp == session.characters[a].max_hp
+    assert session.characters[b].hp == session.characters[b].max_hp
+    sysmsgs = [r for r in received if r[0] == "broadcast" and r[1] == "system_message"]
+    assert any("long rest" in m[2]["text"].lower() for m in sysmsgs)
+
+
+async def test_tavern_rest_at_full_health_tells_the_sender_nothing_to_recover():
+    engine, session, received = make_engine(StubDM())
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    received.clear()
+    await engine.handle(Envelope(
+        type="tavern_rest", session_id="test-session", sender_id=p, payload={},
+    ))
+    replies = [r for r in received if r[0] == "send_to" and r[2] == "system_message"]
+    assert any("already rested" in r[3]["text"] for r in replies)
+
+
+async def test_tavern_rest_is_a_no_op_after_the_adventure_has_started():
+    engine, session, received = make_engine(OpeningSceneDM())
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    await start_session(engine, p)
+    session.characters[p].hp = 1
+    await engine.handle(Envelope(
+        type="tavern_rest", session_id="test-session", sender_id=p, payload={},
+    ))
+    assert session.characters[p].hp == 1  # untouched - use the DM's rest field in-session
+
+
 async def test_player_ready_is_a_no_op_after_the_adventure_has_started():
     engine, session, _ = make_engine(OpeningSceneDM())
     p = str(uuid.uuid4())

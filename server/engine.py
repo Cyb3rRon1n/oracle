@@ -1292,6 +1292,30 @@ class GameEngine:
         if connected and connected <= set(self._session.ready_players):
             await self._on_start_session(envelope)
 
+    async def _on_tavern_rest(self, envelope: Envelope) -> None:
+        """A long rest taken in the lobby, between adventures - full HP, half
+        the hit-dice pool back, spell slots refilled, for every party character.
+        A no-op once the adventure has started (use the DM's `rest` field then).
+        Idempotent: a party already rested just gets "nothing to recover"."""
+        if self._has_started() or not self._session.characters:
+            return
+        rested = []
+        for player_id, character in self._session.characters.items():
+            result = character.apply_update({"rest": "long"})
+            if not result.startswith("No changes applied"):
+                rested.append(character.name)
+                await self._send_to(player_id, self._character_update_envelope(player_id, character))
+                await self._broadcast(self._player_update_envelope(character))
+        if rested:
+            await self._broadcast(self._system_envelope(
+                "The party takes a long rest. Wounds close, spells return.", level="info"
+            ))
+            await self._save(envelope.sender_id)
+        else:
+            await self._send_to(envelope.sender_id, self._system_envelope(
+                "Everyone's already rested - nothing to recover.", level="info"
+            ))
+
     async def _on_set_typing(self, envelope: Envelope) -> None:
         """Ephemeral lobby typing indicator - broadcast, never stored. The
         client re-sends while still typing and auto-hides on its own if a

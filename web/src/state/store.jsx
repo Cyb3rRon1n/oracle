@@ -254,6 +254,9 @@ export function StoreProvider({ children }) {
       setTyping(typing) {
         connRef.current?.sendEvent(ET.SET_TYPING, { typing });
       },
+      tavernRest() {
+        connRef.current?.sendEvent(ET.TAVERN_REST, {});
+      },
       editCharacter(field, value) {
         connRef.current?.sendEvent(ET.CHARACTER_EDIT, { field, value });
       },

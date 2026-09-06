@@ -17,6 +17,7 @@ export const EventType = {
   END_COMBAT: "end_combat",
   PLAYER_READY: "player_ready",
   SET_TYPING: "set_typing",
+  TAVERN_REST: "tavern_rest",
 
   // protocol v2 (docs/protocol.md "Protocol v2 additions")
   CONTEXT_MANIFEST_REQUEST: "context_manifest_request",

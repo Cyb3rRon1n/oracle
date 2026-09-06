@@ -20,6 +20,7 @@ EventType = Literal[
     "end_combat",
     "player_ready",
     "set_typing",
+    "tavern_rest",
 
     "state_sync",
     "log_entry",

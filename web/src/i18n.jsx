@@ -50,6 +50,8 @@ const FR = {
   "The fire crackles. Someone should say something.": "Le feu crépite. Quelqu'un devrait dire quelque chose.",
   "Say something, or /me does something…": "Dites quelque chose, ou /me fait quelque chose…",
   "Review my character": "Consulter mon personnage",
+  "Long rest": "Repos long",
+  "Full HP, half your hit dice back, spell slots refilled": "PV au max, moitié des dés de vie, emplacements de sorts rechargés",
   "Ready": "Prêt",
   "I'm ready": "Je suis prêt",
   "Not ready": "Pas prêt",
