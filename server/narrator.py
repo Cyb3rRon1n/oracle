@@ -47,6 +47,59 @@ def _tavern_keeper_user(context: dict) -> str:
     return "\n".join(parts)
 
 
+_QUEST_HOOKS_SYSTEM = (
+    "You are the Dungeon Master planning where a party's next adventure could go. "
+    "Given their story so far, propose 2 to 4 distinct next missions - each a single "
+    "vivid sentence a tavern rumour-monger might tell, building on what's already "
+    "happened (unresolved threads, enemies made, places mentioned). No preamble, "
+    "no numbering in the sentences themselves. Respond with a single JSON object: "
+    '{"hooks": ["...", "..."]}.'
+)
+
+
+def _quest_hooks_user(context: dict) -> str:
+    parts = []
+    if context.get("party"):
+        parts.append(f"The party: {context['party']}")
+    if context.get("location"):
+        parts.append(f"Currently at: {context['location']}")
+    if context.get("campaign_summary"):
+        parts.append(f"The story so far: {context['campaign_summary']}")
+    if context.get("completed_objectives"):
+        parts.append("Already done: " + "; ".join(context["completed_objectives"]))
+    parts.append("Give the quest board's hooks.")
+    return "\n".join(parts)
+
+
+def _parse_hooks(text: str) -> list[str]:
+    """Pull the hooks list out of a backend reply - a JSON object, a bare JSON
+    array, or worst case newline-separated lines. Trimmed, deduped, capped at 4."""
+    hooks: list = []
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            hooks = json.loads(text[start : end + 1]).get("hooks") or []
+        except (ValueError, AttributeError):
+            hooks = []
+    if not hooks:
+        start, end = text.find("["), text.rfind("]")
+        if start >= 0 and end > start:
+            try:
+                hooks = json.loads(text[start : end + 1])
+            except ValueError:
+                hooks = []
+    if not hooks:
+        hooks = [line.lstrip("-*0123456789. ").strip() for line in text.splitlines()]
+    seen: set[str] = set()
+    out = []
+    for h in hooks:
+        h = str(h).strip()
+        if h and h not in seen:
+            seen.add(h)
+            out.append(h)
+    return out[:4]
+
+
 DM_SYSTEM_PROMPT = """You are the Dungeon Master for a solo tabletop RPG session.
 Narrate outcomes vividly but concisely (3-5 sentences per turn). Track consequences
 of the player's actions, introduce complications, and always end by implicitly or
@@ -586,6 +639,16 @@ class NarratorBackend(Protocol):
         """
         return ""
 
+    async def quest_hooks(self, context: dict) -> list[str]:
+        """Optional (getattr at the call site).
+
+        2-4 one-sentence "what next" hooks for the tavern quest board, built on
+        the party's own story. `context`: `party`, `campaign_summary`,
+        `location`, `completed_objectives`. Best-effort: on failure the engine
+        falls back to a hookless board ("the road is open").
+        """
+        return []
+
 
 class AnthropicNarrator:
     # Optional-capability flags, read via getattr - this backend takes
@@ -762,6 +825,16 @@ class AnthropicNarrator:
             messages=[{"role": "user", "content": _tavern_keeper_user(context)}],
         )
         return response.content[0].text.strip()
+
+    async def quest_hooks(self, context: dict) -> list[str]:
+        """See NarratorBackend.quest_hooks. One un-streamed JSON call."""
+        response = await self._client.messages.create(
+            model=self._model,
+            max_tokens=400,
+            system=self._system_prompt + "\n\n" + _QUEST_HOOKS_SYSTEM,
+            messages=[{"role": "user", "content": _quest_hooks_user(context)}],
+        )
+        return _parse_hooks(response.content[0].text)
 
     def _run_tool(
         self,

@@ -4003,6 +4003,126 @@ def test_started_is_not_migrated_for_a_party_between_adventures():
     assert not session.started  # genuinely in the lobby, not a legacy save
 
 
+class QuestDM(OpeningSceneDM):
+    """OpeningSceneDM that also implements the optional quest_hooks capability."""
+
+    def __init__(self, hooks=("Hunt the toll-captain who swore revenge.", "Chart the road south past the maps.")):
+        super().__init__()
+        self._hooks = list(hooks)
+        self.quest_calls: list[dict] = []
+
+    async def quest_hooks(self, context):
+        self.quest_calls.append(context)
+        return list(self._hooks)
+
+
+async def _request_quests(engine, player_id, regenerate=False):
+    await engine.handle(Envelope(
+        type="request_quests", session_id="test-session", sender_id=player_id,
+        payload={"regenerate": True} if regenerate else {},
+    ))
+
+
+async def _vote_quest(engine, player_id, hook):
+    await engine.handle(Envelope(
+        type="vote_quest", session_id="test-session", sender_id=player_id, payload={"hook": hook},
+    ))
+
+
+def _quest_boards(received):
+    return [r for r in received if r[0] == "broadcast" and r[1] == "quest_board"]
+
+
+async def test_request_quests_generates_and_broadcasts_a_board():
+    dm = QuestDM()
+    engine, session, received = make_engine(dm)
+    session.adventures_completed = 1
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    received.clear()
+    await _request_quests(engine, p)
+    assert session.quest_hooks == dm._hooks
+    assert _quest_boards(received)[-1][2]["hooks"] == dm._hooks
+
+
+async def test_request_quests_stays_empty_for_a_fresh_session():
+    dm = QuestDM()
+    engine, session, received = make_engine(dm)  # adventures_completed == 0
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    received.clear()
+    await _request_quests(engine, p)
+    assert dm.quest_calls == []
+    assert _quest_boards(received)[-1][2]["hooks"] == []
+
+
+async def test_regenerating_the_board_clears_votes():
+    dm = QuestDM()
+    engine, session, _ = make_engine(dm)
+    session.adventures_completed = 1
+    p = str(uuid.uuid4())
+    await join(engine, p)
+    await _request_quests(engine, p)
+    await _vote_quest(engine, p, dm._hooks[0])
+    assert session.hook_votes.get(dm._hooks[0]) == [p]
+    await _request_quests(engine, p, regenerate=True)
+    assert session.hook_votes == {}
+    assert len(dm.quest_calls) == 2
+
+
+async def test_a_player_backs_at_most_one_hook():
+    dm = QuestDM()
+    engine, session, _ = make_engine(dm)
+    session.adventures_completed = 1
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)
+    await _request_quests(engine, a)
+    h0, h1 = dm._hooks
+    await _vote_quest(engine, a, h0)
+    await _vote_quest(engine, a, h1)  # switches
+    assert session.hook_votes.get(h0, []) == []
+    assert session.hook_votes[h1] == [a]
+    await _vote_quest(engine, a, h1)  # toggles off
+    assert session.hook_votes[h1] == []
+
+
+async def test_second_adventure_opening_carries_the_voted_hook():
+    dm = QuestDM()
+    engine, session, _ = make_engine(dm, enable_opening_scene=True)
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)
+    await start_session(engine, a)
+    await _end_adventure(engine, a)
+    await _request_quests(engine, a)
+    h0 = dm._hooks[0]
+    await _vote_quest(engine, a, h0)  # a plurality of 1, b abstains
+    await _ready(engine, a)
+    await _ready(engine, b)
+
+    assert h0 in dm.action_texts[-1]
+    assert session.quest_hooks == []  # cleared on start
+    assert session.hook_votes == {}
+
+
+async def test_a_tie_picks_no_hook():
+    dm = QuestDM()
+    engine, session, _ = make_engine(dm, enable_opening_scene=True)
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, a)
+    await join(engine, b)
+    await start_session(engine, a)
+    await _end_adventure(engine, a)
+    await _request_quests(engine, a)
+    h0, h1 = dm._hooks
+    await _vote_quest(engine, a, h0)
+    await _vote_quest(engine, b, h1)  # 1-1 tie
+    await _ready(engine, a)
+    await _ready(engine, b)
+    assert h0 not in dm.action_texts[-1] and h1 not in dm.action_texts[-1]
+
+
 async def test_start_session_sets_a_recognized_content_preference():
     dm = OpeningSceneDM()
     engine, session, received = make_engine(dm)

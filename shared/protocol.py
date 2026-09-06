@@ -22,6 +22,8 @@ EventType = Literal[
     "set_typing",
     "tavern_rest",
     "end_adventure",
+    "request_quests",
+    "vote_quest",
 
     "state_sync",
     "log_entry",
@@ -38,6 +40,7 @@ EventType = Literal[
     "system_message",
     "apply_proposed_change",
     "presence",
+    "quest_board",
 
     # Protocol v2 (docs/protocol.md "Protocol v2 additions")
     "context_manifest_request",

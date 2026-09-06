@@ -534,6 +534,9 @@ class GameEngine:
 
         self._session.started = True
         self._session.ready_players.clear()
+        chosen_hook = self._selected_hook()
+        self._session.quest_hooks.clear()
+        self._session.hook_votes.clear()
         if self._seed_world_map():
             # Push the seeded map now - otherwise it only reaches a client on
             # its next full state_sync.
@@ -552,7 +555,7 @@ class GameEngine:
             # near-death/Guardian beat, just setting out again from where they
             # rested. (The quest-board hook will thread in here.)
             action_text = self._world_bible.next_adventure_prompt(
-                names, self._session.world.location, self._session.campaign_summary
+                names, self._session.world.location, self._session.campaign_summary, chosen_hook
             )
         elif len(roster) > 1:
             # A richer prompt so the opening narration acknowledges everyone
@@ -666,6 +669,8 @@ class GameEngine:
         session.in_combat = False
         session.pre_combat_turn_order = None
         session.current_turn_index = 0
+        session.quest_hooks.clear()
+        session.hook_votes.clear()
         self._last_keeper_ts = 0.0
 
         await self._broadcast(self._session_ended_envelope())
@@ -676,6 +681,67 @@ class GameEngine:
             "The adventure winds down. The party makes its way back to the tavern.", level="info"
         ))
         await self._save(envelope.sender_id)
+
+    async def _on_request_quests(self, envelope: Envelope) -> None:
+        """Quest board (docs/protocol.md "The tavern lobby"): the DM posts a few
+        "what next" hooks the party votes on. Lobby-only, and only once the
+        party has a story - a fresh session just starts cold. Generates on the
+        first ask (or with `regenerate` for the "new hooks" button), which
+        clears any votes; otherwise just re-broadcasts the current board."""
+        session = self._session
+        if self._has_started():
+            return
+        regenerate = bool(envelope.payload.get("regenerate"))
+        if session.adventures_completed > 0 and (regenerate or not session.quest_hooks):
+            gen = getattr(self._dm, "quest_hooks", None)
+            hooks: list[str] = []
+            if gen is not None:
+                try:
+                    hooks = await gen({
+                        "party": ", ".join(
+                            f"{c.name} the {c.character_class}".strip() for c in session.characters.values()
+                        ),
+                        "campaign_summary": session.campaign_summary or session.world.summary,
+                        "location": session.world.location if session.world.location != "unknown" else "",
+                        "completed_objectives": [
+                            o.text for o in session.world.objectives if o.status == "completed"
+                        ],
+                    })
+                except Exception:
+                    logger.exception("Quest-hook generation failed for session %s", session.session_id)
+            session.quest_hooks = hooks
+            session.hook_votes = {}
+            await self._save(envelope.sender_id)
+        await self._broadcast(self._quest_board_envelope())
+
+    async def _on_vote_quest(self, envelope: Envelope) -> None:
+        """Toggle the sender's interest in one hook. A player backs at most one
+        hook at a time - voting a second clears the first; voting the same one
+        again clears it."""
+        session = self._session
+        if self._has_started():
+            return
+        hook = envelope.payload.get("hook")
+        if hook not in session.quest_hooks:
+            return
+        pid = envelope.sender_id
+        already = pid in session.hook_votes.get(hook, [])
+        for voters in session.hook_votes.values():
+            if pid in voters:
+                voters.remove(pid)
+        if not already:
+            session.hook_votes.setdefault(hook, []).append(pid)
+        await self._broadcast(self._quest_board_envelope())
+        await self._save(pid)
+
+    def _selected_hook(self) -> str:
+        """The hook with a clear plurality of votes, or "" on none/a tie."""
+        counts = {h: len(v) for h, v in self._session.hook_votes.items() if v}
+        if not counts:
+            return ""
+        top = max(counts.values())
+        leaders = [h for h, c in counts.items() if c == top]
+        return leaders[0] if len(leaders) == 1 else ""
 
     async def _skip_absent_players(self) -> bool:
         """Advances the turn past any player with no live connection, so the
@@ -1819,6 +1885,9 @@ class GameEngine:
                 # started case (see _has_started()).
                 "started": self._has_started(),
                 "ready_players": list(self._session.ready_players),
+                "adventures_completed": self._session.adventures_completed,
+                "quest_hooks": list(self._session.quest_hooks),
+                "hook_votes": {h: list(v) for h, v in self._session.hook_votes.items()},
             },
         )
 
@@ -1879,6 +1948,17 @@ class GameEngine:
             session_id=self._session.session_id,
             sender_id="server",
             payload={},
+        )
+
+    def _quest_board_envelope(self) -> Envelope:
+        return Envelope(
+            type="quest_board",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload={
+                "hooks": list(self._session.quest_hooks),
+                "votes": {h: list(v) for h, v in self._session.hook_votes.items()},
+            },
         )
 
     def _player_update_envelope(self, character: CharacterSheet) -> Envelope:
