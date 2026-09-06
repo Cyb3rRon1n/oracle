@@ -7,6 +7,7 @@ only open work.
 
 ## v2 rebuild and after (2026-08)
 
+- **`num_ctx` pin measured** — pinning Ollama's context window to 8192 (up from its silent 4096 default, which truncated the per-turn prompt from the front) took combat tool-call correctness to **74% pooled** (26/35, `--repeat 5`, qwen2.5:7b, two-phase), up from ~66% with structured output alone and ~29% native. Reproducible (4/5 runs ≥71%), 0 pseudo-tool-call leaks. A real gain, not the outsized move the ROADMAP had speculated. (2026-09-06)
 - **`update_world` reliability** measured live on `qwen3:8b` — 10/10 across 2 repeats (was 4/12). (2026-08-25)
 - **Fact ledger** (AriGraph-lite): durable per-session facts captured with zero extra LLM calls. (2026-08-24)
 - **World-bible deepening** — Aetherfall gains layered history, factions, peoples, naming rules, a real map; five optional depth fields on `WorldBible`. (2026-08-23)
