@@ -84,6 +84,27 @@ separate. Clients just need a browser — no clone, no Python, no install.
   session id in every window = same game; the server hosts any number of
   independent sessions side by side.
 
+### Run as a Docker stack
+
+`docker-compose.yml` brings up the server and the web client together, the
+client served behind its own origin (nginx proxies the game websocket to the
+server), so there is no server URL to type on the join screen.
+
+```bash
+cp .env.example .env                 # set DM_BACKEND and a key / Ollama host
+docker compose up -d --build         # web client on http://localhost:8780
+
+# local narrator instead of a hosted API:
+docker compose --profile ollama up -d --build
+docker compose exec ollama ollama pull qwen2.5:7b
+#   ...and in .env:  DM_BACKEND=ollama   OLLAMA_HOST=http://ollama:11434
+```
+
+`WEB_PORT` (default `8780`) and `SERVER_PORT` (default `8765`) set the host
+ports; sessions and pulled models persist in named volumes. For an NVIDIA
+GPU, uncomment the `deploy:` block on the `ollama` service (needs the NVIDIA
+Container Toolkit on the host — without it Ollama silently runs on CPU).
+
 ### Configuration
 
 | Variable | Default | Purpose |
@@ -94,7 +115,9 @@ separate. Clients just need a browser — no clone, no Python, no install.
 | `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL` | api.openai.com | Any `/chat/completions` provider |
 | `WORLD_CONTEXT_DIR` | `world_context/` | Lorebook source files |
 | `SESSION_STORE_DIR` | `sessions/` | Session persistence |
-| `SERVER_HOST` / `SERVER_PORT` | `localhost` / `8765` | Server bind address/port — `SERVER_HOST=0.0.0.0` accepts clients from other machines |
+| `SERVER_HOST` / `SERVER_PORT` | `localhost` / `8765` | Server bind address/port — `SERVER_HOST=0.0.0.0` accepts clients from other machines (the Docker image sets this) |
+| `WEB_PORT` | `8780` | Docker stack only — host port for the web client |
+| `VITE_SERVER_URI` | build-time | `auto` = resolve the ws:// URL from the served page (Docker default); or a fixed `ws://host:8765` |
 | `OLLAMA_TWO_PHASE` | `true` | `"0"` restores the single-call path (kept for A/B measurement) |
 | `OLLAMA_FACT_LEDGER` | `false` | `"1"` opts the decide call into recording durable session facts (measured reliability cost on qwen2.5:7b — see CHANGELOG); hosted backends always have it |
 
