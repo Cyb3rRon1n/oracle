@@ -1,5 +1,12 @@
 .git/
 .venv/
+
+# Never bake secrets into an image layer
+.env
+.env.*
+**/.env
+**/.env.*
+
 **/__pycache__/
 *.pyc
 .pytest_cache/
