@@ -23,7 +23,15 @@ export function clearIdentity() {
 // time; this lets a player point the same built page at their own server
 // without a rebuild - the #1 setup failure in docs/walkthrough.md.
 const SERVER_KEY = "oracle_server";
-const DEFAULT_SERVER_URI = import.meta.env.VITE_SERVER_URI || "ws://localhost:8765";
+// VITE_SERVER_URI="auto" (the Docker stack's default) resolves the ws:// URL
+// from the page the app is served over, matching nginx's /ws proxy — one
+// built image then works on any host/port/scheme with no rebuild. Unset
+// keeps the localhost default for `npm run dev` and hand-built deploys.
+const ENV_SERVER_URI = import.meta.env.VITE_SERVER_URI;
+const DEFAULT_SERVER_URI =
+  ENV_SERVER_URI === "auto"
+    ? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`
+    : ENV_SERVER_URI || "ws://localhost:8765";
 
 export function loadServer() {
   try {

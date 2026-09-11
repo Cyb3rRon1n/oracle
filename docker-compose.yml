@@ -1,0 +1,66 @@
+name: oracle
+
+# Self-hosted Oracle stack: the game server plus the browser client behind
+# one origin. Copy .env.example to .env first (at least DM_BACKEND and a key
+# or Ollama host). Then:  docker compose up -d --build
+#
+# Local narrator instead of a hosted API:
+#   docker compose --profile ollama up -d --build
+#   docker compose exec ollama ollama pull "${OLLAMA_MODEL:-qwen2.5:7b}"
+#   ...and in .env: DM_BACKEND=ollama, OLLAMA_HOST=http://ollama:11434
+
+services:
+  oracle-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: oracle-server
+    restart: unless-stopped
+    environment:
+      DM_BACKEND: ${DM_BACKEND:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+    volumes:
+      - sessions:/data/sessions
+    # Published so a Textual client (or a web page pointed straight at it)
+    # can reach the server directly; oracle-web reaches it in-network.
+    ports:
+      - "${SERVER_PORT:-8765}:8765"
+
+  oracle-web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        VITE_SERVER_URI: ${VITE_SERVER_URI:-auto}
+    image: oracle-web
+    restart: unless-stopped
+    depends_on:
+      - oracle-server
+    ports:
+      - "${WEB_PORT:-8780}:80"
+
+  # Optional local narrator. Only starts with --profile ollama.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    # NVIDIA GPU (needs the NVIDIA Container Toolkit on the host — without it
+    # Ollama silently runs on CPU). Uncomment to enable:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  sessions:
+  ollama:
