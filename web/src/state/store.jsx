@@ -26,6 +26,7 @@ function initial() {
     log: [],
     awaitingDM: false, // true between sending an action / starting and the DM's first word back
     portraitPending: false, // true between requesting a portrait and the result (a character_update, or a warning) coming back
+    portraitProgress: null, // {step, total} while a local ComfyUI backend reports real per-step progress; null otherwise
     inspirationArmed: false, // player asked to spend their held Inspiration on the next roll
     typing: {}, // player_id -> bool, ephemeral lobby typing indicator
     adventuresCompleted: 0,
@@ -110,6 +111,7 @@ function reducer(state, event) {
         character,
         inspirationArmed: state.inspirationArmed && character.inspiration,
         portraitPending: false,
+        portraitProgress: null,
       };
     }
 
@@ -177,6 +179,7 @@ function reducer(state, event) {
         // Same rule for a portrait request that came back a warning
         // ("not configured", "couldn't generate") instead of a real update.
         portraitPending: state.portraitPending && event.payload.level === "info",
+        portraitProgress: state.portraitPending && event.payload.level === "info" ? state.portraitProgress : null,
         log: [...state.log, { id: ++logSeq, kind: "system", text: event.payload.text, level: event.payload.level }],
       };
 
@@ -187,7 +190,10 @@ function reducer(state, event) {
       return { ...state, awaitingDM: true };
 
     case "portrait_pending":
-      return { ...state, portraitPending: true };
+      return { ...state, portraitPending: true, portraitProgress: null };
+
+    case ET.PORTRAIT_PROGRESS:
+      return { ...state, portraitProgress: { step: event.payload.step, total: event.payload.total } };
 
     case ET.QUEST_BOARD:
       return { ...state, quest: { hooks: event.payload.hooks || [], votes: event.payload.votes || {} } };
@@ -293,8 +299,8 @@ export function StoreProvider({ children }) {
       editCharacter(field, value) {
         connRef.current?.sendEvent(ET.CHARACTER_EDIT, { field, value });
       },
-      generatePortrait() {
-        connRef.current?.sendEvent(ET.GENERATE_PORTRAIT, {});
+      generatePortrait(style) {
+        connRef.current?.sendEvent(ET.GENERATE_PORTRAIT, { style });
         dispatch({ type: "portrait_pending" });
       },
       deathSave() {

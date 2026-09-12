@@ -6016,13 +6016,17 @@ async def test_character_edit_before_joining_warns_and_does_not_crash():
 
 
 class FakeImageBackend:
-    def __init__(self, image_bytes=b"fake-png-bytes", error=None):
+    def __init__(self, image_bytes=b"fake-png-bytes", error=None, progress_ticks=()):
         self.image_bytes = image_bytes
         self.error = error
+        self.progress_ticks = progress_ticks
         self.prompts = []
 
-    async def generate_portrait(self, description):
+    async def generate_portrait(self, description, on_progress=None):
         self.prompts.append(description)
+        if on_progress is not None:
+            for step, total in self.progress_ticks:
+                await on_progress(step, total)
         if self.error is not None:
             raise self.error
         return self.image_bytes
@@ -6047,6 +6051,49 @@ async def test_generate_portrait_sets_data_url_and_broadcasts_publicly():
     public_updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
     assert public_updates
     assert public_updates[-1][2]["portrait"] == character.portrait
+
+
+async def test_generate_portrait_passes_the_requested_style_into_the_prompt():
+    backend = FakeImageBackend()
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="generate_portrait", session_id="test-session", sender_id=player_id, payload={"style": "anime"},
+    ))
+
+    assert "anime" in backend.prompts[0]
+
+
+async def test_generate_portrait_defaults_to_fantasy_style_when_unspecified():
+    backend = FakeImageBackend()
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="generate_portrait", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    assert "digital painting" in backend.prompts[0]  # the fantasy preset's own tag
+
+
+async def test_generate_portrait_relays_progress_ticks_privately():
+    backend = FakeImageBackend(progress_ticks=[(4, 20), (12, 20), (20, 20)])
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="generate_portrait", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    progress = [r for r in received if r[0] == "send_to" and r[2] == "portrait_progress"]
+    assert [r[3] for r in progress] == [{"step": 4, "total": 20}, {"step": 12, "total": 20}, {"step": 20, "total": 20}]
+    assert all(r[1] == player_id for r in progress)  # private to the requester, never broadcast
+    assert not any(r[0] == "broadcast" and r[1] == "portrait_progress" for r in received)
 
 
 async def test_generate_portrait_is_repeatable_not_gated_to_once():

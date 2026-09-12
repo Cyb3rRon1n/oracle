@@ -42,6 +42,7 @@ EventType = Literal[
     "apply_proposed_change",
     "presence",
     "quest_board",
+    "portrait_progress",
 
     # Protocol v2 (docs/protocol.md "Protocol v2 additions")
     "context_manifest_request",

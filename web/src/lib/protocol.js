@@ -46,6 +46,7 @@ export const EventType = {
   SCENE_UPDATE: "scene_update",
   PRESENCE: "presence",
   QUEST_BOARD: "quest_board",
+  PORTRAIT_PROGRESS: "portrait_progress",
 };
 
 export function makeEnvelope(type, sessionId, senderId, payload = {}) {

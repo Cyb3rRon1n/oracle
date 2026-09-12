@@ -51,10 +51,14 @@ tool-call reliability harness. Full list: CHANGELOG.md.
   ComfyUI rather than the originally-bookmarked `ultra-fast-image-gen` (cross-platform,
   not Apple-Silicon-only — the right fit for a Docker-deployable project with Anvil
   already generating a ComfyUI stack). See CHANGELOG.md and `docs/protocol.md`'s
-  "Portrait generation" section. **Still open**: scene generation off narration beats
-  (prompt-building off `WorldState.mood` + a protocol envelope — the portrait half's
-  `ImageBackend`/prompt-building pattern extends to this directly, not a redesign), and
-  a hosted alternative backend for GPU-less users (`ComfyUIBackend` is local-only today).
+  "Portrait generation" section. A hosted alternative for GPU-less users is also shipped
+  (`IMAGE_BACKEND=openai`, `OpenAIImageBackend`) — an explicit selector alongside
+  `ComfyUIBackend`, same pattern as `DM_BACKEND`. **Still open**: scene generation off
+  narration beats (prompt-building off `WorldState.mood` + a protocol envelope — the
+  portrait half's `ImageBackend`/prompt-building pattern extends to this directly, not a
+  redesign), and real GPU verification of the ComfyUI workflow (LoRA/hi-res-fix/
+  face-detail) — this project currently has no GPU hardware to run one against; only
+  unit-tested against a fake client/websocket so far.
 - **Text-to-speech** for DM narration — likely the same GPU dependency, though
   TTS models are lighter; measure on CPU before assuming.
 - **Background world-ticks** — NPCs pursuing goals, world state advancing

@@ -38,7 +38,13 @@ export default function CharacterSheetFull({ onClose }) {
         {/* header strip */}
         <div className="panel p-4 flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
-            <Avatar sheet={sheet} pending={state.portraitPending} onGenerate={actions.generatePortrait} t={t} />
+            <Avatar
+              sheet={sheet}
+              pending={state.portraitPending}
+              progress={state.portraitProgress}
+              onGenerate={actions.generatePortrait}
+              t={t}
+            />
             <div>
               <div className="font-display text-2xl text-dungeon-gold">{sheet.name}</div>
               <div className="text-sm text-dungeon-ink/70">

@@ -30,7 +30,7 @@ from .image_backend import ImageBackend
 from .lorebook import MAX_LORE_CHARS, SUPPORTED_SUFFIXES, Lorebook
 from .narrator import NarratorBackend
 from .persistence import SessionStore
-from .portrait import build_portrait_prompt
+from .portrait import DEFAULT_STYLE, build_portrait_prompt
 from .rolls import (
     DEFAULT_NPC_HP,
     DEFAULT_NPC_XP,  # noqa: F401 - re-exported for tests
@@ -1645,9 +1645,14 @@ class GameEngine:
             )
             return
 
-        prompt = build_portrait_prompt(character)
+        style = envelope.payload.get("style", DEFAULT_STYLE)
+        prompt = build_portrait_prompt(character, style=style)
+
+        async def on_progress(step: int, total: int) -> None:
+            await self._send_to(player_id, self._portrait_progress_envelope(step, total))
+
         try:
-            image_bytes = await self._image_backend.generate_portrait(prompt)
+            image_bytes = await self._image_backend.generate_portrait(prompt, on_progress=on_progress)
         except Exception:
             logger.exception("Portrait generation failed for player_id=%s", player_id)
             await self._send_to(
@@ -1964,6 +1969,14 @@ class GameEngine:
             session_id=self._session.session_id,
             sender_id="server",
             payload={"player_id": player_id, "sheet_delta": _owner_character_view(character, self._rules)},
+        )
+
+    def _portrait_progress_envelope(self, step: int, total: int) -> Envelope:
+        return Envelope(
+            type="portrait_progress",
+            session_id=self._session.session_id,
+            sender_id="server",
+            payload={"step": step, "total": total},
         )
 
     def _player_joined_envelope(self, character: CharacterSheet) -> Envelope:

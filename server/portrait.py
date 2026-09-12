@@ -33,17 +33,30 @@ _RACE_VISUALS: dict[str, str] = {
     "stout_halfling": "small and sturdy, a cheerful weathered face",
 }
 
-_STYLE_SUFFIX = "fantasy character portrait, dramatic lighting, highly detailed digital painting"
+# Player-chosen art direction, applied as a fixed suffix tag - not a LoRA
+# or checkpoint swap (a bare ComfyUI install has no style LoRAs to assume),
+# so every option works with just a base checkpoint. Keep in sync with
+# web/src/components/Avatar.jsx's own STYLE_OPTIONS list (small and fixed
+# enough that mirroring it by hand beats a server-announces-styles
+# mechanism for four entries).
+DEFAULT_STYLE = "fantasy"
+STYLE_PRESETS: dict[str, str] = {
+    "fantasy": "fantasy character portrait, dramatic lighting, highly detailed digital painting",
+    "anime": "anime character portrait, cel-shaded, vibrant colors, clean line art",
+    "comic": "comic book character portrait, bold ink lines, halftone shading, dynamic pose",
+    "realistic": "photorealistic character portrait, natural lighting, high detail, 85mm lens",
+}
 
 
 def _article(word: str) -> str:
     return "an" if word[:1].lower() in "aeiou" else "a"
 
 
-def build_portrait_prompt(character: CharacterSheet) -> str:
+def build_portrait_prompt(character: CharacterSheet, style: str = DEFAULT_STYLE) -> str:
     race = character.race or "human"
     character_class = character.character_class or "adventurer"
     base = f"{character.name}, {_article(race)} {race} {character_class}"
+    style_suffix = STYLE_PRESETS.get(style, STYLE_PRESETS[DEFAULT_STYLE])
 
     tags = ", ".join(
         tag
@@ -51,5 +64,5 @@ def build_portrait_prompt(character: CharacterSheet) -> str:
         if tag
     )
     if tags:
-        return f"{base} — {tags}, {_STYLE_SUFFIX}"
-    return f"{base} — {_STYLE_SUFFIX}"
+        return f"{base} — {tags}, {style_suffix}"
+    return f"{base} — {style_suffix}"

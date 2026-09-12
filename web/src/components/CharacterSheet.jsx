@@ -77,7 +77,13 @@ function Overview({ sheet }) {
   return (
     <>
       <div className="flex items-start gap-2">
-        <Avatar sheet={sheet} pending={state.portraitPending} onGenerate={actions.generatePortrait} t={t} />
+        <Avatar
+          sheet={sheet}
+          pending={state.portraitPending}
+          progress={state.portraitProgress}
+          onGenerate={actions.generatePortrait}
+          t={t}
+        />
         <div className="flex-1 flex items-baseline justify-between">
           <span className="font-display text-lg text-dungeon-gold">{sheet.name}</span>
           <span className="text-xs uppercase tracking-wide text-dungeon-ink/60">
