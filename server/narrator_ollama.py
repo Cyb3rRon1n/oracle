@@ -281,7 +281,25 @@ SCENE_PROPERTIES = {
     },
     "suggested_actions": {
         "type": "array",
-        "items": {"type": "string"},
+        "items": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The suggested action, in plain language."},
+                "skill": {
+                    "type": "string",
+                    "enum": sorted(SKILL_ABILITIES),
+                    "description": (
+                        "Only when this option represents a real skill check (e.g. persuading, "
+                        "sneaking, intimidating). Omit for an option with no check attached."
+                    ),
+                },
+                "dc": {
+                    "type": "integer",
+                    "description": "Only when skill is set: the difficulty class this attempt would face.",
+                },
+            },
+            "required": ["text"],
+        },
         "description": "Up to 4 concrete things the acting player might do next.",
     },
 }

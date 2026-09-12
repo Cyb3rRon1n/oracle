@@ -4,6 +4,7 @@
 
 import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
+import { skillLabel } from "../lib/dnd5e.js";
 
 export default function ScenePanel({ onSuggest }) {
   const { state } = useStore();
@@ -59,11 +60,17 @@ export default function ScenePanel({ onSuggest }) {
           <div className="flex flex-col gap-1">
             {scene.suggested_actions.map((a) => (
               <button
-                key={a}
-                onClick={() => onSuggest(a)}
-                className="text-left px-2 py-1 rounded border border-dungeon-edge hover:border-dungeon-gold hover:text-dungeon-gold text-xs transition"
+                key={a.text}
+                onClick={() => onSuggest(a.text)}
+                className="text-left px-2 py-1 rounded border border-dungeon-edge hover:border-dungeon-gold hover:text-dungeon-gold text-xs transition flex items-center justify-between gap-2"
               >
-                {a}
+                <span>{a.text}</span>
+                {a.skill && (
+                  <span className="shrink-0 text-[9px] uppercase tracking-wide text-dungeon-gold/70 border border-dungeon-gold/40 rounded px-1 py-0.5">
+                    {skillLabel(a.skill)}
+                    {a.dc != null && ` DC ${a.dc}`}
+                  </span>
+                )}
               </button>
             ))}
           </div>

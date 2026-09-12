@@ -108,6 +108,37 @@ CONTENT_PREFERENCE_HINTS = {
 }
 
 
+def _sanitize_suggested_actions(raw: list) -> list[dict]:
+    """Coerces the DM's own suggested_actions into a real, validated shape -
+    {text, skill?, dc?} - never trusted strictly from model output. A plain
+    string (either backend's older behavior, or a model that ignores the
+    object shape) becomes {text: <that string>}. An unrecognized skill name
+    is dropped rather than shown as a fabricated check - the same
+    graceful-miss convention every other skill lookup here already
+    follows. dc is only kept alongside a real skill; a dc with no
+    recognized skill isn't a check the client can meaningfully label."""
+    result = []
+    for item in raw[:4]:
+        if isinstance(item, str):
+            if item:
+                result.append({"text": item})
+            continue
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not text:
+            continue
+        entry = {"text": str(text)}
+        skill = item.get("skill")
+        if isinstance(skill, str) and skill.lower() in SKILL_ABILITIES:
+            entry["skill"] = skill.lower()
+            dc = item.get("dc")
+            if isinstance(dc, int) and not isinstance(dc, bool):
+                entry["dc"] = dc
+        result.append(entry)
+    return result
+
+
 def _party_xp_announcement(npc_name: str, xp_award: int, party_results: list[tuple]) -> str:
     """Builds the player-facing defeat/level-up broadcast text for a kill,
     shared by the in-turn apply_update closure and the player-confirmed
@@ -1166,10 +1197,11 @@ class GameEngine:
 
         def scene_sink(facts: dict) -> None:
             nonlocal scene_facts
-            # The 4-action cap is a protocol guarantee (docs/protocol.md),
-            # enforced here server-side rather than trusted to each backend.
+            # The 4-action cap and the {text, skill?, dc?} shape are both
+            # protocol guarantees (docs/protocol.md), enforced here
+            # server-side rather than trusted to each backend.
             trimmed = dict(facts)
-            trimmed["suggested_actions"] = list(facts.get("suggested_actions", []))[:4]
+            trimmed["suggested_actions"] = _sanitize_suggested_actions(facts.get("suggested_actions", []))
             scene_facts = trimmed
 
         def fact_sink(facts: list) -> None:

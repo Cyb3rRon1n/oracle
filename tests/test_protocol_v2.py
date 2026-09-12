@@ -275,7 +275,9 @@ async def test_turn_emits_scene_update_capped_at_four_actions():
     assert len(scenes) == 1
     payload = scenes[0]
     assert payload["npcs_present"] == ["Ashwren"]
-    assert payload["suggested_actions"] == ["Touch it", "Ask", "Run", "Wait"]  # capped at 4
+    # capped at 4, and coerced to the real {text, skill?, dc?} shape - a plain
+    # string (this DM double's own shape) becomes {text: <string>}.
+    assert payload["suggested_actions"] == [{"text": "Touch it"}, {"text": "Ask"}, {"text": "Run"}, {"text": "Wait"}]
     assert "narration_id" in payload
 
 

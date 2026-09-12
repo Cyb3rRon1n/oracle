@@ -14,6 +14,7 @@ from server.engine import (
     _outcome_category,
     _owner_character_view,
     _public_character_view,
+    _sanitize_suggested_actions,
     is_weapon_proficient,
 )
 from server.lore import Guardian, Region, WhoWhatWhereWhenWhy, WorldBible
@@ -1683,6 +1684,37 @@ def test_is_weapon_proficient_false_for_unrecognized_weapon_or_class():
     classless = build_starting_character("p", "Anon", "", rules)
     classless.add_item("Dagger")
     assert is_weapon_proficient(classless, "Dagger", rules) is False
+
+
+def test_sanitize_suggested_actions_keeps_a_real_skill_and_dc():
+    raw = [{"text": "Persuade the guard", "skill": "Persuasion", "dc": 15}]
+    assert _sanitize_suggested_actions(raw) == [{"text": "Persuade the guard", "skill": "persuasion", "dc": 15}]
+
+
+def test_sanitize_suggested_actions_coerces_a_plain_string():
+    assert _sanitize_suggested_actions(["Head to the tavern"]) == [{"text": "Head to the tavern"}]
+
+
+def test_sanitize_suggested_actions_drops_an_unrecognized_skill():
+    # A fabricated/misspelled skill isn't shown as a check at all - the
+    # same graceful-miss convention every other skill lookup here follows.
+    raw = [{"text": "Try something", "skill": "not_a_real_skill", "dc": 15}]
+    assert _sanitize_suggested_actions(raw) == [{"text": "Try something"}]
+
+
+def test_sanitize_suggested_actions_drops_dc_with_no_recognized_skill():
+    raw = [{"text": "Try something", "dc": 15}]
+    assert _sanitize_suggested_actions(raw) == [{"text": "Try something"}]
+
+
+def test_sanitize_suggested_actions_drops_items_with_no_text():
+    raw = [{"skill": "stealth", "dc": 12}, {"text": ""}, "", None, 42]
+    assert _sanitize_suggested_actions(raw) == []
+
+
+def test_sanitize_suggested_actions_caps_at_four_before_validating():
+    raw = ["a", "b", "c", "d", "e"]
+    assert _sanitize_suggested_actions(raw) == [{"text": "a"}, {"text": "b"}, {"text": "c"}, {"text": "d"}]
 
 
 async def test_owner_character_view_spell_attack_bonus_is_none_for_a_non_caster():
