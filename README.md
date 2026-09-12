@@ -142,6 +142,23 @@ Container Toolkit on the host — without it Ollama silently runs on CPU).
 └── docs/              # protocol spec (incl. v2 additions), rebuild plan
 ```
 
+## Screenshots
+
+Real captures of the live app — join screen, a live character sheet with real computed stats, and a real DM-narrated opening scene (local Ollama backend).
+
+<p align="center">
+  <img src="docs/images/screenshots/join.png" alt="Oracle join screen: character name, session id, class/race pickers" width="480"><br>
+  <sub>Join screen — pick a class/race or import a character, share the session id to play together</sub>
+</p>
+<p align="center">
+  <img src="docs/images/screenshots/character-sheet.png" alt="Oracle character sheet with real computed AC, saves, skills, and attacks" width="480"><br>
+  <sub>Every number on the sheet is computed by the server, not the model</sub>
+</p>
+<p align="center">
+  <img src="docs/images/screenshots/session.png" alt="Oracle live session with a DM-narrated opening scene" width="480"><br>
+  <sub>A live DM-narrated opening scene</sub>
+</p>
+
 ## The tool-call reliability investigation
 
 The [ROADMAP](ROADMAP.md) documents a repeatable harness (`scripts/live_reliability_check.py`) measuring whether small local models actually fire `update_character` when narration demands it — baseline percentages across models, a two-request split tried and reverted, and what moved the needle (structured output roughly doubled real tool-call correctness). The v2 narrator changes (two-phase turns, lorebook injection, campaign summaries) change the prompt context those baselines were measured against; the post-v2 re-run is in CHANGELOG (two-phase decide phase measured; a silent decide-prompt bug fixed) — pre/post numbers remain separate eras.
