@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
+import InventoryPanel from "./InventoryPanel.jsx";
 
 const ABILITY_LABELS = {
   str: "STR",
@@ -162,56 +163,7 @@ function Inventory() {
   const { t } = useLang();
   const { state, actions } = useStore();
   const sheet = state.character;
-  const [itemName, setItemName] = useState("");
-  const items = sheet.inventory || [];
-
-  function edit(field, value) {
-    if (!value.trim()) return;
-    actions.editCharacter(field, value.trim());
-    if (field !== "notes") setItemName("");
-  }
-
-  return (
-    <>
-      <ul className="space-y-1">
-        {items.length === 0 && <li className="italic text-dungeon-ink/50">{t("Empty pockets.")}</li>}
-        {items.map((it) => (
-          <li key={it.name + (it.magic_bonus ?? 0)} className="flex items-center justify-between gap-2">
-            <span>
-              {it.name}
-              {it.quantity > 1 && <span className="text-dungeon-ink/50"> ×{it.quantity}</span>}
-              {!!it.magic_bonus && <span className="text-dungeon-gold"> +{it.magic_bonus}</span>}
-              {sheet.equipped_weapon === it.name && <Tag>{t("weapon")}</Tag>}
-              {sheet.equipped_armor === it.name && <Tag>{t("armor")}</Tag>}
-              {sheet.equipped_shield === it.name && <Tag>{t("shield")}</Tag>}
-            </span>
-            <span className="flex gap-1">
-              <MiniBtn onClick={() => edit("equip", it.name)}>{t("equip")}</MiniBtn>
-              <MiniBtn onClick={() => edit("unequip", it.name)}>{t("unequip")}</MiniBtn>
-              <MiniBtn danger onClick={() => edit("remove_item", it.name)}>{t("drop")}</MiniBtn>
-            </span>
-          </li>
-        ))}
-      </ul>
-      <form
-        className="flex gap-2 pt-1"
-        onSubmit={(e) => {
-          e.preventDefault();
-          edit("add_item", itemName);
-        }}
-      >
-        <input
-          className="flex-1 bg-dungeon-bg border border-dungeon-edge rounded px-2 py-1 text-sm"
-          placeholder={t("Add an item…")}
-          value={itemName}
-          onChange={(e) => setItemName(e.target.value)}
-        />
-        <button type="submit" className="btn-gold !py-1 !px-3 text-xs">
-          {t("Add")}
-        </button>
-      </form>
-    </>
-  );
+  return <InventoryPanel sheet={sheet} edit={actions.editCharacter} t={t} />;
 }
 
 function Spells({ sheet }) {
@@ -299,22 +251,5 @@ function Features({ sheet }) {
         </button>
       </div>
     </div>
-  );
-}
-
-function Tag({ children }) {
-  return <span className="ml-1 text-[10px] uppercase tracking-wide text-dungeon-gold/80">[{children}]</span>;
-}
-
-function MiniBtn({ children, onClick, danger }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`text-[10px] px-1.5 py-0.5 rounded border transition ${
-        danger ? "border-dungeon-blood/50 text-dungeon-blood/90 hover:bg-dungeon-blood/20" : "border-dungeon-edge text-dungeon-ink/60 hover:text-dungeon-ink"
-      }`}
-    >
-      {children}
-    </button>
   );
 }

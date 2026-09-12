@@ -870,7 +870,7 @@ async def test_update_character_tool_call_applies_and_pushes_character_update():
     ]
     assert updates, "a real sheet change should push a character_update to the player"
     assert updates[-1][3]["sheet_delta"]["hp"] == 16
-    assert updates[-1][3]["sheet_delta"]["inventory"] == [{"name": "torch", "quantity": 1, "magic_bonus": 0}]
+    assert updates[-1][3]["sheet_delta"]["inventory"] == [{"name": "torch", "quantity": 1, "magic_bonus": 0, "equippable": False, "usable": False}]
 
 
 async def test_update_character_rest_heals_the_acting_character_through_a_real_turn():
@@ -1656,6 +1656,28 @@ async def test_owner_character_view_still_includes_everything_model_dump_has():
     assert "xp" in view
 
 
+async def test_owner_character_view_marks_equippable_and_usable_items():
+    # Server-computed so the sheet UI never has to know SRD categories
+    # itself: a weapon is equippable but not usable, a coded consumable
+    # is usable but not equippable, a mundane item is neither.
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    character = session.characters[player_id]
+    character.add_item("Longsword")
+    character.add_item("Potion of Healing")
+    character.add_item("Torch")
+
+    view = _owner_character_view(character, engine._rules)
+    by_name = {item["name"]: item for item in view["inventory"]}
+    assert by_name["Longsword"]["equippable"] is True
+    assert by_name["Longsword"]["usable"] is False
+    assert by_name["Potion of Healing"]["equippable"] is False
+    assert by_name["Potion of Healing"]["usable"] is True
+    assert by_name["Torch"]["equippable"] is False
+    assert by_name["Torch"]["usable"] is False
+
+
 async def test_owner_character_view_handles_a_blank_or_unrecognized_class():
     # No class_entry in the SRD dataset for "" or an unrecognized class -
     # the same graceful "not present isn't an error" fallback
@@ -1993,7 +2015,7 @@ async def test_sheet_change_broadcasts_public_player_update_alongside_private_ch
         r for r in received if r[0] == "send_to" and r[1] == player_id and r[2] == "character_update"
     ]
     assert private_updates
-    assert private_updates[-1][3]["sheet_delta"]["inventory"] == [{"name": "torch", "quantity": 1, "magic_bonus": 0}]
+    assert private_updates[-1][3]["sheet_delta"]["inventory"] == [{"name": "torch", "quantity": 1, "magic_bonus": 0, "equippable": False, "usable": False}]
 
     public_updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
     assert public_updates, "a sheet change should also broadcast the public view to everyone else"
@@ -5528,17 +5550,23 @@ async def test_apply_update_grants_inspiration_once_and_never_clears_it():
     assert sheet.inspiration is True
 
 
-async def test_character_edit_add_item_appends_to_inventory():
+async def test_character_edit_add_item_is_no_longer_player_settable():
+    # add_item was removed from CHARACTER_EDIT_FIELDS: inventory only ever
+    # grows through update_character (the DM's tool), never a player's own
+    # character_edit request - see CHARACTER_EDIT_FIELDS's own comment.
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())
     await join(engine, player_id)
+    received.clear()
 
     await engine.handle(Envelope(
         type="character_edit", session_id="test-session", sender_id=player_id,
         payload={"field": "add_item", "value": "a shiny rock"},
     ))
 
-    assert session.characters[player_id].find_item("a shiny rock") is not None
+    assert session.characters[player_id].find_item("a shiny rock") is None
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
 
 
 async def test_character_edit_remove_item_removes_a_present_item():
@@ -5677,26 +5705,25 @@ async def test_character_edit_equip_carries_a_real_magic_armor_bonus_into_ac():
     assert character.ac == 11 + character.stat_modifiers.get("dex", 0) + 1  # base + dex + the magic bonus
 
 
-async def test_character_edit_add_item_never_grants_a_magic_bonus():
-    # magic_bonus is the DM tool's own field (update_character), never
-    # player-settable through character_edit - the same "engine/DM
-    # decides mechanical state" boundary equip/unequip's own ac side
-    # effect already respects. A player has no way to send magic_bonus
-    # over character_edit's {field, value} shape at all, but this locks
-    # in the actual resulting item regardless of what a malformed/
-    # adversarial payload might try.
+async def test_character_edit_add_item_with_magic_bonus_payload_still_rejected():
+    # magic_bonus is the DM tool's own field (update_character); an
+    # adversarial character_edit payload trying to smuggle one in via the
+    # now-removed add_item field still can't add anything at all - it's
+    # rejected the same way any other unknown field is, before value is
+    # ever looked at.
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())
     await join(engine, player_id)
+    received.clear()
 
     await engine.handle(Envelope(
         type="character_edit", session_id="test-session", sender_id=player_id,
         payload={"field": "add_item", "value": "Longsword", "magic_bonus": 5},
     ))
 
-    item = session.characters[player_id].find_item("Longsword")
-    assert item is not None
-    assert item.magic_bonus == 0
+    assert session.characters[player_id].find_item("Longsword") is None
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
 
 
 async def test_character_edit_unequip_shield_removes_its_bonus_from_ac():
@@ -5832,6 +5859,110 @@ async def test_character_edit_remove_item_that_is_equipped_also_unequips_it():
     assert character.find_item("Leather Armor") is None
     assert character.ac == 10 + character.stat_modifiers["dex"]
     assert any(r[0] == "broadcast" and r[1] == "player_update" for r in received)
+
+
+async def test_character_edit_use_item_heals_and_consumes_a_coded_consumable():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    character = session.characters[player_id]
+    character.hp = 10
+    character.add_item("Potion of Healing")
+    received.clear()
+
+    with patch("server.dice.random.randint", side_effect=[3, 4]):
+        await engine.handle(Envelope(
+            type="character_edit", session_id="test-session", sender_id=player_id,
+            payload={"field": "use_item", "value": "Potion of Healing"},
+        ))
+
+    assert character.hp == 19  # 10 + (3 + 4 + 2)
+    assert character.find_item("Potion of Healing") is None  # consumed
+    # HP is public - a use_item that healed needs the same player_update
+    # broadcast an AC-changing equip already gets.
+    assert any(r[0] == "broadcast" and r[1] == "player_update" for r in received)
+    private_updates = [r for r in received if r[0] == "send_to" and r[2] == "character_update"]
+    assert private_updates
+
+
+async def test_character_edit_use_item_at_full_hp_still_consumes_it():
+    # Real 5e: nothing stops you drinking a potion at full HP, it's just
+    # wasted - apply_update's own clamp handles the "don't overheal" part,
+    # use_item still consumes the item regardless.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    character = session.characters[player_id]
+    character.add_item("Potion of Healing")
+    assert character.hp == character.max_hp
+    received.clear()
+
+    with patch("server.dice.random.randint", side_effect=[3, 4]):
+        await engine.handle(Envelope(
+            type="character_edit", session_id="test-session", sender_id=player_id,
+            payload={"field": "use_item", "value": "Potion of Healing"},
+        ))
+
+    assert character.hp == character.max_hp
+    assert character.find_item("Potion of Healing") is None
+
+
+async def test_character_edit_use_item_stacks_decrement_by_one():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    character = session.characters[player_id]
+    character.add_item("Potion of Healing")
+    character.add_item("Potion of Healing")
+    received.clear()
+
+    with patch("server.dice.random.randint", side_effect=[3, 4]):
+        await engine.handle(Envelope(
+            type="character_edit", session_id="test-session", sender_id=player_id,
+            payload={"field": "use_item", "value": "Potion of Healing"},
+        ))
+
+    item = character.find_item("Potion of Healing")
+    assert item is not None
+    assert item.quantity == 1
+
+
+async def test_character_edit_use_item_not_owned_warns_and_makes_no_change():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "use_item", "value": "Potion of Healing"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "broadcast" and r[1] == "player_update" for r in received)
+
+
+async def test_character_edit_use_item_without_a_coded_effect_warns_and_is_not_consumed():
+    # Owned and real (a Longsword, or a Potion SRD has no coded effect for
+    # yet, e.g. Potion of Climbing) but nothing to resolve - see
+    # CONSUMABLE_EFFECTS. Warns rather than silently no-op-ing, and never
+    # consumes the item on a no-op.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    character = session.characters[player_id]
+    character.add_item("Longsword")
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "use_item", "value": "Longsword"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert character.find_item("Longsword") is not None
 
 
 async def test_character_edit_rejects_a_mechanical_field_not_in_the_allowed_set():

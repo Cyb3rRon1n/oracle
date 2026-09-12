@@ -34,7 +34,9 @@ from .rolls import (
     _cast_spell,
     _compute_ac,
     _dice_roll_tags,
+    _equip_slot_for,
     _has_disadvantage,
+    _use_item,
     _xp_for_npc,
 )
 from .rules import RulesIndex
@@ -71,13 +73,20 @@ LEDGER_RECENT_LIMIT = 12
 LEDGER_RELEVANT_LIMIT = 8
 
 # What a player may set on their own sheet via character_edit: pure
-# fiction/bookkeeping only. hp/conditions/stats/xp stay DM- or engine-only.
-# equip/unequip change AC as a side effect but the player only names an
-# owned item, never a number (_compute_ac does the rest). The DM reads the
-# RP text fields via character_summary but never writes them.
+# fiction/bookkeeping only, plus consuming something already owned.
+# hp/conditions/stats/xp stay DM- or engine-only, with one narrow, deliberate
+# exception: use_item's healing only ever consumes an item the DM already
+# granted (via update_character's own add_item), never fabricates a new
+# resource - a player can't grant themselves gear this way, only spend what
+# they're holding. equip/unequip change AC as a side effect but the player
+# only names an owned item, never a number (_compute_ac does the rest). The
+# DM reads the RP text fields via character_summary but never writes them.
+# There is deliberately no player-initiated add_item: an item only ever
+# enters inventory through update_character's own add_item (the DM's tool),
+# never a player's own free-text request.
 CHARACTER_EDIT_TEXT_FIELDS = frozenset({"notes", "personality", "ideals", "bonds", "flaws", "alignment"})
 CHARACTER_EDIT_FIELDS = CHARACTER_EDIT_TEXT_FIELDS | frozenset(
-    {"add_item", "remove_item", "equip", "unequip"}
+    {"remove_item", "equip", "unequip", "use_item"}
 )
 
 # Session-zero tone choice, prepended to every turn's action_text while
@@ -1491,9 +1500,12 @@ class GameEngine:
 
     async def _on_character_edit(self, envelope: Envelope) -> None:
         """Player-side bookkeeping that doesn't need DM adjudication: the RP
-        text fields, and adding/removing/equipping inventory by name (docs/
-        protocol.md). Never touches hp/conditions/stats/xp, so a player can't
-        grant themselves healing or gear. Exempt from turn order."""
+        text fields, removing/equipping/using inventory by name (docs/
+        protocol.md). Never touches hp/conditions/stats/xp except use_item's
+        own narrow, deliberate exception (see CHARACTER_EDIT_FIELDS above) -
+        a player can't grant themselves gear or healing out of nowhere, only
+        equip or consume what's already in their inventory. Exempt from turn
+        order."""
         player_id = envelope.sender_id
         character = self._session.characters.get(player_id)
         if character is None:
@@ -1508,7 +1520,7 @@ class GameEngine:
             await self._send_to(
                 player_id,
                 self._system_envelope(
-                    "Can't edit '{}' - try {}, add_item, remove_item, equip, or unequip.".format(
+                    "Can't edit '{}' - try {}, remove_item, equip, unequip, or use_item.".format(
                         field, ", ".join(sorted(CHARACTER_EDIT_TEXT_FIELDS))
                     ),
                     level="warning",
@@ -1517,12 +1529,10 @@ class GameEngine:
             return
 
         ac_changed = False
+        hp_changed = False
 
         if field in CHARACTER_EDIT_TEXT_FIELDS:
             setattr(character, field, str(value))
-        elif field == "add_item":
-            # No magic_bonus - that's the DM tool's field, never player-settable.
-            character.add_item(str(value))
         elif field == "remove_item":
             item = str(value)
             if not character.remove_item(item):
@@ -1547,13 +1557,13 @@ class GameEngine:
                     player_id, self._system_envelope(f"You don't have '{item}' to equip.", level="warning")
                 )
                 return
-            entry = self._rules.get_entry("equipment", item)
-            if entry is not None and entry.get("damage"):
+            slot = _equip_slot_for(item, self._rules)
+            if slot == "weapon":
                 character.equipped_weapon = item
-            elif entry is not None and entry.get("ac"):
+            elif slot == "armor":
                 character.equipped_armor = item
                 ac_changed = True
-            elif entry is not None and entry.get("ac_bonus"):
+            elif slot == "shield":
                 character.equipped_shield = item
                 ac_changed = True
             else:
@@ -1562,6 +1572,16 @@ class GameEngine:
                     self._system_envelope(f"'{item}' isn't a recognized weapon, armor, or shield.", level="warning"),
                 )
                 return
+        elif field == "use_item":
+            item = str(value)
+            message, changed = _use_item(character, item)
+            if not changed:
+                await self._send_to(player_id, self._system_envelope(message.capitalize(), level="warning"))
+                return
+            hp_changed = True
+            await self._send_to(
+                player_id, self._system_envelope(f"{character.name} {message}", level="info")
+            )
         elif field == "unequip":
             item = str(value)
             if character.equipped_weapon == item:
@@ -1588,10 +1608,11 @@ class GameEngine:
                 shield_magic_bonus=shield_item.magic_bonus if shield_item else 0,
             )
 
-        # The edited fields are private, but ac is public - so an equip that
-        # changed it needs the public player_update broadcast too.
+        # The edited fields are private, but ac/hp are public - so an equip
+        # that changed AC, or a use_item that changed HP, needs the public
+        # player_update broadcast too.
         await self._send_to(player_id, self._character_update_envelope(player_id, character))
-        if ac_changed:
+        if ac_changed or hp_changed:
             await self._broadcast(self._player_update_envelope(character))
         await self._save(player_id)
 

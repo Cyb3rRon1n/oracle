@@ -5,8 +5,9 @@ re-exports the names tests reach for."""
 from __future__ import annotations
 
 from .character_build import CLASS_SAVING_THROW_PROFICIENCIES, CLASS_SKILL_PROFICIENCIES
-from .rules import RulesIndex
-from .state import SPELLCASTING_ABILITY, CharacterSheet, Session
+from .rolls import CONSUMABLE_EFFECTS, _equip_slot_for
+from .rules import RulesIndex, slug
+from .state import SPELLCASTING_ABILITY, CharacterSheet, InventoryItem, Session
 
 NPC_NOTES_CONTEXT_MAX_CHARS = 80
 
@@ -135,6 +136,20 @@ def _attack_lines(character: CharacterSheet, rules: RulesIndex, spell_attack_bon
     return lines
 
 
+def _item_view(item: InventoryItem, rules: RulesIndex) -> dict:
+    """One inventory item as sent to its owner: the stored fields plus two
+    server-computed capability flags, so the sheet UI never has to
+    duplicate SRD-category knowledge to decide what a button should do -
+    'equip' only for something a real weapon/armor/shield entry resolves
+    to (_equip_slot_for), 'use' only for a real coded consumable effect
+    (server/rolls.py's CONSUMABLE_EFFECTS)."""
+    return {
+        **item.model_dump(),
+        "equippable": _equip_slot_for(item.name, rules) is not None,
+        "usable": slug(item.name) in CONSUMABLE_EFFECTS,
+    }
+
+
 def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     """The owner's own full sheet: model_dump() plus derived fields the sheet
     UI needs - class features, skill/save proficiencies, spell attack bonus,
@@ -158,6 +173,7 @@ def _owner_character_view(character: CharacterSheet, rules: RulesIndex) -> dict:
     thresholds = rules.xp_thresholds()
     return {
         **character.model_dump(),
+        "inventory": [_item_view(item, rules) for item in character.inventory],
         "class_features": _class_features_for(class_entry, character.level),
         "racial_traits": list((race_entry or {}).get("traits", [])),
         "xp_level_start": thresholds.get(character.level, 0),

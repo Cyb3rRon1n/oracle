@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
 import { ABILITIES, ABILITY_LABEL, SKILLS, skillLabel, fmtMod, passivePerception, passiveScore } from "../lib/dnd5e.js";
+import InventoryPanel from "./InventoryPanel.jsx";
 
 export default function CharacterSheetFull({ onClose }) {
   const { state, actions } = useStore();
@@ -191,8 +192,8 @@ export default function CharacterSheetFull({ onClose }) {
               )}
             </Section>
 
-            <Section title={t("Equipment")}>
-              <Equipment sheet={sheet} edit={actions.editCharacter} t={t} />
+            <Section title={t("Inventory")}>
+              <InventoryPanel sheet={sheet} edit={actions.editCharacter} t={t} />
             </Section>
 
             <div className="flex gap-2">
@@ -401,53 +402,6 @@ function List({ items, empty }) {
   );
 }
 
-function Equipment({ sheet, edit, t }) {
-  const [name, setName] = useState("");
-  const items = sheet.inventory || [];
-  const add = (e) => {
-    e.preventDefault();
-    if (name.trim()) {
-      edit("add_item", name.trim());
-      setName("");
-    }
-  };
-  return (
-    <>
-      <ul className="space-y-1 text-sm">
-        {items.length === 0 && <li className="italic text-dungeon-ink/50">{t("Empty pockets.")}</li>}
-        {items.map((it) => (
-          <li key={it.name + (it.magic_bonus ?? 0)} className="flex items-center justify-between gap-2">
-            <span>
-              {it.name}
-              {it.quantity > 1 && <span className="text-dungeon-ink/50"> ×{it.quantity}</span>}
-              {!!it.magic_bonus && <span className="text-dungeon-gold"> +{it.magic_bonus}</span>}
-              {sheet.equipped_weapon === it.name && <Slot>{t("weapon")}</Slot>}
-              {sheet.equipped_armor === it.name && <Slot>{t("armor")}</Slot>}
-              {sheet.equipped_shield === it.name && <Slot>{t("shield")}</Slot>}
-            </span>
-            <span className="flex gap-1">
-              <Mini onClick={() => edit("equip", it.name)}>{t("equip")}</Mini>
-              <Mini onClick={() => edit("unequip", it.name)}>{t("unequip")}</Mini>
-              <Mini danger onClick={() => edit("remove_item", it.name)}>{t("drop")}</Mini>
-            </span>
-          </li>
-        ))}
-      </ul>
-      <form className="flex gap-2 pt-2" onSubmit={add}>
-        <input
-          className="flex-1 bg-dungeon-bg border border-dungeon-edge rounded px-2 py-1 text-sm"
-          placeholder={t("Add an item…")}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <button type="submit" className="btn-gold !py-1 !px-3 text-xs">
-          {t("Add")}
-        </button>
-      </form>
-    </>
-  );
-}
-
 function Spellcasting({ sheet, t }) {
   const known = sheet.known_spells || [];
   const maxSlots = sheet.max_spell_slots || {};
@@ -537,21 +491,3 @@ function Notes({ value, save, t }) {
   );
 }
 
-function Slot({ children }) {
-  return <span className="ml-1 text-[10px] uppercase tracking-wide text-dungeon-gold/80">[{children}]</span>;
-}
-
-function Mini({ children, onClick, danger }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`text-[10px] px-1.5 py-0.5 rounded border transition ${
-        danger
-          ? "border-dungeon-blood/50 text-dungeon-blood/90 hover:bg-dungeon-blood/20"
-          : "border-dungeon-edge text-dungeon-ink/60 hover:text-dungeon-ink"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}

@@ -5,8 +5,21 @@ from __future__ import annotations
 
 import re
 
+from . import dice
 from .rules import RulesIndex, slug
 from .state import CharacterSheet
+
+# Consumables with a real, coded effect when "used" - keyed by the same
+# slug() key equip/unequip already resolve item names through. Anything
+# SRD tags as a Potion but isn't listed here (e.g. Potion of Climbing,
+# whose real effect is a temporary climb-speed buff - no duration/buff
+# system exists to apply it) has no coded effect yet: a real, honest gap,
+# not a silently-wrong "nothing happens" catch-all - see _use_item and
+# server/views.py's _item_view (usable=False hides the button entirely
+# rather than showing one that does nothing).
+CONSUMABLE_EFFECTS: dict[str, str] = {
+    "potion_of_healing": "2d4+2",  # SRD's own worded effect, verbatim.
+}
 
 # NPC introduced without a real max_hp from lookup_rule - a CR-1/4 mook's
 # HP, a trivial fight rather than a 100-HP sponge.
@@ -85,6 +98,46 @@ def _cast_spell(character: CharacterSheet, spell_name: str, rules: RulesIndex) -
     character.spell_slots[slot_key] -= 1
     remaining = character.spell_slots[slot_key]
     return f"casts {entry['name']} (level {spell_level} slot, {remaining} remaining).", True
+
+
+def _equip_slot_for(item_name: str, rules: RulesIndex) -> str | None:
+    """Which equip slot `item_name` fills - weapon/armor/shield - from real
+    SRD data, or None if it isn't equippable at all (a torch, a potion,
+    ...). Shared by server/engine.py's equip handler and
+    server/views.py's _item_view (so the sheet UI can hide 'equip' on
+    something the handler would reject anyway) - previously duplicated
+    inline in the handler alone."""
+    entry = rules.get_entry("equipment", item_name)
+    if entry is None:
+        return None
+    if entry.get("damage"):
+        return "weapon"
+    if entry.get("ac"):
+        return "armor"
+    if entry.get("ac_bonus"):
+        return "shield"
+    return None
+
+
+def _use_item(character: CharacterSheet, item_name: str) -> tuple[str, bool]:
+    """Applies a player-initiated character_edit `use_item` - the one
+    exception to "character_edit never touches hp" (see engine.py's
+    _on_character_edit docstring): it only ever consumes something
+    already legitimately in the character's own inventory, granted
+    there by the DM in the first place, never fabricates a new resource.
+    Returns (message, changed), matching _cast_spell's shape above."""
+    if character.find_item(item_name) is None:
+        return f"you don't have '{item_name}' to use.", False
+    heal_dice = CONSUMABLE_EFFECTS.get(slug(item_name))
+    if heal_dice is None:
+        return f"'{item_name}' has no usable effect.", False
+    total, _, _ = dice.roll(heal_dice)
+    character.apply_update({"hp_delta": total})
+    character.remove_item(item_name)
+    return (
+        f"drinks a {item_name} ({heal_dice} → {total}), now at {character.hp}/{character.max_hp} HP.",
+        True,
+    )
 
 
 def _parse_armor_ac(ac_text: str) -> tuple[int, int | None, bool]:
