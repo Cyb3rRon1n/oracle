@@ -71,12 +71,6 @@ tool-call reliability harness. Full list: CHANGELOG.md.
   revisit if `notes` turns out not to be enough in play.
 - **Further SRD monster/spell coverage** beyond the batches shipped — real
   content work, not a hard limit.
-- **Weapon/armor proficiency gating** — Oracle lists class proficiencies on
-  the sheet but nothing checks them (an unproficient attack still gets the
-  proficiency bonus). The last real mechanical gap from
-  `docs/character-sheet-gaps.md`; small, needs a prompt/engine tweak to the
-  attack path. Everything else in that doc is shipped.
-
 ## Explicitly not doing
 
 - Scraping or bundling copyrighted D&D sourcebook content (Monster Manual,

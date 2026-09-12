@@ -8,11 +8,11 @@ build list.
 This file is that list — every official-sheet field Oracle has no data for, what the
 paper sheet does with it, and a rough cost to add. Ordered roughly cheapest-first.
 
-**Status (2026-09-06): effectively complete.** Every Trivial / Small / Medium field
-below is shipped (see the "Done" notes and CHANGELOG.md). The one remaining mechanical
-gap is weapon/armor **proficiency gating** — the sheet lists a class's proficiencies but
-nothing enforces them on the attack path (tracked in ROADMAP.md). Page-2 / cosmetic
-fields stay deliberately unmodelled. This doc is now a record, not a to-do list.
+**Status (2026-09-12): complete.** Every Trivial / Small / Medium field below is shipped
+(see the "Done" notes and CHANGELOG.md), including weapon proficiency gating on the
+Attacks table (`is_weapon_proficient()`, `server/rolls.py`) — the last remaining
+mechanical gap, now closed. Page-2 / cosmetic fields stay deliberately unmodelled. This
+doc is now a record, not a to-do list.
 
 ## Trivial (client-only or one server line)
 
@@ -40,7 +40,7 @@ fields stay deliberately unmodelled. This doc is now a record, not a to-do list.
 | Field | Paper sheet | Add it |
 |---|---|---|
 | ~~**Personality Traits / Ideals / Bonds / Flaws**~~ | Four short RP fields | **Done.** Four `str` fields on `CharacterSheet`, seeded from `origins.json` at creation, player-editable via `character_edit`, fed to the DM through `character_summary`. The Inspiration reward for playing to them is wired up (see below). |
-| ~~**Attacks & Spellcasting table**~~ | Per-attack: name, to-hit bonus, damage + type | **Done.** `_owner_character_view` → `attacks: [{name, kind, to_hit, damage}]` — the equipped weapon (DEX for ranged, best of STR/DEX for finesse, else STR; magic bonus folded in; proficiency assumed) plus every attack-shaped known spell. Not covered: weapon-proficiency gating (Oracle tracks none — see below), cantrip damage scaling by level. |
+| ~~**Attacks & Spellcasting table**~~ | Per-attack: name, to-hit bonus, damage + type | **Done.** `_owner_character_view` → `attacks: [{name, kind, to_hit, damage}]` — the equipped weapon (DEX for ranged, best of STR/DEX for finesse, else STR; magic bonus folded in; proficiency bonus gated on `is_weapon_proficient()`, see below) plus every attack-shaped known spell. Not covered: cantrip damage scaling by level. |
 | ~~**Proficiencies & Languages**~~ | Armor/weapon/tool proficiencies; spoken languages | **Done (display-only).** `class.proficiencies` (armor/weapons/tools) and `race.languages` in `srd.json`; `_owner_character_view` sends `class_proficiencies` + `languages`; the overlay lists them. Nothing gates on them yet. |
 | ~~**Hit Dice pool**~~ | `Nd<hit die>`, spent on a short rest, restored on a long rest | **Done.** `CharacterSheet.hit_die` / `hit_dice_total` (= level) / `hit_dice_remaining`. Short rest spends dice (roll + CON) until full or empty; long rest gives back half. Classless falls back to the old "half missing" stand-in. See `docs/protocol.md` "Rest and recovery". |
 

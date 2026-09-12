@@ -5,7 +5,7 @@ re-exports the names tests reach for."""
 from __future__ import annotations
 
 from .character_build import CLASS_SAVING_THROW_PROFICIENCIES, CLASS_SKILL_PROFICIENCIES
-from .rolls import CONSUMABLE_EFFECTS, _equip_slot_for
+from .rolls import CONSUMABLE_EFFECTS, _equip_slot_for, is_weapon_proficient
 from .rules import RulesIndex, slug
 from .state import SPELLCASTING_ABILITY, CharacterSheet, InventoryItem, Session
 
@@ -96,12 +96,16 @@ def _attack_lines(character: CharacterSheet, rules: RulesIndex, spell_attack_bon
     attack-shaped known spell, each as {name, kind, to_hit, damage}.
 
     Weapon ability follows real 5e - DEX for a ranged weapon, the better of
-    STR/DEX for a finesse weapon, otherwise STR. Proficiency is assumed
-    (Oracle tracks no weapon proficiencies - see docs/character-sheet-gaps.md);
-    a real magic_bonus on the carried weapon adds to both rolls. Spell
-    to-hit is the caster's own spell_attack_bonus; spell damage is the
-    SRD die as-is (no ability mod - real 5e's rule for spell damage).
-    Empty for a bare-handed non-caster."""
+    STR/DEX for a finesse weapon, otherwise STR. Proficiency bonus only
+    applies when is_weapon_proficient() confirms the class is actually
+    proficient with the equipped weapon (rolls.py) - the last mechanical
+    gap named in docs/character-sheet-gaps.md, now closed. A real
+    magic_bonus on the carried weapon adds to both rolls regardless of
+    proficiency (a magic weapon's enhancement isn't a proficiency bonus).
+    Spell to-hit is the caster's own spell_attack_bonus (always applies -
+    real 5e always treats a caster as proficient with their own spells);
+    spell damage is the SRD die as-is (no ability mod - real 5e's rule for
+    spell damage). Empty for a bare-handed non-caster."""
     lines: list[dict] = []
     prof = character.proficiency_bonus
     mods = character.stat_modifiers
@@ -120,7 +124,8 @@ def _attack_lines(character: CharacterSheet, rules: RulesIndex, spell_attack_bon
             ability = "str"
         magic = getattr(character.find_item(weapon), "magic_bonus", 0) or 0
         ability_mod = mods.get(ability, 0)
-        to_hit = prof + ability_mod + magic
+        weapon_prof = prof if is_weapon_proficient(character, weapon, rules) else 0
+        to_hit = weapon_prof + ability_mod + magic
         dmg_mod = ability_mod + magic
         damage = f"{die}{_sign(dmg_mod)} {dtype}" if dmg_mod else f"{die} {dtype}"
         lines.append({"name": entry["name"], "kind": "weapon", "to_hit": _sign(to_hit), "damage": damage})

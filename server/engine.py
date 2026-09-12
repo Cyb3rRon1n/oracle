@@ -41,6 +41,7 @@ from .rolls import (
     _has_disadvantage,
     _use_item,
     _xp_for_npc,
+    is_weapon_proficient,  # noqa: F401 - re-exported for tests
 )
 from .rules import RulesIndex
 from .state import (

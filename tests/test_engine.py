@@ -14,6 +14,7 @@ from server.engine import (
     _outcome_category,
     _owner_character_view,
     _public_character_view,
+    is_weapon_proficient,
 )
 from server.lore import Guardian, Region, WhoWhatWhereWhenWhy, WorldBible
 from server.rules import RulesIndex
@@ -1631,6 +1632,57 @@ def test_attack_lines_use_dex_for_a_ranged_weapon():
     assert _attack_lines(rogue, rules, None) == [
         {"name": "Shortbow", "kind": "weapon", "to_hit": "+4", "damage": "1d6+2 piercing"}
     ]
+
+
+def test_attack_lines_omits_proficiency_bonus_for_an_unproficient_weapon():
+    from server.engine import _attack_lines
+
+    rules = RulesIndex.load_default()
+    wizard = build_starting_character("p", "El", "wizard", rules)
+
+    wizard.add_item("Quarterstaff")
+    wizard.equipped_weapon = "Quarterstaff"
+    proficient_row = _attack_lines(wizard, rules, None)[0]
+
+    wizard.add_item("Longsword")
+    wizard.equipped_weapon = "Longsword"
+    unproficient_row = _attack_lines(wizard, rules, None)[0]
+
+    # Both are non-finesse melee weapons -> the same STR-based ability
+    # modifier either way. A wizard is specifically proficient with
+    # quarterstaffs but not longswords (srd.json's own weapons list), so
+    # the only real difference between the two rows should be the
+    # proficiency bonus itself.
+    assert int(proficient_row["to_hit"]) - int(unproficient_row["to_hit"]) == wizard.proficiency_bonus
+
+
+def test_is_weapon_proficient_matches_a_broad_category():
+    rules = RulesIndex.load_default()
+    fighter = build_starting_character("p", "Bry", "fighter", rules)
+    # fighter: weapons = ["simple", "martial"] - proficient with everything.
+    assert is_weapon_proficient(fighter, "Longsword", rules) is True
+    assert is_weapon_proficient(fighter, "Dagger", rules) is True
+
+
+def test_is_weapon_proficient_matches_a_specific_named_weapon():
+    rules = RulesIndex.load_default()
+    wizard = build_starting_character("p", "El", "wizard", rules)
+    # wizard: weapons = ["daggers", "darts", "slings", "quarterstaffs", "light crossbows"] -
+    # a narrow named list, not "simple" broadly.
+    assert is_weapon_proficient(wizard, "Dagger", rules) is True
+    assert is_weapon_proficient(wizard, "Light Crossbow", rules) is True
+    assert is_weapon_proficient(wizard, "Longsword", rules) is False
+    assert is_weapon_proficient(wizard, "Shortbow", rules) is False  # simple, but not in the wizard's named list
+
+
+def test_is_weapon_proficient_false_for_unrecognized_weapon_or_class():
+    rules = RulesIndex.load_default()
+    fighter = build_starting_character("p", "Bry", "fighter", rules)
+    assert is_weapon_proficient(fighter, "Not A Real Weapon", rules) is False
+
+    classless = build_starting_character("p", "Anon", "", rules)
+    classless.add_item("Dagger")
+    assert is_weapon_proficient(classless, "Dagger", rules) is False
 
 
 async def test_owner_character_view_spell_attack_bonus_is_none_for_a_non_caster():

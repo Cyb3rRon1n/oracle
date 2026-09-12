@@ -100,6 +100,34 @@ def _cast_spell(character: CharacterSheet, spell_name: str, rules: RulesIndex) -
     return f"casts {entry['name']} (level {spell_level} slot, {remaining} remaining).", True
 
 
+def is_weapon_proficient(character: CharacterSheet, weapon_name: str, rules: RulesIndex) -> bool:
+    """Real 5e weapon proficiency: a class-level category ("simple"/
+    "martial", matched against the weapon's own SRD category - e.g.
+    "Martial Melee Weapon") or a specific named weapon a class lists
+    individually (e.g. a wizard's "light crossbows" - de-pluralized via a
+    plain rstrip("s") and matched against the weapon's real SRD name;
+    every entry in srd.json's classes[*].proficiencies.weapons today is a
+    regular plural, so this needs no exception list). An unrecognized
+    weapon or class means "can't confirm proficiency" -> not proficient,
+    the same "unrecognized = no bonus assumed" rule request_roll's own
+    weapon field already follows elsewhere - never silently grants it."""
+    entry = rules.get_entry("equipment", weapon_name)
+    class_entry = rules.get_entry("class", character.character_class)
+    if entry is None or class_entry is None:
+        return False
+    category = entry.get("category", "").lower()
+    real_name = entry.get("name", "").lower()
+    for prof in class_entry.get("proficiencies", {}).get("weapons", []):
+        prof = prof.lower()
+        if prof == "simple" and "simple" in category:
+            return True
+        if prof == "martial" and "martial" in category:
+            return True
+        if prof.rstrip("s") == real_name:
+            return True
+    return False
+
+
 def _equip_slot_for(item_name: str, rules: RulesIndex) -> str | None:
     """Which equip slot `item_name` fills - weapon/armor/shield - from real
     SRD data, or None if it isn't equippable at all (a torch, a potion,
