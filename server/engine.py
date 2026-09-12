@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
@@ -25,9 +26,11 @@ from .lore import (
     load_default_origin_table,
     load_default_world_bible,
 )
+from .image_backend import ImageBackend
 from .lorebook import MAX_LORE_CHARS, SUPPORTED_SUFFIXES, Lorebook
 from .narrator import NarratorBackend
 from .persistence import SessionStore
+from .portrait import build_portrait_prompt
 from .rolls import (
     DEFAULT_NPC_HP,
     DEFAULT_NPC_XP,  # noqa: F401 - re-exported for tests
@@ -154,12 +157,17 @@ class GameEngine:
         rules: RulesIndex | None = None,
         world_bible: WorldBible | None = None,
         origin_table: OriginTable | None = None,
+        image_backend: ImageBackend | None = None,
     ):
         self._session = session
         self._dm = dm
         self._broadcast = broadcast
         self._send_to = send_to
         self._store = store
+        # None is a normal, supported state (see image_backend.py's
+        # create_image_backend) - portrait generation is optional, unlike
+        # the DM backend above, which is always required.
+        self._image_backend = image_backend
         self._enable_opening_scene = enable_opening_scene
         self._rules = rules or RulesIndex.load_default()
         # Composes the opening scene's premise with real setting facts.
@@ -1614,6 +1622,44 @@ class GameEngine:
         await self._send_to(player_id, self._character_update_envelope(player_id, character))
         if ac_changed or hp_changed:
             await self._broadcast(self._player_update_envelope(character))
+        await self._save(player_id)
+
+    async def _on_generate_portrait(self, envelope: Envelope) -> None:
+        """Player-initiated portrait generation - an explicit click, not
+        automatic at character creation, matching this project's "always
+        asks first" stance and the real GPU cost/latency involved. Exempt
+        from turn order, same as character_edit. Repeatable - clicking
+        again just regenerates, no one-time gate."""
+        player_id = envelope.sender_id
+        character = self._session.characters.get(player_id)
+        if character is None:
+            await self._send_to(
+                player_id,
+                self._system_envelope("You don't have a character to generate a portrait for yet.", level="warning"),
+            )
+            return
+        if self._image_backend is None:
+            await self._send_to(
+                player_id,
+                self._system_envelope("Portrait generation isn't configured on this server.", level="warning"),
+            )
+            return
+
+        prompt = build_portrait_prompt(character)
+        try:
+            image_bytes = await self._image_backend.generate_portrait(prompt)
+        except Exception:
+            logger.exception("Portrait generation failed for player_id=%s", player_id)
+            await self._send_to(
+                player_id, self._system_envelope("Couldn't generate a portrait right now.", level="warning")
+            )
+            return
+
+        character.portrait = f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}"
+        await self._send_to(player_id, self._character_update_envelope(player_id, character))
+        # Public - a character's appearance is the same kind of
+        # party-visible fact as name/class/HP (see _public_character_view).
+        await self._broadcast(self._player_update_envelope(character))
         await self._save(player_id)
 
     async def _on_apply_proposed_change(self, envelope: Envelope) -> None:

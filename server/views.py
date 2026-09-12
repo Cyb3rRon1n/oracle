@@ -26,6 +26,7 @@ def _public_character_view(character: CharacterSheet) -> dict:
         "character_class": character.character_class,
         # Public like name/class, not private like inventory/stats/notes.
         "race": character.race,
+        "portrait": character.portrait,
         "hp": character.hp,
         "max_hp": character.max_hp,
         "ac": character.ac,

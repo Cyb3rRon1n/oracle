@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .engine import Broadcast, GameEngine, SendTo
+from .image_backend import create_image_backend
 from .narrator import create_narrator
 from .persistence import JSONFileSessionStore, SessionStoreUnwritable
 from .state import Session
@@ -34,6 +35,7 @@ def main() -> None:
         raise SystemExit(1) from exc
 
     dm = create_narrator()
+    image_backend = create_image_backend()
 
     # One process now serves any number of concurrent games - each
     # session_id gets its own Session loaded (or created fresh) the first
@@ -43,7 +45,7 @@ def main() -> None:
     # GameEngine sharing the one instance is safe.
     def engine_factory(session_id: str, broadcast: Broadcast, send_to: SendTo) -> GameEngine:
         session = store.load(session_id) or Session(session_id=session_id)
-        return GameEngine(session, dm, broadcast, send_to, store=store)
+        return GameEngine(session, dm, broadcast, send_to, store=store, image_backend=image_backend)
 
     transport = Transport(engine_factory)
     host = os.environ.get("SERVER_HOST", "localhost")

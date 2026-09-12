@@ -24,6 +24,7 @@ EventType = Literal[
     "end_adventure",
     "request_quests",
     "vote_quest",
+    "generate_portrait",
 
     "state_sync",
     "log_entry",

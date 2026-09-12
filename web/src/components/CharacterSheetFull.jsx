@@ -12,6 +12,7 @@ import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
 import { ABILITIES, ABILITY_LABEL, SKILLS, skillLabel, fmtMod, passivePerception, passiveScore } from "../lib/dnd5e.js";
 import InventoryPanel from "./InventoryPanel.jsx";
+import Avatar from "./Avatar.jsx";
 
 export default function CharacterSheetFull({ onClose }) {
   const { state, actions } = useStore();
@@ -36,10 +37,13 @@ export default function CharacterSheetFull({ onClose }) {
       <div className="max-w-6xl mx-auto p-4 sm:p-6">
         {/* header strip */}
         <div className="panel p-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="font-display text-2xl text-dungeon-gold">{sheet.name}</div>
-            <div className="text-sm text-dungeon-ink/70">
-              {t("Lv")} {sheet.level} · {[sheet.race, sheet.character_class].filter(Boolean).join(" ") || t("adventurer")}
+          <div className="flex items-start gap-3">
+            <Avatar sheet={sheet} pending={state.portraitPending} onGenerate={actions.generatePortrait} t={t} />
+            <div>
+              <div className="font-display text-2xl text-dungeon-gold">{sheet.name}</div>
+              <div className="text-sm text-dungeon-ink/70">
+                {t("Lv")} {sheet.level} · {[sheet.race, sheet.character_class].filter(Boolean).join(" ") || t("adventurer")}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-3 text-sm">

@@ -46,10 +46,14 @@ fields stay deliberately unmodelled. This doc is now a record, not a to-do list.
 
 ## Page 2 / cosmetic (probably just use Notes)
 
-Appearance, age, height/weight, backstory, allies & organizations, character portrait,
+Appearance, age, height/weight, backstory, allies & organizations,
 treasure inventory beyond the item list. Oracle has the origin `background` blurb plus a
 free-text `notes` field (editable via `character_edit`) — that likely covers this without
 new model fields. Add structured fields only if a feature needs to read them.
+
+~~**Character portrait**~~ **Done.** A generated portrait (`CharacterSheet.portrait`, a real
+`ComfyUIBackend`-generated image, player-triggered via a "Generate portrait" button) — see
+`docs/protocol.md`'s "Portrait generation" section and CHANGELOG.md.
 
 ## Explicitly not on the table
 

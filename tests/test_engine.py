@@ -141,7 +141,7 @@ class OpeningSceneDM:
         yield "Scene."
 
 
-def make_engine(dm, enable_opening_scene=False):    # enable_opening_scene defaults off here so the many existing tests that
+def make_engine(dm, enable_opening_scene=False, image_backend=None):    # enable_opening_scene defaults off here so the many existing tests that
     # just call join() and don't care about the opening-scene feature keep
     # their original "join() has no narration side effect" semantics
     # unchanged. Tests for the feature itself opt in explicitly.
@@ -154,7 +154,9 @@ def make_engine(dm, enable_opening_scene=False):    # enable_opening_scene defau
     async def send_to(pid, env: Envelope):
         received.append(("send_to", pid, env.type, env.payload))
 
-    engine = GameEngine(session, dm, broadcast, send_to, enable_opening_scene=enable_opening_scene)
+    engine = GameEngine(
+        session, dm, broadcast, send_to, enable_opening_scene=enable_opening_scene, image_backend=image_backend
+    )
     return engine, session, received
 
 
@@ -6011,6 +6013,106 @@ async def test_character_edit_before_joining_warns_and_does_not_crash():
 
     warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
     assert warnings
+
+
+class FakeImageBackend:
+    def __init__(self, image_bytes=b"fake-png-bytes", error=None):
+        self.image_bytes = image_bytes
+        self.error = error
+        self.prompts = []
+
+    async def generate_portrait(self, description):
+        self.prompts.append(description)
+        if self.error is not None:
+            raise self.error
+        return self.image_bytes
+
+
+async def test_generate_portrait_sets_data_url_and_broadcasts_publicly():
+    backend = FakeImageBackend(image_bytes=b"hello")
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="generate_portrait", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    character = session.characters[player_id]
+    assert character.portrait == "data:image/png;base64,aGVsbG8="  # base64("hello")
+    assert backend.prompts and character.name in backend.prompts[0]
+    private_updates = [r for r in received if r[0] == "send_to" and r[2] == "character_update"]
+    assert private_updates
+    public_updates = [r for r in received if r[0] == "broadcast" and r[1] == "player_update"]
+    assert public_updates
+    assert public_updates[-1][2]["portrait"] == character.portrait
+
+
+async def test_generate_portrait_is_repeatable_not_gated_to_once():
+    backend = FakeImageBackend(image_bytes=b"first")
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="generate_portrait", session_id="test-session", sender_id=player_id, payload={},
+    ))
+    backend.image_bytes = b"second"
+    await engine.handle(Envelope(
+        type="generate_portrait", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    character = session.characters[player_id]
+    assert character.portrait == "data:image/png;base64,c2Vjb25k"  # base64("second")
+    assert len(backend.prompts) == 2
+
+
+async def test_generate_portrait_without_a_configured_backend_warns():
+    engine, session, received = make_engine(StubDM())  # no image_backend
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="generate_portrait", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    assert session.characters[player_id].portrait == ""
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_generate_portrait_backend_failure_warns_and_does_not_crash():
+    backend = FakeImageBackend(error=RuntimeError("comfyui unreachable"))
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="generate_portrait", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    assert session.characters[player_id].portrait == ""
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_generate_portrait_before_joining_warns_and_does_not_crash():
+    backend = FakeImageBackend()
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="generate_portrait", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not backend.prompts
 
 
 async def _death_save(engine, player_id):

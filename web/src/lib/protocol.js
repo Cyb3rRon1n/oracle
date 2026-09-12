@@ -21,6 +21,7 @@ export const EventType = {
   END_ADVENTURE: "end_adventure",
   REQUEST_QUESTS: "request_quests",
   VOTE_QUEST: "vote_quest",
+  GENERATE_PORTRAIT: "generate_portrait",
 
   // protocol v2 (docs/protocol.md "Protocol v2 additions")
   CONTEXT_MANIFEST_REQUEST: "context_manifest_request",

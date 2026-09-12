@@ -46,13 +46,15 @@ tool-call reliability harness. Full list: CHANGELOG.md.
 
 ### Features — later, lower priority
 
-- **Image generation** for scenes/characters, off narration beats — needs a
-  GPU to be practical; same swappable-backend pattern as `NarratorBackend`
-  (an `ImageBackend` + prompt-building off `WorldState.mood` + a protocol
-  envelope). Candidate local runner bookmarked: `ultra-fast-image-gen`
-  (benchmark against plain `diffusers` on the GPU box first; must share VRAM
-  with the ~4.7GB DM model). A hosted alternative stays a legitimate separate
-  backend for GPU-less users.
+- **Character portrait generation is shipped** — the `ImageBackend` swappable-backend
+  pattern this bullet used to only sketch is real (`server/image_backend.py`), backed by
+  ComfyUI rather than the originally-bookmarked `ultra-fast-image-gen` (cross-platform,
+  not Apple-Silicon-only — the right fit for a Docker-deployable project with Anvil
+  already generating a ComfyUI stack). See CHANGELOG.md and `docs/protocol.md`'s
+  "Portrait generation" section. **Still open**: scene generation off narration beats
+  (prompt-building off `WorldState.mood` + a protocol envelope — the portrait half's
+  `ImageBackend`/prompt-building pattern extends to this directly, not a redesign), and
+  a hosted alternative backend for GPU-less users (`ComfyUIBackend` is local-only today).
 - **Text-to-speech** for DM narration — likely the same GPU dependency, though
   TTS models are lighter; measure on CPU before assuming.
 - **Background world-ticks** — NPCs pursuing goals, world state advancing

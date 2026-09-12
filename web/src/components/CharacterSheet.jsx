@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
 import InventoryPanel from "./InventoryPanel.jsx";
+import Avatar from "./Avatar.jsx";
 
 const ABILITY_LABELS = {
   str: "STR",
@@ -72,14 +73,17 @@ function HpBar({ hp, max }) {
 
 function Overview({ sheet }) {
   const { t } = useLang();
-  const { actions } = useStore();
+  const { state, actions } = useStore();
   return (
     <>
-      <div className="flex items-baseline justify-between">
-        <span className="font-display text-lg text-dungeon-gold">{sheet.name}</span>
-        <span className="text-xs uppercase tracking-wide text-dungeon-ink/60">
-          {t("Lv")} {sheet.level} {[sheet.race, sheet.character_class].filter(Boolean).join(" ") || t("adventurer")}
-        </span>
+      <div className="flex items-start gap-2">
+        <Avatar sheet={sheet} pending={state.portraitPending} onGenerate={actions.generatePortrait} t={t} />
+        <div className="flex-1 flex items-baseline justify-between">
+          <span className="font-display text-lg text-dungeon-gold">{sheet.name}</span>
+          <span className="text-xs uppercase tracking-wide text-dungeon-ink/60">
+            {t("Lv")} {sheet.level} {[sheet.race, sheet.character_class].filter(Boolean).join(" ") || t("adventurer")}
+          </span>
+        </div>
       </div>
       <HpBar hp={sheet.hp} max={sheet.max_hp} />
       <div className="grid grid-cols-4 gap-2 text-center">

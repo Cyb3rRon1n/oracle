@@ -25,6 +25,7 @@ function initial() {
     inCombat: false,
     log: [],
     awaitingDM: false, // true between sending an action / starting and the DM's first word back
+    portraitPending: false, // true between requesting a portrait and the result (a character_update, or a warning) coming back
     inspirationArmed: false, // player asked to spend their held Inspiration on the next roll
     typing: {}, // player_id -> bool, ephemeral lobby typing indicator
     adventuresCompleted: 0,
@@ -104,7 +105,12 @@ function reducer(state, event) {
       if (event.payload.player_id !== state.me) return state;
       const character = { ...state.character, ...event.payload.sheet_delta };
       // Token spent (or lost) -> nothing left to arm.
-      return { ...state, character, inspirationArmed: state.inspirationArmed && character.inspiration };
+      return {
+        ...state,
+        character,
+        inspirationArmed: state.inspirationArmed && character.inspiration,
+        portraitPending: false,
+      };
     }
 
     case "inspiration_armed":
@@ -168,6 +174,9 @@ function reducer(state, event) {
         // An error/warning ("The DM couldn't respond", "Couldn't generate an
         // opening scene") also ends the wait.
         awaitingDM: state.awaitingDM && event.payload.level === "info",
+        // Same rule for a portrait request that came back a warning
+        // ("not configured", "couldn't generate") instead of a real update.
+        portraitPending: state.portraitPending && event.payload.level === "info",
         log: [...state.log, { id: ++logSeq, kind: "system", text: event.payload.text, level: event.payload.level }],
       };
 
@@ -176,6 +185,9 @@ function reducer(state, event) {
 
     case "dm_pending":
       return { ...state, awaitingDM: true };
+
+    case "portrait_pending":
+      return { ...state, portraitPending: true };
 
     case ET.QUEST_BOARD:
       return { ...state, quest: { hooks: event.payload.hooks || [], votes: event.payload.votes || {} } };
@@ -280,6 +292,10 @@ export function StoreProvider({ children }) {
       },
       editCharacter(field, value) {
         connRef.current?.sendEvent(ET.CHARACTER_EDIT, { field, value });
+      },
+      generatePortrait() {
+        connRef.current?.sendEvent(ET.GENERATE_PORTRAIT, {});
+        dispatch({ type: "portrait_pending" });
       },
       deathSave() {
         connRef.current?.sendEvent(ET.DEATH_SAVE, {});

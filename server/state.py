@@ -135,6 +135,13 @@ class CharacterSheet(BaseModel):
     notes: str = ""
     # Pre-Aetherfall identity, rolled once at creation, never regenerated. Blank on an NPC.
     background: str = ""
+    # A generated portrait, as a full data URL ("data:image/png;base64,...") -
+    # no file storage or HTTP route, since oracle is WebSocket-only end to
+    # end; this rides the exact same transport/persistence every other sheet
+    # field already uses. Public (see _public_character_view) - a
+    # character's appearance is the same kind of party-visible fact as name
+    # or class. Blank until the player generates one (server/portrait.py).
+    portrait: str = ""
     # The paper sheet's "Personal Characteristics". Seeded from the origin
     # table, player-editable via character_edit, read by the DM via
     # character_summary but never written by it. Blank on an NPC.
