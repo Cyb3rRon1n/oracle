@@ -40,6 +40,18 @@ def _public_character_view(character: CharacterSheet) -> dict:
     }
 
 
+def _npc_view(npc: CharacterSheet) -> dict:
+    """What's broadcast for one tracked NPC. An ordinary NPC/monster has no
+    private owner, so it's always been broadcast in full (docs/protocol.md
+    "Private vs. shared state") - unchanged here. The party's companion
+    (CharacterSheet.is_companion) is the one exception: it should feel like
+    another player, not an open monster sheet, so it gets the same
+    redacted _public_character_view every real player already gets of
+    every other player - the same owner-only boundary (personality/notes/
+    inventory/stats hidden), just extended to cover this one NPC."""
+    return _public_character_view(npc) if npc.is_companion else npc.model_dump()
+
+
 def _class_features_for(class_entry: dict | None, level: int) -> list[str]:
     """Every class feature earned through `level`: level_1_features plus each
     features_by_level entry, accumulated. Derived from (class, level) on every

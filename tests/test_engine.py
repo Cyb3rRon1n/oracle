@@ -13,6 +13,7 @@ from server.engine import (
     _apply_ability_score_improvements,
     _asi_announcement,
     _compute_ac,
+    _npc_view,
     _outcome_category,
     _owner_character_view,
     _public_character_view,
@@ -21,7 +22,7 @@ from server.engine import (
 )
 from server.lore import Guardian, Region, WhoWhatWhereWhenWhy, WorldBible
 from server.rules import RulesIndex
-from server.state import Objective, Session
+from server.state import CharacterSheet, Objective, Session
 from shared.protocol import Envelope
 
 
@@ -2105,6 +2106,47 @@ async def test_state_sync_includes_npcs_for_a_later_joining_player():
     ]
     assert syncs, "the second player should get a state_sync on join"
     assert syncs[-1][3]["npcs"]["goblin"]["hp"] == 3
+
+
+def test_npc_view_redacts_a_companion_like_a_public_character():
+    companion = build_companion_sheet()
+    companion.notes = "secret DM-only note"
+
+    view = _npc_view(companion)
+
+    assert view == _public_character_view(companion)
+    assert "notes" not in view
+    assert "personality" not in view
+
+
+def test_npc_view_returns_the_full_sheet_for_an_ordinary_npc():
+    npc = CharacterSheet(player_id="goblin", name="goblin", hp=7, max_hp=7, notes="a real note")
+
+    view = _npc_view(npc)
+
+    assert view == npc.model_dump()
+    assert view["notes"] == "a real note"
+
+
+async def test_state_sync_includes_companion_joined_for_a_later_joining_player():
+    # Matches this file's existing test_state_sync_includes_npcs_for_a_later_joining_player
+    # shape - a state_sync payload key needs to reach a client that wasn't
+    # connected when the underlying change happened, not just a live
+    # npc_update broadcast (which only reaches already-connected clients).
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.companion_joined = True  # set directly - _on_add_companion doesn't exist until Task 4
+
+    second_player_id = str(uuid.uuid4())
+    await join(engine, second_player_id, name="Rowan")
+
+    syncs = [
+        r for r in received
+        if r[0] == "send_to" and r[1] == second_player_id and r[2] == "state_sync"
+    ]
+    assert syncs, "the second player should get a state_sync on join"
+    assert syncs[-1][3]["companion_joined"] is True
 
 
 async def test_join_broadcasts_player_joined_with_public_view_only():

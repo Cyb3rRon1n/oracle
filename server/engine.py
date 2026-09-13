@@ -57,6 +57,7 @@ from .state import (
 from .views import (
     _attack_lines,  # noqa: F401 - re-exported for tests
     _npc_roster,
+    _npc_view,
     _outcome_category,
     _owner_character_view,
     _public_character_view,
@@ -2122,7 +2123,8 @@ class GameEngine:
                 # display, not the internal casefolded dict key - keeps a
                 # reconnecting client's status lines consistent with what
                 # npc_update broadcasts already show.
-                "npcs": {npc.name: npc.model_dump() for npc in self._session.npcs.values()},
+                "npcs": {npc.name: _npc_view(npc) for npc in self._session.npcs.values()},
+                "companion_joined": self._session.companion_joined,
                 "world_state": self._session.world.model_dump(),
                 "turn_order": self._session.turn_order,
                 "current_turn": self._session.current_turn,
@@ -2233,13 +2235,22 @@ class GameEngine:
             payload=self._public_view_with_lobby(character),
         )
 
-    def _npc_update_envelope(self, name: str, npc: CharacterSheet) -> Envelope:
+    def _npc_update_envelope(self, name: str, npc: CharacterSheet, *, joined: bool | None = None) -> Envelope:
         # Broadcast - an NPC's wounds/conditions are shared observable fiction.
+        # sheet_delta goes through _npc_view so the party companion gets the
+        # same redaction a real teammate would (see _npc_view's own comment);
+        # every other NPC is unaffected, same full dump as before. `joined`
+        # is None (omitted from the payload shape entirely, existing
+        # behavior) for every call except the companion add/remove path
+        # (Task 4), which sets it explicitly.
+        payload: dict = {"name": name, "sheet_delta": _npc_view(npc)}
+        if joined is not None:
+            payload["joined"] = joined
         return Envelope(
             type="npc_update",
             session_id=self._session.session_id,
             sender_id="server",
-            payload={"name": name, "sheet_delta": npc.model_dump()},
+            payload=payload,
         )
 
     def _world_update_envelope(self) -> Envelope:
