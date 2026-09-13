@@ -23,6 +23,7 @@ function initial() {
     turnOrder: [],
     currentTurn: null,
     inCombat: false,
+    companionJoined: false,
     log: [],
     awaitingDM: false, // true between sending an action / starting and the DM's first word back
     portraitPending: false, // true between requesting a portrait and the result (a character_update, or a warning) coming back
@@ -79,6 +80,7 @@ function reducer(state, event) {
         turnOrder: event.payload.turn_order || [],
         currentTurn: event.payload.current_turn ?? null,
         inCombat: !!event.payload.in_combat,
+        companionJoined: event.payload.companion_joined ?? false,
         // characters/npcs arrive as dicts keyed by player_id / display name
         // (server/engine.py _state_sync_envelope) - owner view for our own
         // entry, redacted public views for everyone else.
@@ -141,15 +143,21 @@ function reducer(state, event) {
         typing: { ...state.typing, [event.payload.player_id]: !!event.payload.typing },
       };
 
-    case ET.NPC_UPDATE:
+    case ET.NPC_UPDATE: {
       // event.payload is the envelope shape {name, sheet_delta} - merge the
       // delta's fields, not the wrapper itself, or every live NPC field
       // (hp, range_band, disposition, ...) ends up nested under a stray
       // `sheet_delta` key instead of reaching state.npcs[name] directly.
-      return {
+      // `joined` (companion add/remove only - see server/engine.py's
+      // _npc_update_envelope) additionally flips state.companionJoined;
+      // every ordinary NPC update omits it and leaves companionJoined alone.
+      const next = {
         ...state,
         npcs: { ...state.npcs, [event.payload.name]: { ...state.npcs[event.payload.name], ...event.payload.sheet_delta } },
       };
+      if (event.payload.joined !== undefined) next.companionJoined = event.payload.joined;
+      return next;
+    }
 
     case ET.WORLD_UPDATE:
       return {
@@ -316,6 +324,12 @@ export function StoreProvider({ children }) {
       },
       endCombat() {
         connRef.current?.sendEvent(ET.END_COMBAT, {});
+      },
+      addCompanion() {
+        connRef.current?.sendEvent(ET.ADD_COMPANION, {});
+      },
+      removeCompanion() {
+        connRef.current?.sendEvent(ET.REMOVE_COMPANION, {});
       },
       endAdventure() {
         connRef.current?.sendEvent(ET.END_ADVENTURE, {});
