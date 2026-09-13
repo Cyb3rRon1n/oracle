@@ -337,9 +337,9 @@ class GameEngine:
         )
         if class_entry is not None:
             # HP gain per level: hit die max + CON modifier, floored at 1 per
-            # level - pure SRD, no cushion (that's a one-time level-1 add, see
-            # STARTING_HP_CUSHION). A character with a negative CON modifier
-            # still gains at least 1 HP per level, never 0 or negative growth.
+            # level - pure SRD, unrelated to level-1's flat STARTING_HP.
+            # A character with a negative CON modifier still gains at least
+            # 1 HP per level, never 0 or negative growth.
             con_mod = ability_modifier(character.stats["con"]) if character.stats else 0
             hp_gain = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod) * levels_gained
             character.max_hp += hp_gain

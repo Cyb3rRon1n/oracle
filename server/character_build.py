@@ -10,9 +10,11 @@ from .rolls import _compute_ac
 from .rules import RulesIndex
 from .state import ABILITY_KEYS, CharacterSheet, InventoryItem, ability_modifier
 
-# Added once to level-1 HP (on top of hit-die max + CON), level-1 only -
-# combat stays lethal-if-careless without being one-crit-fatal at low HP.
-STARTING_HP_CUSHION = 10
+# Direct owner ask: every character starts at a flat 100 HP regardless of
+# class/hit die/CON, rather than real 5e's own level-1 formula - a real,
+# deliberate house rule, not a bug. Changes from there exactly like real
+# HP always has (damage, healing, level-up growth via _grant_levels).
+STARTING_HP = 100
 
 # Per-class starting kit. A fixed subset, not a full 5e chargen (no
 # player-chosen equipment/stats yet).
@@ -251,20 +253,13 @@ def build_starting_character(
 
     class_entry = rules.get_entry("class", character_class) if character_class else None
     if class_entry is None:
-        # No hit die to draw from - a bare baseline (the original classless
-        # HP) plus the same cushion every character gets.
-        blank_hp = 10 + STARTING_HP_CUSHION
         return CharacterSheet(
-            player_id=player_id, name=name, hp=blank_hp, max_hp=blank_hp, background=background,
+            player_id=player_id, name=name, hp=STARTING_HP, max_hp=STARTING_HP, background=background,
             race=race_name, speed=speed, **rp_fields,
         )
 
     stats = _apply_race_bonus(_generate_stats(character_class, stat_priority), race_entry)
-    con_mod = ability_modifier(stats["con"]) if stats else 0
-    # SRD level-1 HP (hit die max + CON modifier) plus a flat cushion - see
-    # STARTING_HP_CUSHION. Floored at 1 so a brutal CON score can't produce
-    # a 0- or negative-HP character. Level-up growth is pure SRD (_grant_levels).
-    max_hp = max(1, _hit_die_max(class_entry["hit_die"]) + con_mod + STARTING_HP_CUSHION)
+    max_hp = STARTING_HP
     inventory = [
         InventoryItem(name=item_name)
         for item_name in CLASS_STARTING_EQUIPMENT.get(character_class.strip().lower(), [])
