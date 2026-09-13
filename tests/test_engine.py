@@ -3226,6 +3226,99 @@ async def test_cast_spell_only_applies_to_self_never_an_npc():
     assert session.characters[player_id].spell_slots == {"1": 2}  # untouched - cast_spell ignored for an NPC target
 
 
+async def test_new_character_starts_with_full_turn_resources():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    character = session.characters[player_id]
+    assert character.action_available is True
+    assert character.bonus_action_available is True
+    assert character.reaction_available is True
+    assert character.movement_remaining == character.speed
+
+
+async def test_character_edit_spend_action_and_bonus_action_and_reaction():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    for field, attr in [
+        ("spend_action", "action_available"),
+        ("spend_bonus_action", "bonus_action_available"),
+        ("spend_reaction", "reaction_available"),
+    ]:
+        await engine.handle(Envelope(
+            type="character_edit", session_id="test-session", sender_id=player_id,
+            payload={"field": field, "value": True},
+        ))
+        assert getattr(session.characters[player_id], attr) is False
+
+    # Already spent - a second attempt on each warns rather than silently no-op'ing.
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "spend_action", "value": True},
+    ))
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+
+
+async def test_character_edit_spend_movement_decrements_and_rejects_overspend():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    character = session.characters[player_id]
+    assert character.movement_remaining == character.speed
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "spend_movement", "value": 10},
+    ))
+    assert character.movement_remaining == character.speed - 10
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "spend_movement", "value": 9999},
+    ))
+    assert character.movement_remaining == character.speed - 10  # rejected, unchanged
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+
+
+async def test_advance_turn_resets_the_new_current_players_resources():
+    engine, session, _ = make_engine(StubDM())
+    p1, p2 = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, p1, name="Thrain")
+    await join(engine, p2, name="Rook")
+    session.characters[p1].action_available = False
+    session.characters[p2].action_available = False
+    assert session.current_turn == p1
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=p1,
+        payload={"text": "I wait."},
+    ))
+
+    assert session.current_turn == p2
+    assert session.characters[p2].action_available is True  # refilled on becoming current
+    assert session.characters[p1].action_available is False  # untouched until it's their turn again
+
+
+async def test_start_combat_resets_turn_resources_for_the_new_current_player():
+    engine, session, _ = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.characters[player_id].action_available = False
+
+    await engine.handle(Envelope(
+        type="start_combat", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    assert session.characters[player_id].action_available is True
+
+
 async def test_level_up_grows_spell_slots_by_the_real_delta():
     dm = UpdateSequenceDM([{"target": "boss", "max_hp": 999, "hp_delta": -999, "xp": 300}])  # level-2 threshold
     engine, session, received = make_engine(dm)

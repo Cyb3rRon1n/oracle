@@ -59,6 +59,16 @@ tool-call reliability harness. Full list: CHANGELOG.md.
   redesign), and real GPU verification of the ComfyUI workflow (LoRA/hi-res-fix/
   face-detail) — this project currently has no GPU hardware to run one against; only
   unit-tested against a fake client/websocket so far.
+- **BG3-style tabletop feel, in progress.** Four-piece backlog: (1) dialogue
+  choices with visible stakes — shipped (suggested-actions skill/DC badges).
+  (2) Real action economy (action/bonus action/reaction/movement, tracked
+  per player-turn) — shipped, see `docs/protocol.md`'s "Action economy"
+  section. **Still open**: (3) tactical positioning/grid combat (opportunity
+  attacks, movement ranges, high ground) — the biggest remaining gap, Oracle
+  has zero spatial model today, not even a distance concept; and (4)
+  environmental interactivity (shove, throw, surfaces) — probably the
+  weakest fit for a text-narrated engine without a real map, likely follows
+  from (3) rather than standing alone.
 - **Text-to-speech** for DM narration — likely the same GPU dependency, though
   TTS models are lighter; measure on CPU before assuming.
 - **Background world-ticks** — NPCs pursuing goals, world state advancing

@@ -143,6 +143,7 @@ function Overview({ sheet }) {
         <Stat label={t("XP")} value={sheet.xp} />
         <Stat label="Prof." value={`+${sheet.proficiency_bonus ?? 2}`} />
       </div>
+      {state.inCombat && <TurnResources sheet={sheet} />}
 
       {(sheet.conditions?.length || 0) > 0 && (
         <div className="flex flex-wrap gap-1">
@@ -166,6 +167,42 @@ function Overview({ sheet }) {
         <p className="text-center text-dungeon-blood font-display tracking-widest">{t("SLAIN")}</p>
       )}
     </>
+  );
+}
+
+// Informational bookkeeping only (see server/state.py's reset_turn_resources) -
+// clicking a pip just records that the player spent it; nothing here gates
+// what they type in the action box. Only shown in combat, since outside it
+// the resource has no real meaning (matches server's own scoping).
+function TurnResources({ sheet }) {
+  const { t } = useLang();
+  const { actions } = useStore();
+  const pip = (label, available, field) => (
+    <button
+      key={field}
+      disabled={!available}
+      onClick={() => actions.editCharacter(field, true)}
+      className={`px-2 py-0.5 rounded-full text-[10px] border transition ${
+        available
+          ? "border-dungeon-gold text-dungeon-gold hover:bg-dungeon-gold/10"
+          : "border-dungeon-edge text-dungeon-ink/30"
+      }`}
+    >
+      {t(label)}
+    </button>
+  );
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {pip("Action", sheet.action_available, "spend_action")}
+      {pip("Bonus action", sheet.bonus_action_available, "spend_bonus_action")}
+      {pip("Reaction", sheet.reaction_available, "spend_reaction")}
+      <span className="text-[10px] text-dungeon-ink/50 ml-auto">
+        {sheet.movement_remaining}/{sheet.speed} {t("ft")}
+      </span>
+      {sheet.movement_remaining >= 5 && (
+        <MiniBtn onClick={() => actions.editCharacter("spend_movement", 5)}>-5{t("ft")}</MiniBtn>
+      )}
+    </div>
   );
 }
 

@@ -174,6 +174,23 @@ class CharacterSheet(BaseModel):
     known_spells: list[str] = Field(default_factory=list)
     spell_slots: dict[str, int] = Field(default_factory=dict)
     max_spell_slots: dict[str, int] = Field(default_factory=dict)
+    # 5e action economy: reset to full every time this player's turn starts
+    # (Session.advance_turn / a combat-start-or-end reseat of current_turn),
+    # player-spent via character_edit (spend_action etc, server/engine.py).
+    # Informational bookkeeping like piece 1's suggested-action DC badges -
+    # nothing here gates what the DM lets a player narrate; it's a visible
+    # tracker, not an enforcement mechanism. Meaningful mainly in combat but
+    # not gated on it, same as inspiration.
+    action_available: bool = True
+    bonus_action_available: bool = True
+    reaction_available: bool = True
+    movement_remaining: int = 30
+
+    def reset_turn_resources(self) -> None:
+        self.action_available = True
+        self.bonus_action_available = True
+        self.reaction_available = True
+        self.movement_remaining = self.speed
 
     @computed_field
     @property
@@ -892,6 +909,16 @@ class Session(BaseModel):
     def advance_turn(self) -> None:
         if self.turn_order:
             self.current_turn_index = (self.current_turn_index + 1) % len(self.turn_order)
+            self.reset_current_turn_resources()
+
+    def reset_current_turn_resources(self) -> None:
+        """Refills the new current player's action/bonus action/reaction/
+        movement - called wherever current_turn_index changes, including
+        the two direct resets in _on_start_combat/_on_end_combat that don't
+        go through advance_turn()."""
+        character = self.characters.get(self.current_turn)
+        if character:
+            character.reset_turn_resources()
 
     def append_turn(self, action_text: str, narration_text: str) -> None:
         """Record a resolved turn in the rolling conversation window fed to the DM."""

@@ -90,7 +90,10 @@ LEDGER_RELEVANT_LIMIT = 8
 # never a player's own free-text request.
 CHARACTER_EDIT_TEXT_FIELDS = frozenset({"notes", "personality", "ideals", "bonds", "flaws", "alignment"})
 CHARACTER_EDIT_FIELDS = CHARACTER_EDIT_TEXT_FIELDS | frozenset(
-    {"remove_item", "equip", "unequip", "use_item", "cast_spell"}
+    {
+        "remove_item", "equip", "unequip", "use_item", "cast_spell",
+        "spend_action", "spend_bonus_action", "spend_reaction", "spend_movement",
+    }
 )
 
 # Session-zero tone choice, prepended to every turn's action_text while
@@ -670,6 +673,7 @@ class GameEngine:
         self._session.pre_combat_turn_order = list(self._session.turn_order)
         self._session.turn_order = [pid for (_, _, _, pid) in participants if pid is not None]
         self._session.current_turn_index = 0
+        self._session.reset_current_turn_resources()
         self._session.in_combat = True
         await self._skip_absent_players()
 
@@ -690,6 +694,7 @@ class GameEngine:
         self._session.turn_order = pre_combat + latecomers
         self._session.pre_combat_turn_order = None
         self._session.current_turn_index = 0
+        self._session.reset_current_turn_resources()
         self._session.in_combat = False
         await self._skip_absent_players()
 
@@ -1645,6 +1650,34 @@ class GameEngine:
             await self._send_to(
                 player_id, self._system_envelope(f"{character.name} {message}", level="info")
             )
+        elif field in ("spend_action", "spend_bonus_action", "spend_reaction"):
+            # Informational bookkeeping, same as piece 1's suggested-action DC
+            # badges: the client shows these as pips, the player spends them
+            # themselves, nothing here gates what the DM lets them narrate.
+            label = field.removeprefix("spend_").replace("_", " ")
+            attr = f"{field.removeprefix('spend_')}_available"
+            if not getattr(character, attr):
+                await self._send_to(
+                    player_id,
+                    self._system_envelope(f"{character.name} has no {label} left this turn.", level="warning"),
+                )
+                return
+            setattr(character, attr, False)
+        elif field == "spend_movement":
+            try:
+                feet = int(value)
+            except (TypeError, ValueError):
+                return
+            if feet <= 0 or feet > character.movement_remaining:
+                await self._send_to(
+                    player_id,
+                    self._system_envelope(
+                        f"{character.name} only has {character.movement_remaining} ft of movement left.",
+                        level="warning",
+                    ),
+                )
+                return
+            character.movement_remaining -= feet
         elif field == "unequip":
             item = str(value)
             if character.equipped_weapon == item:
