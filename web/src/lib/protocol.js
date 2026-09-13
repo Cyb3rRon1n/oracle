@@ -15,6 +15,8 @@ export const EventType = {
   START_SESSION: "start_session",
   START_COMBAT: "start_combat",
   END_COMBAT: "end_combat",
+  ADD_COMPANION: "add_companion",
+  REMOVE_COMPANION: "remove_companion",
   PLAYER_READY: "player_ready",
   SET_TYPING: "set_typing",
   TAVERN_REST: "tavern_rest",

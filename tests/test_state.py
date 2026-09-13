@@ -890,3 +890,14 @@ def test_add_facts_caps_at_the_limit_dropping_oldest_first():
     assert len(session.fact_ledger) == 10
     assert session.fact_ledger[0] == "Fact number 2 about thing 2"
     assert session.fact_ledger[-1] == "Fact number 11 about thing 11"
+
+
+def test_character_sheet_is_companion_defaults_false():
+    sheet = CharacterSheet(player_id="p1", name="Thrain", hp=10, max_hp=10)
+    assert sheet.is_companion is False
+
+
+def test_session_companion_fields_default():
+    session = Session(session_id="s1")
+    assert session.companion_joined is False
+    assert session.turns_since_world_change == 0

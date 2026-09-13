@@ -18,6 +18,8 @@ EventType = Literal[
     "start_session",
     "start_combat",
     "end_combat",
+    "add_companion",
+    "remove_companion",
     "player_ready",
     "set_typing",
     "tavern_rest",
