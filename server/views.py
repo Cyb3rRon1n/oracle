@@ -82,7 +82,7 @@ def _npc_roster(session: Session) -> str:
     that's ever observed in play."""
     lines = []
     for npc in session.npcs.values():
-        if npc.hp <= 0:
+        if npc.hp <= 0 or npc.is_companion:
             continue
         bits = [f"HP {npc.hp}/{npc.max_hp}"]
         if npc.disposition != "neutral":

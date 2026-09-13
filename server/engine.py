@@ -668,6 +668,8 @@ class GameEngine:
             total, _, _ = dice.roll("1d20", extra_modifier=dex_mod)
             participants.append((character.name, total, dex_mod, player_id))
         for npc in self._session.npcs.values():
+            if npc.is_companion:
+                continue  # never rolled or announced - see docs/protocol.md "Companion NPC"
             dex_mod = npc.stat_modifiers.get("dex", 0)
             total, _, _ = dice.roll("1d20", extra_modifier=dex_mod)
             participants.append((npc.name, total, dex_mod, None))

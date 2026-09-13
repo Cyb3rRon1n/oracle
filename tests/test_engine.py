@@ -24,6 +24,7 @@ from server.engine import (
 from server.lore import Guardian, Region, WhoWhatWhereWhenWhy, WorldBible
 from server.rules import RulesIndex
 from server.state import CharacterSheet, Objective, Session
+from server.views import _npc_roster
 from shared.protocol import Envelope
 
 
@@ -7136,3 +7137,31 @@ async def test_reconnect_recap_is_only_prepended_once():
     assert "Context:" not in dm.action_texts[1]
     assert dm.action_texts[1] == "I keep moving"
     assert session.pending_dm_recap == []
+
+
+async def test_start_combat_excludes_the_companion_from_the_announced_roll_too():
+    # Stricter than the existing ordinary-NPC exclusion test: Tinder isn't
+    # even named in the initiative announcement, unlike a real monster NPC
+    # (which is named but still excluded from turn_order - see
+    # test_start_combat_announces_npcs_but_excludes_them_from_turn_order).
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await _add_companion(engine, player_id)
+
+    with patch("server.dice.random.randint", return_value=10):
+        await _start_combat(engine, player_id)
+
+    assert session.turn_order == [player_id]
+    announcements = [
+        r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Initiative" in r[2]["text"]
+    ]
+    assert "Tinder" not in announcements[0][2]["text"]
+
+
+def test_npc_roster_excludes_the_companion():
+    companion = build_companion_sheet()
+    session = Session(session_id="s1")
+    session.npcs[COMPANION_KEY] = companion
+
+    assert _npc_roster(session) == ""
