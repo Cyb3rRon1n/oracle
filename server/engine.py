@@ -56,6 +56,7 @@ from .state import (
 )
 from .views import (
     _attack_lines,  # noqa: F401 - re-exported for tests
+    _companion_prompt_block,
     _npc_roster,
     _npc_view,
     _outcome_category,
@@ -1298,6 +1299,9 @@ class GameEngine:
         npc_roster = _npc_roster(self._session)
         if npc_roster:
             world_summary = f"{world_summary}\n{npc_roster}" if world_summary else npc_roster
+        companion_block = _companion_prompt_block(self._session)
+        if companion_block:
+            world_summary = f"{world_summary}\n\n{companion_block}" if world_summary else companion_block
         # Lorebook injection (docs/protocol.md "World context -> lorebook"):
         # keyword hits from the recent play window under a character budget.
         # Empty selection -> empty block.

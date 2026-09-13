@@ -4,12 +4,17 @@ re-exports the names tests reach for."""
 
 from __future__ import annotations
 
-from .character_build import CLASS_SAVING_THROW_PROFICIENCIES, CLASS_SKILL_PROFICIENCIES
+from .character_build import CLASS_SAVING_THROW_PROFICIENCIES, CLASS_SKILL_PROFICIENCIES, COMPANION_KEY
 from .rolls import CONSUMABLE_EFFECTS, _equip_slot_for, is_weapon_proficient
 from .rules import RulesIndex, slug
 from .state import SPELLCASTING_ABILITY, CharacterSheet, InventoryItem, Session
 
 NPC_NOTES_CONTEXT_MAX_CHARS = 80
+
+# First-guess threshold, not yet tuned against real play - the design spec
+# deliberately left this untimed/uncalibrated pending the live playtest
+# (docs/superpowers/specs/2026-09-13-companion-npc-design.md "Mechanics").
+COMPANION_STALE_WORLD_TURNS = 6
 
 
 def _public_character_view(character: CharacterSheet) -> dict:
@@ -96,6 +101,44 @@ def _npc_roster(session: Session) -> str:
     if not lines:
         return ""
     return "Tracked NPCs:\n" + "\n".join(lines)
+
+
+def _companion_prompt_block(session: Session) -> str:
+    """Reaches the DM through world_summary, the same channel _npc_roster/
+    the fact ledger/lorebook already ride (server/engine.py's per-turn
+    narrate() call) - no new tool call, no new LLM-facing schema field.
+    Empty when Tinder isn't currently with the party, the same "don't
+    render the absent default" convention _npc_roster's own empty-string
+    return already follows."""
+    if not session.companion_joined:
+        return ""
+    companion = session.npcs.get(COMPANION_KEY)
+    if companion is None:
+        return ""
+    lines = [
+        f"{companion.name} is with the party as an optional comic-relief companion - "
+        "no HP, never in combat, never takes a turn, never acts through a tool call.",
+        f"Personality: {companion.personality}",
+    ]
+    if companion.ideals:
+        lines.append(f"Ideals: {companion.ideals}")
+    if companion.bonds:
+        lines.append(f"Bonds: {companion.bonds}")
+    if companion.flaws:
+        lines.append(f"Flaws: {companion.flaws}")
+    lines.append(
+        f"Weave in a quick in-character reaction from {companion.name} when it fits naturally. "
+        "Rarely - not most turns - if the moment calls for levity or the party's plan could use a "
+        "shake-up, have them do something impulsive with a real narrative consequence, expressed "
+        "only through your normal narration and tools, never a new mechanic."
+    )
+    if session.turns_since_world_change >= COMPANION_STALE_WORLD_TURNS:
+        lines.append(
+            f"It's been {session.turns_since_world_change} turns since anything in the world "
+            f"genuinely moved forward - consider having {companion.name} (or the scene itself) "
+            "nudge the party toward some kind of progress."
+        )
+    return "\n".join(lines)
 
 
 def _sign(n: int) -> str:

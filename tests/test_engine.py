@@ -24,7 +24,7 @@ from server.engine import (
 from server.lore import Guardian, Region, WhoWhatWhereWhenWhy, WorldBible
 from server.rules import RulesIndex
 from server.state import CharacterSheet, Objective, Session
-from server.views import _npc_roster
+from server.views import _companion_prompt_block, _npc_roster
 from shared.protocol import Envelope
 
 
@@ -5106,6 +5106,62 @@ async def test_add_companion_is_exempt_from_turn_order():
     await _add_companion(engine, p2)
 
     assert session.companion_joined is True
+
+
+def test_companion_prompt_block_is_empty_when_not_joined():
+    session = Session(session_id="s1")
+    assert _companion_prompt_block(session) == ""
+
+
+def test_companion_prompt_block_includes_personality_when_joined():
+    session = Session(session_id="s1")
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+
+    block = _companion_prompt_block(session)
+
+    assert "Tinder" in block
+    assert "no HP" in block
+    assert build_companion_sheet().personality in block
+
+
+def test_companion_prompt_block_adds_a_pacing_nudge_when_the_world_is_stale():
+    session = Session(session_id="s1")
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+    session.turns_since_world_change = 6
+
+    block = _companion_prompt_block(session)
+
+    assert "6 turns" in block
+    assert "progress" in block
+
+
+def test_companion_prompt_block_has_no_pacing_nudge_when_the_world_is_fresh():
+    session = Session(session_id="s1")
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+    session.turns_since_world_change = 1
+
+    block = _companion_prompt_block(session)
+
+    assert "progress" not in block
+
+
+async def test_narrate_world_summary_includes_the_companion_block_when_joined():
+    dm = UpdateSequenceDM([{}])  # no-op update, just need a narrate() call
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await _add_companion(engine, player_id)
+    engine._dm = recorder = OpeningSceneDM()
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert "Tinder" in recorder.world_summaries[-1]
 
 
 async def test_advance_turn_cycles_through_initiative_order():
