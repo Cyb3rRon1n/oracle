@@ -144,7 +144,7 @@ Container Toolkit on the host — without it Ollama silently runs on CPU).
 
 ## Screenshots
 
-Real captures of the live app — join screen, a live character sheet with real computed stats, and an actual played turn (local Ollama backend): a real natural-20 roll, a real HP change applied to the sheet, real dialogue.
+Real captures of the live app — join screen, a live character sheet with real computed stats (starting HP is a flat 100 for every character, a deliberate house rule), and an actual played turn with real DM dialogue (local Ollama backend).
 
 <p align="center">
   <img src="docs/images/screenshots/join.png" alt="Oracle join screen: character name, session id, class/race pickers" style="max-width: 100%; width: 900px;"><br>
@@ -155,8 +155,8 @@ Real captures of the live app — join screen, a live character sheet with real 
   <sub>Every number on the sheet is computed by the server, not the model — the avatar, style picker, and Equipped/Inventory split are all live</sub>
 </p>
 <p align="center">
-  <img src="docs/images/screenshots/session.png" alt="Oracle live session: a real natural-20 roll, an applied HP change, and DM dialogue" style="max-width: 100%; width: 900px;"><br>
-  <sub>A real played turn — the natural 20 and the HP change are both genuine engine output, not staged</sub>
+  <img src="docs/images/screenshots/session.png" alt="Oracle live session with the in-session character panel: Overview, Abilities, Skills, Consumables, Spells, and Notes tabs" style="max-width: 100%; width: 900px;"><br>
+  <sub>The in-session panel — Skills, Consumables (use-only), and Spells (with a Cast button) alongside the usual Overview, plus a collapse toggle for multiplayer</sub>
 </p>
 
 ## The tool-call reliability investigation
