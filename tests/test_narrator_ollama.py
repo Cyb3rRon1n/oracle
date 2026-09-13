@@ -376,6 +376,7 @@ async def test_structured_narrate_omits_empty_rest_notes_disposition_cast_spell(
         "rest": "",
         "notes": "",
         "disposition": "",
+        "range_band": "",
         "cast_spell": "",
     }
     narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
@@ -467,6 +468,27 @@ async def test_structured_narrate_disposition_alone_triggers_apply_update_withou
     _ = [c async for c in narrator.narrate([], "{}", "I offer the bandit mercy", record_apply_update)]
 
     assert calls == [{"target": "bandit", "disposition": "friendly"}]
+
+
+async def test_structured_narrate_range_band_alone_triggers_apply_update_without_mechanical_change():
+    narrator = make_structured_narrator()
+    payload = {
+        "narration": "The archer backs toward the far wall, bow drawn.",
+        "mechanical_change": False,
+        "target": "archer",
+        "range_band": "far",
+    }
+    narrator._client = FakeOllamaClient([FakeChatResponse(json.dumps(payload))])
+
+    calls: list[dict] = []
+
+    def record_apply_update(update: dict) -> str:
+        calls.append(update)
+        return "ok"
+
+    _ = [c async for c in narrator.narrate([], "{}", "I press forward", record_apply_update)]
+
+    assert calls == [{"target": "archer", "range_band": "far"}]
 
 
 async def test_structured_narrate_rest_alone_triggers_apply_update_without_mechanical_change():
@@ -1163,7 +1185,7 @@ async def test_check_missed_change_applies_a_notes_only_correction_without_mecha
     assert corrected is True
     assert received_updates == [{"target": "bandit", "notes": "A greedy toll-keeper."}]
     review_prompt = narrator._client.calls[0]["messages"][0]["content"]
-    for field in ("rest", "notes", "disposition", "cast_spell"):
+    for field in ("rest", "notes", "disposition", "range_band", "cast_spell"):
         assert field in review_prompt
 
 
@@ -1232,7 +1254,7 @@ async def test_propose_correction_returns_a_rest_only_proposal_without_mechanica
 
     assert proposed == {"target": "self", "rest": "long"}
     review_prompt = narrator._client.calls[0]["messages"][0]["content"]
-    for field in ("rest", "notes", "disposition", "cast_spell"):
+    for field in ("rest", "notes", "disposition", "range_band", "cast_spell"):
         assert field in review_prompt
 
 

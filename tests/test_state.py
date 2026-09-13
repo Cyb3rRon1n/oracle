@@ -574,6 +574,28 @@ def test_apply_update_rejects_an_unrecognized_disposition():
     assert result.startswith("No changes applied")
 
 
+def test_apply_update_range_band():
+    character = make_character()
+    assert character.range_band == "melee"
+
+    result = character.apply_update({"range_band": "far"})
+    assert character.range_band == "far"
+    assert "range now far" in result
+
+    # setting the exact same range again is a no-op
+    result = character.apply_update({"range_band": "far"})
+    assert result.startswith("No changes applied")
+
+
+def test_apply_update_rejects_an_unrecognized_range_band():
+    # Same model-input boundary as disposition above.
+    character = make_character()
+
+    result = character.apply_update({"range_band": "point-blank"})
+    assert character.range_band == "melee"
+    assert result.startswith("No changes applied")
+
+
 def test_world_apply_update_location_and_summary():
     world = WorldState()
 

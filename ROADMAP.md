@@ -63,12 +63,17 @@ tool-call reliability harness. Full list: CHANGELOG.md.
   choices with visible stakes — shipped (suggested-actions skill/DC badges).
   (2) Real action economy (action/bonus action/reaction/movement, tracked
   per player-turn) — shipped, see `docs/protocol.md`'s "Action economy"
-  section. **Still open**: (3) tactical positioning/grid combat (opportunity
-  attacks, movement ranges, high ground) — the biggest remaining gap, Oracle
-  has zero spatial model today, not even a distance concept; and (4)
-  environmental interactivity (shove, throw, surfaces) — probably the
-  weakest fit for a text-narrated engine without a real map, likely follows
-  from (3) rather than standing alone.
+  section. (3) Tactical positioning — shipped in a deliberately scoped-down
+  form: abstract `range_band` (melee/near/far) per NPC, DM-authored,
+  informational only, see `docs/protocol.md`'s "NPC range band" section. A
+  real x/y grid was considered and rejected the same way `WorldState.
+  location_map` already rejected one for the world map — the DM model can't
+  be trusted to author consistent coordinates, and a bad one is worse when
+  it decides combat legality. **Still open**: real engine-enforced
+  positioning (opportunity attacks, movement legality) and per-(player, NPC)
+  tracking for a spread-out party, both deferred deliberately, not
+  forgotten; and (4) environmental interactivity (shove, throw, surfaces) —
+  probably the weakest fit for a text-narrated engine without a real map.
 - **Text-to-speech** for DM narration — likely the same GPU dependency, though
   TTS models are lighter; measure on CPU before assuming.
 - **Background world-ticks** — NPCs pursuing goals, world state advancing

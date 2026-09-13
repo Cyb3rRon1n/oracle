@@ -161,7 +161,9 @@ You have five tools available:
   the party) — update that note later if the relationship changes. This is what keeps a
   recurring character feeling continuous instead of reset each time they appear. Set
   `disposition` too when it's clear (hostile/neutral/friendly) — a structured value to
-  stay consistent against turn to turn, separate from the free-text `notes`. When
+  stay consistent against turn to turn, separate from the free-text `notes`. During
+  combat, set `range_band` (melee/near/far) whenever an NPC's distance from the party
+  changes — an abstract band, not real feet or a grid position. When
   the character/NPC rests for a meaningful stretch (camping overnight, resting after a
   fight), use the `rest` field ('short' or 'long') instead of guessing an `hp_delta` -
   the engine computes the real amount healed. For a wizard/cleric casting one of their
@@ -343,6 +345,18 @@ UPDATE_CHARACTER_TOOL = {
                     "relationship meaningfully changes (e.g. a fight ends and they surrender, "
                     "or a favor is repaid). Not meaningful for 'self' - omit for the acting "
                     "character."
+                ),
+            },
+            "range_band": {
+                "type": "string",
+                "enum": ["melee", "near", "far"],
+                "description": (
+                    "An NPC/monster's abstract distance from the party during combat - "
+                    "'melee' (adjacent), 'near' (a short dash/thrown weapon/short-range spell "
+                    "away), or 'far' (bow/long-range spell range or further). Not a real grid "
+                    "position or a number of feet - set it when the fiction makes the distance "
+                    "clear (it closes in, it retreats). Not meaningful for 'self' - omit for "
+                    "the acting character."
                 ),
             },
         },

@@ -140,7 +140,14 @@ function reducer(state, event) {
       };
 
     case ET.NPC_UPDATE:
-      return { ...state, npcs: { ...state.npcs, [event.payload.name]: { ...state.npcs[event.payload.name], ...event.payload } } };
+      // event.payload is the envelope shape {name, sheet_delta} - merge the
+      // delta's fields, not the wrapper itself, or every live NPC field
+      // (hp, range_band, disposition, ...) ends up nested under a stray
+      // `sheet_delta` key instead of reaching state.npcs[name] directly.
+      return {
+        ...state,
+        npcs: { ...state.npcs, [event.payload.name]: { ...state.npcs[event.payload.name], ...event.payload.sheet_delta } },
+      };
 
     case ET.WORLD_UPDATE:
       return { ...state, world: { ...state.world, ...event.payload } };

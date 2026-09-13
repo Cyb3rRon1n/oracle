@@ -994,6 +994,29 @@ async def test_update_character_npc_target_disposition_persists_and_updates():
     assert session.npcs["goblin"].disposition == "friendly"
 
 
+async def test_update_character_npc_target_range_band_persists_and_updates():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "range_band": "far"}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "A goblin looses an arrow from across the room"},
+    ))
+
+    assert session.npcs["goblin"].range_band == "far"
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert updates[-1][2]["sheet_delta"]["range_band"] == "far"
+
+    dm._updates = [{"target": "goblin", "range_band": "melee"}]
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "The goblin closes the distance"},
+    ))
+    assert session.npcs["goblin"].range_band == "melee"
+
+
 async def test_npc_introduction_broadcasts_npc_update():
     dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -4}])
     engine, session, received = make_engine(dm)

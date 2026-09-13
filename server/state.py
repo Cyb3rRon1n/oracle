@@ -168,6 +168,14 @@ class CharacterSheet(BaseModel):
     # A coarse attitude the DM stays consistent against. Meaningful for a
     # tracked NPC; unused on a player character (shared model).
     disposition: Literal["hostile", "neutral", "friendly"] = "neutral"
+    # Piece 3 of the BG3-direction backlog (docs/protocol.md "NPC range
+    # band"): an abstract distance band, not real coordinates - the same
+    # "graph not grid" reasoning WorldState.location_map's own comment
+    # gives for why the world map has no x/y either. DM-authored only, same
+    # ownership as disposition; meaningful for a tracked NPC, unused on a
+    # player character. "melee" default matches what Oracle already
+    # implicitly assumes today (no distance concept at all).
+    range_band: Literal["melee", "near", "far"] = "melee"
     # Stored, not computed: spell_slots is spent/restored constantly and
     # max_spell_slots needs to persist "how many are spent" across a
     # save/reload independent of level. Empty for a non-caster.
@@ -432,6 +440,14 @@ class CharacterSheet(BaseModel):
         if disposition in ("hostile", "neutral", "friendly") and disposition != self.disposition:
             self.disposition = disposition
             changes.append(f"disposition now {disposition}")
+
+        range_band = update.get("range_band")
+        # Same model-input boundary as disposition above - a closed enum on
+        # the model, but validated here since the dict comes straight from a
+        # tool call an unconstrained backend could send anything through.
+        if range_band in ("melee", "near", "far") and range_band != self.range_band:
+            self.range_band = range_band
+            changes.append(f"range now {range_band}")
 
         if not changes:
             return "No changes applied (nothing matched, or all deltas were zero)."

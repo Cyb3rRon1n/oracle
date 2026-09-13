@@ -41,7 +41,9 @@ You have two tools available:
   goal, or relationship to the party) — update that note later if the relationship
   changes, so a recurring character feels continuous instead of reset each time they
   appear. Set disposition too when it's clear (hostile/neutral/friendly) — a structured
-  value to stay consistent against turn to turn, separate from the free-text notes. When
+  value to stay consistent against turn to turn, separate from the free-text notes. During
+  combat, set range_band (melee/near/far) whenever an NPC's distance from the party changes -
+  an abstract band, not real feet or a grid position. When
   the character/NPC rests for a meaningful stretch (camping overnight, resting after a
   fight), use the rest field ('short' or 'long') instead of guessing an hp_delta - the
   engine computes the real amount healed.
@@ -127,6 +129,17 @@ _OUTCOME_PROPERTIES = {
             "changes. Not meaningful for 'self' - empty string if not applicable."
         ),
     },
+    "range_band": {
+        "type": "string",
+        "enum": ["melee", "near", "far", ""],
+        "description": (
+            "An NPC/monster's abstract distance from the party during combat - 'melee' "
+            "(adjacent), 'near' (a short dash/thrown weapon/short-range spell away), or "
+            "'far' (bow/long-range spell range or further). Not real feet or a grid "
+            "position. Set it when the fiction makes the distance clear. Not meaningful "
+            "for 'self' - empty string if not applicable."
+        ),
+    },
     "cast_spell": {
         "type": "string",
         "description": (
@@ -160,18 +173,19 @@ a character's or NPC's hp, inventory, or conditions that should have been record
 not simply whoever acted. Set `rest` ('short' or 'long') if the narration described a meaningful
 rest - the engine computes the real healing, so don't guess an hp_delta for it. Set `cast_spell`
 if the acting character cast one of their own known spells. Set `notes`/`disposition` if an NPC
-was introduced or a relationship meaningfully changed - these can be a real correction even when
+was introduced or a relationship meaningfully changed, and `range_band` (melee/near/far) if an
+NPC's distance from the party changed - these can be a real correction even when
 `mechanical_change` is false. Otherwise set `mechanical_change` to false and leave every field at
 its default."""
 
 
 def _has_outcome_change(data: dict) -> bool:
     """Apply/propose gate: mechanical_change, or any of rest/notes/disposition/
-    cast_spell which each count as a real change on their own. Shared so
-    _narrate_structured, check_missed_change and propose_correction agree."""
+    range_band/cast_spell which each count as a real change on their own. Shared
+    so _narrate_structured, check_missed_change and propose_correction agree."""
     return bool(
         data.get("mechanical_change")
-        or any(data.get(field) for field in ("rest", "notes", "disposition", "cast_spell"))
+        or any(data.get(field) for field in ("rest", "notes", "disposition", "range_band", "cast_spell"))
     )
 
 
@@ -189,6 +203,8 @@ def _outcome_update(data: dict) -> dict:
         update["notes"] = data["notes"]
     if data.get("disposition"):
         update["disposition"] = data["disposition"]
+    if data.get("range_band"):
+        update["range_band"] = data["range_band"]
     if data.get("cast_spell"):
         update["cast_spell"] = data["cast_spell"]
     return update
@@ -202,8 +218,9 @@ narration plausibly describes a real change to a character's or NPC's hp, invent
 and fill in `target`/`hp_delta`/`add_condition` with your best guess of what the update_character call
 would have been - target is whoever actually got hurt or changed, not simply whoever acted. Also set
 `rest` ('short' or 'long') if the narration plausibly described a meaningful rest, `cast_spell` if the
-acting character plausibly cast one of their own known spells, and `notes`/`disposition` if an NPC was
-plausibly introduced or a relationship meaningfully changed - these can be a real proposal even when
+acting character plausibly cast one of their own known spells, `notes`/`disposition` if an NPC was
+plausibly introduced or a relationship meaningfully changed, and `range_band` if an NPC's distance
+from the party plausibly changed - these can be a real proposal even when
 `mechanical_change` is false. Otherwise set `mechanical_change` to false and leave every field at its
 default."""
 
@@ -486,8 +503,9 @@ deducts the real spell slot; still fill in hp_delta/add_condition separately for
 actual effect. When you introduce a new NPC worth remembering, or a recurring one's
 relationship to the party meaningfully changes, set `notes` (a sentence on personality/goal/
 relationship) and `disposition` (hostile/neutral/friendly) - these two can be the only real
-change on a turn, independent of mechanical_change. Leave rest/notes/disposition/cast_spell as
-empty strings when not applicable."""
+change on a turn, independent of mechanical_change. During combat, set `range_band`
+(melee/near/far) whenever an NPC's distance from the party changes - not real feet or a grid
+position. Leave rest/notes/disposition/range_band/cast_spell as empty strings when not applicable."""
 _SO_NEVER_BREAK = " Never break character in `narration`."
 
 STRUCTURED_OUTPUT_SYSTEM_PROMPT = _SO_HEADER + _SO_INTRO_NARRATE + _SO_MECHANICS + _SO_NEVER_BREAK
@@ -556,7 +574,8 @@ _FU_INTRO_DECIDE = (
 )
 _FU_MECHANICS = (
     " Set `mechanical_change`\n"
-    "and fill in `target`/`hp_delta`/`add_condition`/`rest`/`notes`/`disposition`/`cast_spell` the\n"
+    "and fill in `target`/`hp_delta`/`add_condition`/`rest`/`notes`/`disposition`/`range_band`/\n"
+    "`cast_spell` the\n"
     "same way a normal turn would, now informed by whether the roll actually succeeded."
 )
 _FU_NEVER_BREAK = " Never break\ncharacter."
@@ -862,7 +881,7 @@ class OllamaNarrator:
         yield data.get("narration", "")
 
         # _has_outcome_change, not data["mechanical_change"]: rest/notes/
-        # disposition/cast_spell can each be the only real change on a turn.
+        # disposition/range_band/cast_spell can each be the only real change on a turn.
         if _has_outcome_change(data):
             apply_update(_outcome_update(data))
 
@@ -941,7 +960,7 @@ class OllamaNarrator:
                 yield response.message.content or ""
                 return
 
-        if data.get("mechanical_change") or any(data.get(field) for field in ("rest", "notes", "disposition", "cast_spell")):
+        if data.get("mechanical_change") or any(data.get(field) for field in ("rest", "notes", "disposition", "range_band", "cast_spell")):
             apply_update(_outcome_update(data))
         if self._world_updates and data.get("world_change") and update_world is not None:
             world_delta: dict = {}

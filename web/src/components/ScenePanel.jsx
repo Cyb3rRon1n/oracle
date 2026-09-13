@@ -6,12 +6,20 @@ import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
 import { skillLabel } from "../lib/dnd5e.js";
 
+const RANGE_LABELS = { melee: "Melee", near: "Near", far: "Far" };
+
 export default function ScenePanel({ onSuggest }) {
   const { state } = useStore();
   const { t } = useLang();
   const scene = state.scene;
   const clocks = state.world.clocks || [];
-  if (!scene && clocks.length === 0 && !(state.world.objectives || []).length) return null;
+  // A defeated NPC drops out - gone from active play. hp <= 0, not `dead`:
+  // an NPC has no death-save/dead concept at all (that's player-only, see
+  // server/state.py's grant_death_save), the same check server/views.py's
+  // own DM-facing NPC roster (_npc_roster) already uses.
+  const npcs = Object.entries(state.npcs || {}).filter(([, npc]) => npc.hp > 0);
+  const showCombatants = state.inCombat && npcs.length > 0;
+  if (!scene && clocks.length === 0 && !(state.world.objectives || []).length && !showCombatants) return null;
 
   return (
     <aside className="panel p-4 space-y-3 text-sm max-h-[60vh] overflow-y-auto">
@@ -36,6 +44,25 @@ export default function ScenePanel({ onSuggest }) {
               </span>
             ))}
           </div>
+        </Section>
+      )}
+
+      {showCombatants && (
+        <Section title={t("Combatants")}>
+          <ul className="space-y-1.5">
+            {npcs.map(([name, npc]) => (
+              <li key={name} className="flex items-center gap-2">
+                <span className="flex-1 truncate">{name}</span>
+                {npc.disposition && npc.disposition !== "neutral" && (
+                  <span className="text-[10px] text-dungeon-ink/50">{npc.disposition}</span>
+                )}
+                <NpcHpBar hp={npc.hp} max={npc.max_hp} />
+                <span className="shrink-0 text-[9px] uppercase tracking-wide text-dungeon-gold/70 border border-dungeon-gold/40 rounded px-1 py-0.5">
+                  {RANGE_LABELS[npc.range_band] || npc.range_band}
+                </span>
+              </li>
+            ))}
+          </ul>
         </Section>
       )}
 
@@ -90,6 +117,16 @@ export default function ScenePanel({ onSuggest }) {
         </Section>
       )}
     </aside>
+  );
+}
+
+function NpcHpBar({ hp, max }) {
+  const pct = max > 0 ? Math.max(0, Math.min(100, Math.round((hp / max) * 100))) : 0;
+  const fill = pct > 50 ? "bg-emerald-600" : pct > 25 ? "bg-amber-500" : "bg-dungeon-blood";
+  return (
+    <span className="w-10 h-1.5 bg-dungeon-bg rounded overflow-hidden border border-dungeon-edge shrink-0">
+      <span className={`block h-full ${fill}`} style={{ width: `${pct}%` }} />
+    </span>
   );
 }
 
