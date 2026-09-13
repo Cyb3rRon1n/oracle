@@ -293,8 +293,32 @@ SCENE_PROPERTIES = {
     },
     "points_of_interest": {
         "type": "array",
-        "items": {"type": "string"},
-        "description": "Interactable things in the scene worth examining.",
+        "items": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": (
+                        "A real interaction with something in the scene, in plain language (e.g. "
+                        "'Push over the bookshelf to block the door') - not just the object's name."
+                    ),
+                },
+                "skill": {
+                    "type": "string",
+                    "enum": sorted(SKILL_ABILITIES),
+                    "description": (
+                        "Only when interacting with this actually needs a check (prying open a "
+                        "stuck door, balancing on a loose beam). Omit for a plain look/examine."
+                    ),
+                },
+                "dc": {
+                    "type": "integer",
+                    "description": "Only when skill is set: the difficulty class this attempt would face.",
+                },
+            },
+            "required": ["text"],
+        },
+        "description": "Up to 4 interactable things in the scene - objects, terrain, hazards.",
     },
     "suggested_actions": {
         "type": "array",

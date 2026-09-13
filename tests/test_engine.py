@@ -1735,6 +1735,47 @@ def test_sanitize_suggested_actions_caps_at_four_before_validating():
     assert _sanitize_suggested_actions(raw) == [{"text": "a"}, {"text": "b"}, {"text": "c"}, {"text": "d"}]
 
 
+class SceneFactsDM:
+    supports_scene_facts = True
+
+    def __init__(self, points_of_interest=(), suggested_actions=()):
+        self._points_of_interest = list(points_of_interest)
+        self._suggested_actions = list(suggested_actions)
+
+    async def narrate(self, history, character_summary, action_text, apply_update, request_roll=None,
+                       update_world=None, world_summary=None, scene_sink=None, fact_sink=None):
+        if scene_sink is not None:
+            scene_sink({
+                "points_of_interest": self._points_of_interest,
+                "suggested_actions": self._suggested_actions,
+            })
+        yield "The room is quiet."
+
+
+async def test_points_of_interest_are_sanitized_in_the_scene_update_broadcast():
+    dm = SceneFactsDM(points_of_interest=[
+        {"text": "Search the old sea chest", "skill": "investigation", "dc": 12},
+        {"text": "a fabricated check", "skill": "not_a_real_skill", "dc": 99},
+        "a plain string label",
+    ])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "scene_update"]
+    assert updates
+    assert updates[-1][2]["points_of_interest"] == [
+        {"text": "Search the old sea chest", "skill": "investigation", "dc": 12},
+        {"text": "a fabricated check"},
+        {"text": "a plain string label"},
+    ]
+
+
 async def test_owner_character_view_spell_attack_bonus_is_none_for_a_non_caster():
     engine, session, _ = make_engine(StubDM())
     player_id = str(uuid.uuid4())
@@ -5811,6 +5852,111 @@ async def test_build_starting_character_auto_equips_starting_weapon_and_armor():
     assert character.equipped_weapon == "Longsword"
     assert character.equipped_armor == "Leather Armor"
     assert character.ac == 11 + character.stat_modifiers["dex"]  # 11 + Dex modifier, leather armor's real SRD AC
+
+
+async def test_character_edit_shove_pushes_a_melee_npc_to_near_and_spends_the_action():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "range_band": "melee"}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "A goblin appears"},
+    ))
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "shove", "value": "goblin"},
+    ))
+
+    assert session.npcs["goblin"].range_band == "near"
+    assert session.characters[player_id].action_available is False
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert updates and updates[-1][2]["sheet_delta"]["range_band"] == "near"
+    messages = [r for r in received if r[0] == "broadcast" and r[1] == "system_message"]
+    assert any("shoves goblin" in r[2]["text"] for r in messages)
+
+
+async def test_character_edit_shove_warns_when_target_is_not_at_melee_range():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "range_band": "far"}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "A goblin appears"},
+    ))
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "shove", "value": "goblin"},
+    ))
+
+    assert session.npcs["goblin"].range_band == "far"  # unchanged
+    assert session.characters[player_id].action_available is True  # not spent
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_character_edit_shove_warns_when_no_action_left():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "range_band": "melee"}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "A goblin appears"},
+    ))
+    session.characters[player_id].action_available = False
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "shove", "value": "goblin"},
+    ))
+
+    assert session.npcs["goblin"].range_band == "melee"  # unchanged
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+
+
+async def test_character_edit_shove_warns_for_unknown_npc():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "shove", "value": "nonexistent goblin"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_character_edit_shove_warns_for_a_defeated_npc():
+    dm = UpdateSequenceDM([{"target": "goblin", "max_hp": 7, "hp_delta": -7, "range_band": "melee"}])
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I strike the goblin down"},
+    ))
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "shove", "value": "goblin"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
 
 
 async def test_character_edit_equip_switches_weapon_and_does_not_touch_ac():

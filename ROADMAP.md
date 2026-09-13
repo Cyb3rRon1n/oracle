@@ -62,21 +62,28 @@ tool-call reliability harness. Full list: CHANGELOG.md.
   client/websocket so far. Also open: automatic scene regeneration off narration beats
   (deliberately rejected for the manual-only v1, see the scene-banner section) and a
   per-location image cache/gallery.
-- **BG3-style tabletop feel, in progress.** Four-piece backlog: (1) dialogue
-  choices with visible stakes — shipped (suggested-actions skill/DC badges).
-  (2) Real action economy (action/bonus action/reaction/movement, tracked
-  per player-turn) — shipped, see `docs/protocol.md`'s "Action economy"
-  section. (3) Tactical positioning — shipped in a deliberately scoped-down
-  form: abstract `range_band` (melee/near/far) per NPC, DM-authored,
-  informational only, see `docs/protocol.md`'s "NPC range band" section. A
-  real x/y grid was considered and rejected the same way `WorldState.
-  location_map` already rejected one for the world map — the DM model can't
-  be trusted to author consistent coordinates, and a bad one is worse when
-  it decides combat legality. **Still open**: real engine-enforced
-  positioning (opportunity attacks, movement legality) and per-(player, NPC)
-  tracking for a spread-out party, both deferred deliberately, not
-  forgotten; and (4) environmental interactivity (shove, throw, surfaces) —
-  probably the weakest fit for a text-narrated engine without a real map.
+- **BG3-style tabletop feel — all four backlog pieces shipped.** (1) Dialogue
+  choices with visible stakes — suggested-actions skill/DC badges. (2) Real
+  action economy (action/bonus action/reaction/movement, tracked per
+  player-turn), see `docs/protocol.md`'s "Action economy" section. (3)
+  Tactical positioning, deliberately scoped down: abstract `range_band`
+  (melee/near/far) per NPC, DM-authored, informational only — a real x/y grid
+  was considered and rejected the same way `WorldState.location_map` already
+  rejected one for the world map (the DM model can't be trusted to author
+  consistent coordinates, and a bad one is worse when it decides combat
+  legality), see `docs/protocol.md`'s "NPC range band" section. (4)
+  Environmental interactivity, also scoped down to two concrete, buildable
+  slices rather than a full object/terrain model Oracle doesn't have: a real
+  `shove` action (spends the action, pushes a melee-range NPC to `near` —
+  the first player-initiated write to `range_band`, a bounded named
+  exception the same way `use_item`/`cast_spell` already are) and
+  `points_of_interest` gaining the same `{text, skill?, dc?}` shape
+  `suggested_actions` already has, so an environmental interaction can carry
+  real stakes too. See `docs/protocol.md`'s "Shove" and "Interactive points
+  of interest" sections. **Still open**: real engine-enforced positioning
+  (opportunity attacks, movement legality), per-(player, NPC) tracking for a
+  spread-out party, knock-prone as a second shove outcome, and throwing
+  objects/surfaces — all deliberately deferred, not forgotten.
 - **Text-to-speech** for DM narration — likely the same GPU dependency, though
   TTS models are lighter; measure on CPU before assuming.
 - **Background world-ticks** — NPCs pursuing goals, world state advancing

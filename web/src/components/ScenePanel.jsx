@@ -9,7 +9,7 @@ import { skillLabel } from "../lib/dnd5e.js";
 const RANGE_LABELS = { melee: "Melee", near: "Near", far: "Far" };
 
 export default function ScenePanel({ onSuggest }) {
-  const { state } = useStore();
+  const { state, actions } = useStore();
   const { t } = useLang();
   const scene = state.scene;
   const clocks = state.world.clocks || [];
@@ -60,6 +60,14 @@ export default function ScenePanel({ onSuggest }) {
                 <span className="shrink-0 text-[9px] uppercase tracking-wide text-dungeon-gold/70 border border-dungeon-gold/40 rounded px-1 py-0.5">
                   {RANGE_LABELS[npc.range_band] || npc.range_band}
                 </span>
+                {npc.range_band === "melee" && (
+                  <button
+                    onClick={() => actions.editCharacter("shove", name)}
+                    className="text-[10px] px-1.5 py-0.5 rounded border border-dungeon-edge text-dungeon-ink/60 hover:text-dungeon-ink hover:border-dungeon-gold transition"
+                  >
+                    {t("shove")}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -68,14 +76,20 @@ export default function ScenePanel({ onSuggest }) {
 
       {scene?.points_of_interest?.length > 0 && (
         <Section title={t("Of interest")}>
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-col gap-1">
             {scene.points_of_interest.map((p) => (
               <button
-                key={p}
-                onClick={() => onSuggest(`${t('Examine')} ${p}`)}
-                className="px-2 py-0.5 rounded-full border border-sky-400/40 text-xs hover:bg-sky-400/10"
+                key={p.text}
+                onClick={() => onSuggest(p.text)}
+                className="text-left px-2 py-1 rounded border border-sky-400/40 hover:bg-sky-400/10 text-xs transition flex items-center justify-between gap-2"
               >
-                {p}
+                <span>{p.text}</span>
+                {p.skill && (
+                  <span className="shrink-0 text-[9px] uppercase tracking-wide text-dungeon-gold/70 border border-dungeon-gold/40 rounded px-1 py-0.5">
+                    {skillLabel(p.skill)}
+                    {p.dc != null && ` DC ${p.dc}`}
+                  </span>
+                )}
               </button>
             ))}
           </div>

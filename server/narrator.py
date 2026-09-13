@@ -748,9 +748,13 @@ class AnthropicNarrator:
                     max_tokens=400,
                     system=(
                         "Extract facts from this D&D turn as a single JSON object with "
-                        'keys "npcs_present", "points_of_interest" (each an array of short '
-                        'strings), "suggested_actions" (at most 4 objects, each '
-                        '{"text": "..."} plus "skill" and "dc" only when that option '
+                        'keys "npcs_present" (an array of short strings), "points_of_interest" '
+                        '(at most 4 objects, each {"text": "..."} describing a real interaction '
+                        "with something in the scene in plain language - e.g. \"Push over the "
+                        'bookshelf to block the door", not just the object\'s name - plus '
+                        '"skill"/"dc" only when interacting with it actually needs a check; '
+                        'omit for a plain look/examine), "suggested_actions" (at most 4 objects, '
+                        'each {"text": "..."} plus "skill" and "dc" only when that option '
                         "represents a real skill check - e.g. persuading, sneaking, "
                         "intimidating; omit skill/dc for an option with no check attached) "
                         'and "new_facts" (an array of at most 3 short plain-language '

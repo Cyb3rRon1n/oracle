@@ -93,6 +93,7 @@ CHARACTER_EDIT_FIELDS = CHARACTER_EDIT_TEXT_FIELDS | frozenset(
     {
         "remove_item", "equip", "unequip", "use_item", "cast_spell",
         "spend_action", "spend_bonus_action", "spend_reaction", "spend_movement",
+        "shove",
     }
 )
 
@@ -112,8 +113,9 @@ CONTENT_PREFERENCE_HINTS = {
 
 
 def _sanitize_suggested_actions(raw: list) -> list[dict]:
-    """Coerces the DM's own suggested_actions into a real, validated shape -
-    {text, skill?, dc?} - never trusted strictly from model output. A plain
+    """Coerces the DM's own suggested_actions (or, reusing the identical
+    shape, points_of_interest) into a real, validated shape - {text, skill?,
+    dc?} - never trusted strictly from model output. A plain
     string (either backend's older behavior, or a model that ignores the
     object shape) becomes {text: <that string>}. An unrecognized skill name
     is dropped rather than shown as a fabricated check - the same
@@ -1207,6 +1209,12 @@ class GameEngine:
             # server-side rather than trusted to each backend.
             trimmed = dict(facts)
             trimmed["suggested_actions"] = _sanitize_suggested_actions(facts.get("suggested_actions", []))
+            # Same {text, skill?, dc?} shape and validation as suggested_actions -
+            # piece 4 of the BG3-direction backlog (docs/protocol.md "Interactive
+            # points of interest"): a DM-flagged environmental interaction (a
+            # lever, a loose beam) can carry real stakes too, not just a plain
+            # examine-me label.
+            trimmed["points_of_interest"] = _sanitize_suggested_actions(facts.get("points_of_interest", []))
             scene_facts = trimmed
 
         def fact_sink(facts: list) -> None:
@@ -1678,6 +1686,44 @@ class GameEngine:
                 )
                 return
             character.movement_remaining -= feet
+        elif field == "shove":
+            # Piece 4 of the BG3-direction backlog (docs/protocol.md
+            # "Shove"): the first player-initiated write to an NPC's
+            # range_band. That field is DM-authored-only by design (piece
+            # 3's own reasoning: no free-form player edits, one
+            # authoritative source per NPC) - this doesn't reopen that.
+            # Shove is a specific, bounded named action, the same kind of
+            # narrow exception use_item/cast_spell already are for hp/spell
+            # slots: spends something real (the action) for a real, single-
+            # step effect, never arbitrary editing.
+            npc_name = str(value)
+            npc = self._session.npcs.get(npc_name)
+            if npc is None or npc.hp <= 0:
+                await self._send_to(
+                    player_id, self._system_envelope(f"There's no '{npc_name}' here to shove.", level="warning")
+                )
+                return
+            if not character.action_available:
+                await self._send_to(
+                    player_id,
+                    self._system_envelope(f"{character.name} has no action left this turn.", level="warning"),
+                )
+                return
+            if npc.range_band != "melee":
+                # Real 5e: shoving requires being within melee reach of the target.
+                await self._send_to(
+                    player_id, self._system_envelope(f"{npc.name} is too far away to shove.", level="warning")
+                )
+                return
+            character.action_available = False
+            npc.range_band = "near"
+            # Broadcast, not private - a shove is a visible combat action
+            # affecting shared NPC state, the same reasoning
+            # _npc_update_envelope's own comment already gives.
+            await self._broadcast(self._npc_update_envelope(npc.name, npc))
+            await self._broadcast(
+                self._system_envelope(f"{character.name} shoves {npc.name} back!", level="info")
+            )
         elif field == "unequip":
             item = str(value)
             if character.equipped_weapon == item:
