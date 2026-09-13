@@ -103,6 +103,14 @@ export default function GameScreen() {
           >
             ⚔ {state.inCombat ? t("End combat") : t("Start combat")}
           </button>
+          <button
+            className={`px-2 py-1 rounded border transition text-xs ${
+              state.companionJoined ? "border-dungeon-gold text-dungeon-gold" : "border-dungeon-edge hover:border-dungeon-gold"
+            }`}
+            onClick={() => (state.companionJoined ? actions.removeCompanion() : actions.addCompanion())}
+          >
+            🎭 {state.companionJoined ? t("Dismiss Tinder") : t("Add Tinder")}
+          </button>
           <EndAdventureButton onEnd={actions.endAdventure} t={t} />
           <ExportButtons />
           <LangFlags />
