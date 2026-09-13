@@ -31,7 +31,7 @@ Instead of a single-player chatbot, Oracle is a game engine with an LLM in the G
 - **Campaign memory** (v2): a rolling summary rebuilt every ten resolved turns keeps early-session plot alive after the sliding history window scrolls past it.
 - **Fact ledger** (v2): each turn the DM also records up to three short durable facts — promises made, debts, discoveries — deduped into a persistent per-session list injected back into later turns' context, newest-first with older facts resurfacing when named. A promise from turn 3 still reaches the DM on turn 40; no extra LLM calls spent capturing or recalling it.
 - **Progress clocks** (v2): Blades-style segmented tension meters as server state, ticked by the DM via tool; filling one announces itself.
-- **Structured scenes** (v2): each turn resolves into a `scene_update` — NPCs present, points of interest, up to four suggested actions rendered as clickable chips.
+- **Structured scenes** (v2): each turn resolves into a `scene_update` — NPCs present, points of interest, up to four suggested actions rendered as clickable chips, each tagged with a skill and DC when it represents a real check (a BG3 dialogue-wheel feel: see the stakes before you commit).
 - **Coordinate map** (v2): the DM places locations (with emoji hints) through its world-update tool; clients render the graph with the current location highlighted.
 - **Multi-provider AI** (v2): Ollama (local), Anthropic, or any OpenAI-compatible endpoint (Deepseek, Kimi, Grok, OpenAI).
 - **Character export/import** and transcript download, entirely client-side.
@@ -144,19 +144,19 @@ Container Toolkit on the host — without it Ollama silently runs on CPU).
 
 ## Screenshots
 
-Real captures of the live app — join screen, a live character sheet with real computed stats, and a real DM-narrated opening scene (local Ollama backend).
+Real captures of the live app — join screen, a live character sheet with real computed stats, and an actual played turn (local Ollama backend): a real natural-20 roll, a real HP change applied to the sheet, real dialogue.
 
 <p align="center">
-  <img src="docs/images/screenshots/join.png" alt="Oracle join screen: character name, session id, class/race pickers" width="480"><br>
+  <img src="docs/images/screenshots/join.png" alt="Oracle join screen: character name, session id, class/race pickers" style="max-width: 100%; width: 900px;"><br>
   <sub>Join screen — pick a class/race or import a character, share the session id to play together</sub>
 </p>
 <p align="center">
-  <img src="docs/images/screenshots/character-sheet.png" alt="Oracle character sheet with real computed AC, saves, skills, and attacks" width="480"><br>
-  <sub>Every number on the sheet is computed by the server, not the model</sub>
+  <img src="docs/images/screenshots/character-sheet.png" alt="Oracle character sheet with real computed AC, saves, skills, and attacks, an avatar with a style picker, and the Equipped/Inventory split" style="max-width: 100%; width: 900px;"><br>
+  <sub>Every number on the sheet is computed by the server, not the model — the avatar, style picker, and Equipped/Inventory split are all live</sub>
 </p>
 <p align="center">
-  <img src="docs/images/screenshots/session.png" alt="Oracle live session with a DM-narrated opening scene" width="480"><br>
-  <sub>A live DM-narrated opening scene</sub>
+  <img src="docs/images/screenshots/session.png" alt="Oracle live session: a real natural-20 roll, an applied HP change, and DM dialogue" style="max-width: 100%; width: 900px;"><br>
+  <sub>A real played turn — the natural 20 and the HP change are both genuine engine output, not staged</sub>
 </p>
 
 ## The tool-call reliability investigation
