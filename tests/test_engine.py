@@ -7165,3 +7165,33 @@ def test_npc_roster_excludes_the_companion():
     session.npcs[COMPANION_KEY] = companion
 
     assert _npc_roster(session) == ""
+
+
+async def test_turns_since_world_change_resets_when_the_world_changes():
+    dm = UpdateWorldDM({"location": "Millbrook"})
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.turns_since_world_change = 3
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I arrive"},
+    ))
+
+    assert session.turns_since_world_change == 0
+
+
+async def test_turns_since_world_change_increments_when_nothing_changes():
+    dm = StubDM()  # never calls update_world
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    assert session.turns_since_world_change == 0
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert session.turns_since_world_change == 1

@@ -1402,7 +1402,10 @@ class GameEngine:
             await self._broadcast(self._system_envelope(f"{character.name} is no longer dying.", level="info"))
 
         if world_changed:
+            self._session.turns_since_world_change = 0
             await self._broadcast(self._world_update_envelope())
+        else:
+            self._session.turns_since_world_change += 1
 
         if missed_change_corrected:
             # A real correction landed via check_missed_change - tell the player
