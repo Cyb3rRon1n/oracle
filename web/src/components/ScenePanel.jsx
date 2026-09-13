@@ -14,7 +14,7 @@ export default function ScenePanel({ onSuggest }) {
   if (!scene && clocks.length === 0 && !(state.world.objectives || []).length) return null;
 
   return (
-    <aside className="panel p-4 space-y-3 text-sm">
+    <aside className="panel p-4 space-y-3 text-sm max-h-[60vh] overflow-y-auto">
       {(state.world.objectives || []).some((o) => o.status === "active") && (
         <Section title={t("Objectives")}>
           <ul className="list-disc pl-5 space-y-0.5">

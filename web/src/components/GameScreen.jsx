@@ -139,7 +139,7 @@ export default function GameScreen() {
         <div ref={logEndRef} />
       </main>
 
-      <div className="grid grid-cols-[1fr_320px] gap-3 items-start max-h-[38vh] overflow-hidden">
+      <div className="grid grid-cols-[1fr_380px] gap-3 items-start">
         <ScenePanel onSuggest={(text) => setDraft(text)} />
         <CharacterSheet />
       </div>

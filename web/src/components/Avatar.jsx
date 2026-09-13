@@ -17,7 +17,7 @@ const STYLE_OPTIONS = [
   ["realistic", "Realistic photo"],
 ];
 
-export default function Avatar({ sheet, pending, progress, onGenerate, t }) {
+export default function Avatar({ sheet, pending, progress, onGenerate, t, compact }) {
   const [style, setStyle] = useState("fantasy");
   const name = sheet.name || "?";
   const initials = name
@@ -30,18 +30,24 @@ export default function Avatar({ sheet, pending, progress, onGenerate, t }) {
   const hue = [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0);
   const pct = progress?.total ? Math.round((progress.step / progress.total) * 100) : null;
 
+  const circle = (
+    <div
+      className={`${compact ? "w-8 h-8" : "w-14 h-14"} rounded-full border border-dungeon-edge overflow-hidden flex items-center justify-center shrink-0`}
+      style={sheet.portrait ? undefined : { backgroundColor: `hsl(${hue}, 35%, 25%)` }}
+    >
+      {sheet.portrait ? (
+        <img src={sheet.portrait} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <span className={`font-display text-dungeon-ink/80 ${compact ? "text-[10px]" : "text-sm"}`}>{initials}</span>
+      )}
+    </div>
+  );
+
+  if (compact) return circle;
+
   return (
     <div className="flex flex-col items-center gap-1 shrink-0 w-24">
-      <div
-        className="w-14 h-14 rounded-full border border-dungeon-edge overflow-hidden flex items-center justify-center"
-        style={sheet.portrait ? undefined : { backgroundColor: `hsl(${hue}, 35%, 25%)` }}
-      >
-        {sheet.portrait ? (
-          <img src={sheet.portrait} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <span className="text-sm font-display text-dungeon-ink/80">{initials}</span>
-        )}
-      </div>
+      {circle}
 
       {pending ? (
         <div className="w-full">

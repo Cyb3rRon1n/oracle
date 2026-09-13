@@ -2,11 +2,17 @@
 // owner-only payload from state_sync/character_update: inventory, stats,
 // spells, class features, proficiencies). Bookkeeping edits ride
 // character_edit; everything else here is read-only projection.
+//
+// Deliberately narrower than the full-page overlay (CharacterSheetFull.jsx):
+// inventory management (equip/unequip/drop) lives there only - this panel's
+// own Consumables tab is use-only, since that's the one action worth a
+// single click during actual play. Collapsible so it doesn't dominate the
+// screen in a multiplayer session.
 
 import { useState } from "react";
 import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
-import InventoryPanel from "./InventoryPanel.jsx";
+import { SKILLS, skillLabel, fmtMod } from "../lib/dnd5e.js";
 import Avatar from "./Avatar.jsx";
 
 const ABILITY_LABELS = {
@@ -18,11 +24,12 @@ const ABILITY_LABELS = {
   cha: "CHA",
 };
 
-const TABS = ["Overview", "Abilities", "Inventory", "Spells", "Notes"];
+const TABS = ["Overview", "Abilities", "Skills", "Consumables", "Spells", "Notes"];
 
 export default function CharacterSheet() {
   const [tab, setTab] = useState("Overview");
-  const { state } = useStore();
+  const [collapsed, setCollapsed] = useState(false);
+  const { state, actions } = useStore();
   const { t } = useLang();
   const tr = (s) => t(s);
   const sheet = state.character;
@@ -33,25 +40,63 @@ export default function CharacterSheet() {
     );
   }
 
+  if (collapsed) {
+    return (
+      <aside className="panel p-2 flex items-center gap-2">
+        <Avatar
+          sheet={sheet}
+          pending={state.portraitPending}
+          progress={state.portraitProgress}
+          onGenerate={actions.generatePortrait}
+          t={t}
+          compact
+        />
+        <div className="flex-1 min-w-0">
+          <div className="font-display text-sm text-dungeon-gold truncate">{sheet.name}</div>
+          <div className="text-xs text-dungeon-ink/60">
+            {sheet.hp}/{sheet.max_hp} {t("HP")}
+          </div>
+        </div>
+        <button
+          onClick={() => setCollapsed(false)}
+          className="text-xs text-dungeon-ink/50 hover:text-dungeon-gold px-1"
+          aria-label={t("Expand")}
+        >
+          ⤢
+        </button>
+      </aside>
+    );
+  }
+
   return (
-    <aside className="panel flex flex-col min-h-[240px]">
-      <div className="flex flex-wrap border-b border-dungeon-edge">
-        {TABS.map((t0) => (
-          <button
-            key={t0}
-            onClick={() => setTab(t0)}
-            className={`px-3 py-2 text-xs font-display tracking-wide transition ${
-              tab === t0 ? "text-dungeon-gold border-b-2 border-dungeon-gold" : "text-dungeon-ink/60 hover:text-dungeon-ink"
-            }`}
-          >
-            {tr(t0)}
-          </button>
-        ))}
+    <aside className="panel flex flex-col min-h-[320px] max-h-[60vh]">
+      <div className="flex items-center border-b border-dungeon-edge">
+        <div className="flex flex-wrap flex-1">
+          {TABS.map((t0) => (
+            <button
+              key={t0}
+              onClick={() => setTab(t0)}
+              className={`px-3 py-2 text-xs font-display tracking-wide transition ${
+                tab === t0 ? "text-dungeon-gold border-b-2 border-dungeon-gold" : "text-dungeon-ink/60 hover:text-dungeon-ink"
+              }`}
+            >
+              {tr(t0)}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => setCollapsed(true)}
+          className="text-xs text-dungeon-ink/50 hover:text-dungeon-gold px-2"
+          aria-label={t("Collapse")}
+        >
+          ⤡
+        </button>
       </div>
-      <div className="p-4 overflow-y-auto text-sm space-y-3">
+      <div className="p-4 overflow-y-auto text-sm space-y-3 flex-1">
         {tab === "Overview" && <Overview sheet={sheet} />}
         {tab === "Abilities" && <Abilities sheet={sheet} />}
-        {tab === "Inventory" && <Inventory />}
+        {tab === "Skills" && <Skills sheet={sheet} />}
+        {tab === "Consumables" && <Consumables />}
         {tab === "Spells" && <Spells sheet={sheet} />}
         {tab === "Notes" && <Features sheet={sheet} />}
       </div>
@@ -120,8 +165,6 @@ function Overview({ sheet }) {
       {sheet.dead && (
         <p className="text-center text-dungeon-blood font-display tracking-widest">{t("SLAIN")}</p>
       )}
-
-      {sheet.background && <p className="text-xs italic text-dungeon-ink/70">{t("Origin:")} {sheet.background}</p>}
     </>
   );
 }
@@ -136,48 +179,72 @@ function Stat({ label, value }) {
 }
 
 function Abilities({ sheet }) {
-  const { t } = useLang();
   const mods = sheet.stat_modifiers || {};
-  const profSkills = new Set(sheet.skill_proficiencies || []);
   return (
-    <>
-      <div className="grid grid-cols-6 gap-1.5 text-center">
-        {Object.entries(sheet.stats || {}).map(([key, score]) => (
-          <div key={key} className="bg-dungeon-bg rounded border border-dungeon-edge py-1.5">
-            <div className="text-[10px] tracking-widest text-dungeon-ink/50">{ABILITY_LABELS[key]}</div>
-            <div className="font-semibold">{score}</div>
-            <div className="text-xs text-dungeon-gold">
-              {(mods[key] ?? 0) >= 0 ? "+" : ""}
-              {mods[key] ?? 0}
-            </div>
-          </div>
-        ))}
-      </div>
-      {profSkills.size > 0 && (
-        <div>
-          <div className="text-xs uppercase tracking-widest text-dungeon-ink/50 mb-1">{t("Proficiencies")}</div>
-          <div className="flex flex-wrap gap-1">
-            {[...profSkills].map((s) => (
-              <span key={s} className="px-2 py-0.5 rounded-full border border-dungeon-gold/40 text-xs capitalize">
-                {s.replace(/_/g, " ")}
-              </span>
-            ))}
+    <div className="grid grid-cols-6 gap-1.5 text-center">
+      {Object.entries(sheet.stats || {}).map(([key, score]) => (
+        <div key={key} className="bg-dungeon-bg rounded border border-dungeon-edge py-1.5">
+          <div className="text-[10px] tracking-widest text-dungeon-ink/50">{ABILITY_LABELS[key]}</div>
+          <div className="font-semibold">{score}</div>
+          <div className="text-xs text-dungeon-gold">
+            {(mods[key] ?? 0) >= 0 ? "+" : ""}
+            {mods[key] ?? 0}
           </div>
         </div>
-      )}
+      ))}
+    </div>
+  );
+}
+
+function Skills({ sheet }) {
+  const mods = sheet.stat_modifiers || {};
+  const prof = sheet.proficiency_bonus ?? 2;
+  const profSkills = new Set(sheet.skill_proficiencies || []);
+  return (
+    <ul className="space-y-0.5">
+      {SKILLS.map(([key, ability]) => {
+        const proficient = profSkills.has(key);
+        const value = fmtMod((mods[ability] ?? 0) + (proficient ? prof : 0));
+        return (
+          <li key={key} className="flex items-center gap-2">
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${proficient ? "bg-dungeon-gold" : "bg-dungeon-edge"}`} />
+            <span className="flex-1">{skillLabel(key)}</span>
+            <span className="text-[10px] text-dungeon-ink/40 uppercase">{ability}</span>
+            <span className="tabular-nums text-dungeon-ink/90 w-8 text-right">{value}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function Consumables() {
+  const { t } = useLang();
+  const { state, actions } = useStore();
+  const sheet = state.character;
+  const items = (sheet.inventory || []).filter((it) => it.usable);
+  return (
+    <>
+      <ul className="space-y-1">
+        {items.length === 0 && <li className="italic text-dungeon-ink/50">{t("Nothing usable.")}</li>}
+        {items.map((it) => (
+          <li key={it.name + (it.magic_bonus ?? 0)} className="flex items-center justify-between gap-2">
+            <span>
+              {it.name}
+              {it.quantity > 1 && <span className="text-dungeon-ink/50"> ×{it.quantity}</span>}
+            </span>
+            <MiniBtn onClick={() => actions.editCharacter("use_item", it.name)}>{t("use")}</MiniBtn>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[10px] text-dungeon-ink/40 mt-2">{t("Manage equipment on the full character sheet.")}</p>
     </>
   );
 }
 
-function Inventory() {
-  const { t } = useLang();
-  const { state, actions } = useStore();
-  const sheet = state.character;
-  return <InventoryPanel sheet={sheet} edit={actions.editCharacter} t={t} />;
-}
-
 function Spells({ sheet }) {
   const { t } = useLang();
+  const { actions } = useStore();
   const slots = sheet.spell_slots || {};
   const maxSlots = sheet.max_spell_slots || {};
   const levels = Object.keys(maxSlots).sort();
@@ -206,13 +273,16 @@ function Spells({ sheet }) {
         </div>
       )}
       {known.length > 0 && (
-        <div className="flex flex-wrap gap-1">
+        <ul className="space-y-1">
           {known.map((s) => (
-            <span key={s} className="px-2 py-0.5 rounded-full border border-sky-400/40 text-xs capitalize">
-              {s.replace(/_/g, " ")}
-            </span>
+            <li key={s} className="flex items-center justify-between gap-2">
+              <span className="px-2 py-0.5 rounded-full border border-sky-400/40 text-xs capitalize">
+                {s.replace(/_/g, " ")}
+              </span>
+              <MiniBtn onClick={() => actions.editCharacter("cast_spell", s)}>{t("cast")}</MiniBtn>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </>
   );
@@ -261,5 +331,16 @@ function Features({ sheet }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function MiniBtn({ children, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-[10px] px-1.5 py-0.5 rounded border border-dungeon-edge text-dungeon-ink/60 hover:text-dungeon-ink hover:border-dungeon-gold transition"
+    >
+      {children}
+    </button>
   );
 }

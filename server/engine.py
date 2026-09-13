@@ -90,7 +90,7 @@ LEDGER_RELEVANT_LIMIT = 8
 # never a player's own free-text request.
 CHARACTER_EDIT_TEXT_FIELDS = frozenset({"notes", "personality", "ideals", "bonds", "flaws", "alignment"})
 CHARACTER_EDIT_FIELDS = CHARACTER_EDIT_TEXT_FIELDS | frozenset(
-    {"remove_item", "equip", "unequip", "use_item"}
+    {"remove_item", "equip", "unequip", "use_item", "cast_spell"}
 )
 
 # Session-zero tone choice, prepended to every turn's action_text while
@@ -1620,6 +1620,28 @@ class GameEngine:
                 await self._send_to(player_id, self._system_envelope(message.capitalize(), level="warning"))
                 return
             hp_changed = True
+            await self._send_to(
+                player_id, self._system_envelope(f"{character.name} {message}", level="info")
+            )
+        elif field == "cast_spell":
+            # Bookkeeping only, same limit _cast_spell's own docstring names -
+            # spends a real slot, never resolves the spell's in-fiction
+            # effect. The player still narrates the action in the normal
+            # action box; this just tracks the resource. Spell slots are
+            # owner-only (never in _public_character_view), so no public
+            # broadcast is needed the way use_item's HP change needed one.
+            spell = str(value)
+            message, changed = _cast_spell(character, spell, self._rules)
+            # changed=False covers both a real failure (unknown spell, not
+            # known, no slots left) and a cantrip (nothing to spend, not an
+            # error) - _cast_spell's own message text is the only thing that
+            # tells the two apart. The client always shows one Cast button
+            # per known spell regardless of level (it has no per-spell level
+            # data to decide otherwise), so clicking one for a cantrip is a
+            # real, common, non-error case here.
+            if not changed and not message.endswith("(cantrip)."):
+                await self._send_to(player_id, self._system_envelope(message.capitalize(), level="warning"))
+                return
             await self._send_to(
                 player_id, self._system_envelope(f"{character.name} {message}", level="info")
             )

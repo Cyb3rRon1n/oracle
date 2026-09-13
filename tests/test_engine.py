@@ -6013,6 +6013,86 @@ async def test_character_edit_use_item_stacks_decrement_by_one():
     assert item.quantity == 1
 
 
+async def test_character_edit_cast_spell_spends_a_real_slot():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "El", "character_class": "wizard"},
+    ))
+    character = session.characters[player_id]
+    assert character.spell_slots["1"] == 2
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "cast_spell", "value": "magic_missile"},
+    ))
+
+    assert character.spell_slots["1"] == 1
+    private_updates = [r for r in received if r[0] == "send_to" and r[2] == "character_update"]
+    assert private_updates
+    assert not any(r[0] == "broadcast" for r in received)  # slots are owner-only, no public change
+
+
+async def test_character_edit_cast_spell_with_no_slots_left_warns():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "El", "character_class": "wizard"},
+    ))
+    character = session.characters[player_id]
+    character.spell_slots["1"] = 0
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "cast_spell", "value": "magic_missile"},
+    ))
+
+    assert character.spell_slots["1"] == 0
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+
+
+async def test_character_edit_cast_spell_cantrip_is_not_a_warning():
+    # Every known spell gets a Cast button client-side regardless of level
+    # (the client has no per-spell level data) - clicking one for a cantrip
+    # is a real, common, non-error case, not a failure.
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await engine.handle(Envelope(
+        type="join_session", session_id="test-session", sender_id=player_id,
+        payload={"player_name": "El", "character_class": "wizard"},
+    ))
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "cast_spell", "value": "fire_bolt"},
+    ))
+
+    assert not any(r[0] == "send_to" and r[3].get("level") == "warning" for r in received)
+    info = [r for r in received if r[0] == "send_to" and r[3].get("level") == "info"]
+    assert info and "cantrip" in info[0][3]["text"]
+
+
+async def test_character_edit_cast_spell_unknown_spell_warns():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="character_edit", session_id="test-session", sender_id=player_id,
+        payload={"field": "cast_spell", "value": "not_a_real_spell"},
+    ))
+
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+
+
 async def test_character_edit_use_item_not_owned_warns_and_makes_no_change():
     engine, session, received = make_engine(StubDM())
     player_id = str(uuid.uuid4())
