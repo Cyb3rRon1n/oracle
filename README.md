@@ -144,7 +144,7 @@ Container Toolkit on the host — without it Ollama silently runs on CPU).
 
 ## Screenshots
 
-Real captures of the live app — join screen, a live character sheet with real computed stats (starting HP is a flat 100 for every character, a deliberate house rule), and an actual played turn with real DM dialogue (local Ollama backend).
+Real captures of the live app with two real players sharing a session — join screen, a live character sheet with real computed stats (starting HP is a flat 100 for every character, a deliberate house rule), the tavern lobby with both party members, and a real fight with real DM dialogue (local Ollama backend).
 
 <p align="center">
   <img src="docs/images/screenshots/join.png" alt="Oracle join screen: character name, session id, class/race pickers" style="max-width: 100%; width: 900px;"><br>
@@ -155,8 +155,12 @@ Real captures of the live app — join screen, a live character sheet with real 
   <sub>Every number on the sheet is computed by the server, not the model — the avatar, style picker, and Equipped/Inventory split are all live</sub>
 </p>
 <p align="center">
-  <img src="docs/images/screenshots/session.png" alt="Oracle live session with the in-session character panel: Overview, Abilities, Skills, Consumables, Spells, and Notes tabs" style="max-width: 100%; width: 900px;"><br>
-  <sub>The in-session panel — Skills, Consumables (use-only), and Spells (with a Cast button) alongside the usual Overview, plus a collapse toggle for multiplayer</sub>
+  <img src="docs/images/screenshots/session.png" alt="Oracle tavern lobby with two real players in the same party, ready to start the adventure together" style="max-width: 100%; width: 900px;"><br>
+  <sub>Two players, one party — same session id, one browser tab each</sub>
+</p>
+<p align="center">
+  <img src="docs/images/screenshots/combat.png" alt="Oracle live combat with real DM narration, a tracked NPC in the Combatants roster with an HP bar and range badge, and the action-economy pips (Action, Bonus action, Reaction) alongside a scene-banner control" style="max-width: 100%; width: 900px;"><br>
+  <sub>Formal initiative in progress — the Combatants roster (NPC HP + abstract melee/near/far range band), per-turn action economy pips, and the scene-banner generator, all driven by a real Ollama turn</sub>
 </p>
 
 ## The tool-call reliability investigation

@@ -95,6 +95,14 @@ export default function GameScreen() {
           >
             📜 {t("Sheet")}
           </button>
+          <button
+            className={`px-2 py-1 rounded border transition text-xs ${
+              state.inCombat ? "border-dungeon-blood text-dungeon-blood" : "border-dungeon-edge hover:border-dungeon-gold"
+            }`}
+            onClick={() => (state.inCombat ? actions.endCombat() : actions.startCombat())}
+          >
+            ⚔ {state.inCombat ? t("End combat") : t("Start combat")}
+          </button>
           <EndAdventureButton onEnd={actions.endAdventure} t={t} />
           <ExportButtons />
           <LangFlags />

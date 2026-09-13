@@ -311,6 +311,12 @@ export function StoreProvider({ children }) {
       tavernRest() {
         connRef.current?.sendEvent(ET.TAVERN_REST, {});
       },
+      startCombat() {
+        connRef.current?.sendEvent(ET.START_COMBAT, {});
+      },
+      endCombat() {
+        connRef.current?.sendEvent(ET.END_COMBAT, {});
+      },
       endAdventure() {
         connRef.current?.sendEvent(ET.END_ADVENTURE, {});
       },
