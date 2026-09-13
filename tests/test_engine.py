@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from server.engine import (
+    COMPANION_KEY,
     GameEngine,
     STARTING_HP,
     build_companion_sheet,
@@ -5031,6 +5032,79 @@ async def test_end_combat_is_idempotent():
     await _end_combat(engine, player_id)  # never in combat at all
 
     assert not any(r for r in received if r[0] == "broadcast" and r[1] == "system_message")
+
+
+async def _add_companion(engine, player_id):
+    await engine.handle(Envelope(type="add_companion", session_id="test-session", sender_id=player_id, payload={}))
+
+
+async def _remove_companion(engine, player_id):
+    await engine.handle(Envelope(type="remove_companion", session_id="test-session", sender_id=player_id, payload={}))
+
+
+async def test_add_companion_joins_tinder_and_broadcasts():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await _add_companion(engine, player_id)
+
+    assert session.companion_joined is True
+    assert COMPANION_KEY in session.npcs
+    assert session.npcs[COMPANION_KEY].name == "Tinder"
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert updates[-1][2]["joined"] is True
+    assert updates[-1][2]["name"] == "Tinder"
+
+
+async def test_add_companion_is_idempotent():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await _add_companion(engine, player_id)
+    before = len(received)
+    await _add_companion(engine, player_id)
+
+    assert len(received) == before  # no second broadcast
+
+
+async def test_remove_companion_leaves_and_broadcasts():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await _add_companion(engine, player_id)
+
+    await _remove_companion(engine, player_id)
+
+    assert session.companion_joined is False
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert updates[-1][2]["joined"] is False
+
+
+async def test_remove_companion_is_idempotent_when_never_joined():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await _remove_companion(engine, player_id)
+
+    assert session.companion_joined is False
+    assert not [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+
+
+async def test_add_companion_is_exempt_from_turn_order():
+    # Same shape as test_start_combat_is_exempt_from_turn_order: any joined
+    # player may send this regardless of whose turn it is.
+    engine, session, _ = make_engine(StubDM())
+    p1, p2 = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, p1)
+    await join(engine, p2)
+    assert session.current_turn == p1
+
+    await _add_companion(engine, p2)
+
+    assert session.companion_joined is True
 
 
 async def test_advance_turn_cycles_through_initiative_order():

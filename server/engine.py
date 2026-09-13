@@ -709,6 +709,42 @@ class GameEngine:
             await self._broadcast(self._turn_prompt_envelope())
         await self._save()
 
+    async def _on_add_companion(self, envelope: Envelope) -> None:
+        """Tinder joins the party (docs/protocol.md "Companion NPC") - any
+        joined player may trigger this, same symmetric no-host-role shape as
+        start_combat/tavern_rest. Idempotent: a second add_companion while
+        already joined is a no-op. The sheet is created once and never
+        deleted (see Session.companion_joined's own comment) - a later
+        remove/add cycle reuses the same CharacterSheet instance, including
+        whatever player_id-visible history it's picked up, rather than
+        resetting Tinder to a blank slate each time."""
+        if self._session.companion_joined:
+            return
+        companion = self._session.npcs.get(COMPANION_KEY)
+        if companion is None:
+            companion = build_companion_sheet()
+            self._session.npcs[COMPANION_KEY] = companion
+        self._session.companion_joined = True
+        await self._broadcast(self._npc_update_envelope(companion.name, companion, joined=True))
+        await self._broadcast(self._system_envelope(f"{companion.name} joins the party.", level="info"))
+        await self._save()
+
+    async def _on_remove_companion(self, envelope: Envelope) -> None:
+        """Tinder leaves the party. Idempotent: a no-op if not currently
+        joined. The sheet stays in session.npcs (not deleted - this
+        codebase has no NPC-deletion mechanism); companion_joined is the
+        real membership flag other logic (initiative, the DM prompt block)
+        checks, not presence in npcs."""
+        if not self._session.companion_joined:
+            return
+        companion = self._session.npcs[COMPANION_KEY]
+        self._session.companion_joined = False
+        await self._broadcast(self._npc_update_envelope(companion.name, companion, joined=False))
+        await self._broadcast(
+            self._system_envelope(f"{companion.name} steps back and leaves the party for now.", level="info")
+        )
+        await self._save()
+
     async def _on_end_adventure(self, envelope: Envelope) -> None:
         """Any joined player may wrap up the current adventure and take the
         party back to the tavern lobby - the counterpart to start_session.
