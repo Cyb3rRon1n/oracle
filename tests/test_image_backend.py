@@ -5,7 +5,13 @@ import json
 
 import pytest
 
-from server.image_backend import ComfyUIBackend, ComfyUIOptions, OpenAIImageBackend, create_image_backend
+from server.image_backend import (
+    ComfyUIBackend,
+    ComfyUIOptions,
+    OpenAIImageBackend,
+    PollinationsImageBackend,
+    create_image_backend,
+)
 
 
 class FakeHttpResponse:
@@ -40,6 +46,8 @@ class FakeHttpxClient:
             return FakeHttpResponse(
                 json_data={"abc123": {"outputs": {"9": {"images": [{"filename": "x.png", "subfolder": "", "type": "output"}]}}}}
             )
+        if path.startswith("/prompt/"):
+            return FakeHttpResponse(content=b"pollinations-bytes")
         assert path == "/view"
         return FakeHttpResponse(content=b"real-png-bytes")
 
@@ -232,6 +240,62 @@ async def test_openai_backend_decodes_the_returned_image_and_never_calls_progres
 
     assert result == b"openai-bytes"
     assert calls == []
+
+
+async def test_pollinations_backend_returns_the_image_and_never_calls_progress():
+    backend = PollinationsImageBackend()
+    backend._client = FakeHttpxClient()
+    calls = []
+
+    async def on_progress(step, total):
+        calls.append((step, total))
+
+    result = await backend.generate_portrait("a fighter", on_progress=on_progress)
+
+    assert result == b"pollinations-bytes"
+    assert calls == []
+
+
+async def test_pollinations_backend_sends_no_api_key():
+    # Deliberate: the legacy endpoint needs none, and never sending one
+    # keeps this off the metered, Pollen-billed API entirely.
+    backend = PollinationsImageBackend()
+    fake_http = FakeHttpxClient()
+    backend._client = fake_http
+
+    await backend.generate_portrait("a fighter")
+
+    assert fake_http.gets[0][1].get("key") is None
+    assert "Authorization" not in getattr(fake_http, "headers", {})
+
+
+async def test_pollinations_backend_url_encodes_the_prompt_and_sets_params():
+    backend = PollinationsImageBackend(model="flux", width=512, height=768)
+    fake_http = FakeHttpxClient()
+    backend._client = fake_http
+
+    await backend.generate_portrait("a fighter & a friend")
+
+    path, params = fake_http.gets[0]
+    assert path == "/prompt/a%20fighter%20%26%20a%20friend"
+    assert params["model"] == "flux"
+    assert params["width"] == 512
+    assert params["height"] == 768
+
+
+def test_create_image_backend_pollinations_defaults_to_flux(monkeypatch):
+    monkeypatch.setenv("IMAGE_BACKEND", "pollinations")
+    monkeypatch.delenv("IMAGE_MODEL", raising=False)
+    backend = create_image_backend()
+    assert isinstance(backend, PollinationsImageBackend)
+    assert backend.model == "flux"
+
+
+def test_create_image_backend_pollinations_needs_no_api_key(monkeypatch):
+    monkeypatch.setenv("IMAGE_BACKEND", "pollinations")
+    monkeypatch.delenv("IMAGE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert isinstance(create_image_backend(), PollinationsImageBackend)
 
 
 def test_create_image_backend_is_none_when_unset(monkeypatch):

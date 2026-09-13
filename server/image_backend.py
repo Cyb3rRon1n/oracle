@@ -16,6 +16,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import quote
 
 import httpx
 import websockets
@@ -306,6 +307,40 @@ class OpenAIImageBackend:
         return base64.b64decode(response.json()["data"][0]["b64_json"])
 
 
+class PollinationsImageBackend:
+    """Pollinations.ai's legacy anonymous endpoint
+    (image.pollinations.ai/prompt/...) - deliberately not the newer metered
+    gen.pollinations.ai API, which spends Pollen credits through a real
+    pk_/sk_ key and has per-model pricing. This project's own dev
+    environment has no GPU (rules out ComfyUIBackend) and no paid key
+    (rules out OpenAIImageBackend); Pollinations' own docs state this
+    specific endpoint needs no signup or API key at all and Flux generation
+    on it is unconditionally free - so no key is sent here, sidestepping
+    the metered API (and its billing/rate-limit settings) entirely rather
+    than trusting an account-level "unlimited" toggle to stay free. A
+    zero-cost way to confirm the image-generation code path still works,
+    not a production backend. No progress reporting, same as
+    OpenAIImageBackend - one request/response, no per-step data."""
+
+    def __init__(self, model: str = "flux", width: int = _WIDTH, height: int = _HEIGHT, timeout: float = 60.0):
+        self.model = model
+        self.width = width
+        self.height = height
+        self._client = httpx.AsyncClient(base_url="https://image.pollinations.ai", timeout=timeout)
+
+    async def generate_portrait(self, description: str, on_progress: ProgressCallback | None = None) -> bytes:
+        # A random seed per call, not a fixed one - Pollinations treats
+        # identical prompt+params URLs as cacheable, which would otherwise
+        # return the same image for every character.
+        seed = uuid.uuid4().int & 0xFFFFFFFF
+        response = await self._client.get(
+            f"/prompt/{quote(description, safe='')}",
+            params={"model": self.model, "width": self.width, "height": self.height, "seed": seed, "nologo": "true"},
+        )
+        response.raise_for_status()
+        return response.content
+
+
 def create_image_backend() -> ImageBackend | None:
     """None (portrait generation disabled) unless IMAGE_BACKEND is set -
     unlike create_narrator's DM backend, which is always required, this
@@ -328,4 +363,6 @@ def create_image_backend() -> ImageBackend | None:
         if not api_key:
             raise ValueError("IMAGE_BACKEND=openai requires IMAGE_API_KEY (or OPENAI_API_KEY)")
         return OpenAIImageBackend(api_key=api_key, model=os.environ.get("IMAGE_MODEL", "gpt-image-1"))
-    raise ValueError(f"Unknown IMAGE_BACKEND {backend!r}. Valid backends: 'comfyui', 'openai'.")
+    if backend == "pollinations":
+        return PollinationsImageBackend(model=os.environ.get("IMAGE_MODEL", "flux"))
+    raise ValueError(f"Unknown IMAGE_BACKEND {backend!r}. Valid backends: 'comfyui', 'openai', 'pollinations'.")
