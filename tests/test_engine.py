@@ -7,6 +7,8 @@ import pytest
 
 from server.engine import (
     GameEngine,
+    STARTING_HP,
+    build_companion_sheet,
     build_starting_character,
     _apply_ability_score_improvements,
     _asi_announcement,
@@ -306,6 +308,18 @@ def test_build_starting_character_gives_a_non_caster_no_spells():
     assert sheet.known_spells == []
     assert sheet.spell_slots == {}
     assert sheet.max_spell_slots == {}
+
+
+def test_build_companion_sheet_returns_tinders_preset():
+    companion = build_companion_sheet()
+
+    assert companion.name == "Tinder"
+    assert companion.is_companion is True
+    assert companion.hp == companion.max_hp == STARTING_HP
+    assert companion.personality
+    assert companion.ideals
+    assert companion.bonds
+    assert companion.flaws
 
 
 def test_expanded_monster_entries_resolve_to_real_xp_and_ac():

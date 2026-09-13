@@ -14,10 +14,13 @@ from . import dice
 from .character_build import (
     CLASS_SAVING_THROW_PROFICIENCIES,
     CLASS_SKILL_PROFICIENCIES,
+    COMPANION_KEY,  # noqa: F401 - re-exported for tests
+    STARTING_HP,  # noqa: F401 - re-exported for tests
     _apply_ability_score_improvements,
     _asi_announcement,
     _character_from_import,
     _hit_die_max,
+    build_companion_sheet,  # noqa: F401 - re-exported for tests
     build_starting_character,
 )
 from .lore import (

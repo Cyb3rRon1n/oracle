@@ -16,6 +16,12 @@ from .state import ABILITY_KEYS, CharacterSheet, InventoryItem, ability_modifier
 # HP always has (damage, healing, level-up growth via _grant_levels).
 STARTING_HP = 100
 
+# The party's optional comic-relief companion (docs/protocol.md "Companion
+# NPC"). Dict key for Session.npcs - casefolded like every other NPC key
+# (build_starting_character's own npc_key convention in server/engine.py),
+# not the display-cased name.
+COMPANION_KEY = "tinder"
+
 # Per-class starting kit. A fixed subset, not a full 5e chargen (no
 # player-chosen equipment/stats yet).
 CLASS_STARTING_EQUIPMENT: dict[str, list[str]] = {
@@ -288,6 +294,37 @@ def build_starting_character(
         max_spell_slots=dict(spell_slots),
         background=background,
         **rp_fields,
+    )
+
+
+def build_companion_sheet() -> CharacterSheet:
+    """Tinder's fixed preset sheet - one companion, not a roster (see the
+    design spec). No HP/combat participation is enforced at the engine
+    layer (never rolled into initiative, never damaged), not by this sheet
+    alone; hp/max_hp are set to the same flat STARTING_HP every player gets
+    purely so shared view code (_public_character_view etc.) never needs a
+    companion-specific branch for a field every CharacterSheet already has.
+
+    Personality is motivated by Aetherfall's own central mechanic, not
+    bolted on: crossing the Veil costs everyone something real, chosen by
+    the Veil, never by the person. Tinder's toll was their sense of fear/
+    self-preservation - the in-fiction reason they're funny and, rarely,
+    genuinely reckless (see docs/protocol.md "Companion NPC" and the design
+    spec's "Identity" section)."""
+    return CharacterSheet(
+        player_id=COMPANION_KEY,
+        name="Tinder",
+        hp=STARTING_HP,
+        max_hp=STARTING_HP,
+        is_companion=True,
+        personality=(
+            "Grins in the face of things that should terrify anyone else - not bravado, "
+            "just genuinely can't remember what being scared felt like. Fills silence with "
+            "jokes, mostly to avoid noticing how much quieter everything got."
+        ),
+        ideals="\"Nobody else has to lose what I lost - not on my watch.\" (Freedom)",
+        bonds="Owes the Veil nothing and everyone at this table everything, whether they asked for the debt or not.",
+        flaws="Leaps first, thinks never - or at least not until it's too late to matter.",
     )
 
 
