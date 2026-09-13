@@ -7,6 +7,7 @@ from scripts.live_world_reliability_check import (
     aggregate_stats,
     run_scenario,
     run_stats,
+    summary_cadence_stats,
     write_json,
     write_json_repeat,
 )
@@ -105,6 +106,35 @@ async def test_write_json_round_trips_a_single_run(tmp_path):
     report = json.loads(out_path.read_text())
     assert report["model"] == "test-model"
     assert len(report["turns"]) == len(SCENARIO)
+
+
+async def test_summary_cadence_tracks_updates_and_gaps():
+    behaviors = _all_correct_behaviors()
+    # Set world.summary on turn 1, leave it stale through turns 2-4, refresh
+    # it again on the last turn - the longest gap should span turns 1 -> 5.
+    behaviors[0]["world_update"]["summary"] = "Arrived in Millbrook."
+    behaviors[4]["world_update"]["summary"] = "Goat rescued, quest complete."
+    narrator = ScriptedWorldNarrator(behaviors)
+
+    results = await run_scenario(narrator)
+    cadence = summary_cadence_stats(results)
+
+    assert cadence["ever_set"] is True
+    assert cadence["update_turns"] == [1, 5]
+    assert cadence["longest_gap"] == 4  # turn 1 -> turn 5
+    assert cadence["final_summary"] == "Goat rescued, quest complete."
+
+
+async def test_summary_cadence_when_never_set():
+    behaviors = [{"world_update": None, "text_chunks": ["Nothing."]} for _ in SCENARIO]
+    narrator = ScriptedWorldNarrator(behaviors)
+
+    results = await run_scenario(narrator)
+    cadence = summary_cadence_stats(results)
+
+    assert cadence["ever_set"] is False
+    assert cadence["update_turns"] == []
+    assert cadence["longest_gap"] == len(SCENARIO)
 
 
 async def test_write_json_repeat_round_trips_an_aggregate(tmp_path):

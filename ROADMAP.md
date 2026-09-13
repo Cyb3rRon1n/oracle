@@ -39,10 +39,16 @@ tool-call reliability harness. Full list: CHANGELOG.md.
   percentages honest. The `num_ctx` pin has now been measured (74% pooled,
   qwen2.5:7b combat `--repeat 5`, up from ~66% — see CHANGELOG); a real,
   reproducible gain, though not the outsized move this note used to speculate.
-- **Long-session memory frequency.** The tool-call side is solved
-  (`update_world` measured 100% on `qwen3:8b`); the open question is whether
-  the DM actually updates `summary` often enough across 20+ turn sessions, and
-  whether `OLLAMA_WORLD_UPDATES` can default on.
+- **Long-session memory frequency — measured for qwen2.5:7b, not yet for
+  qwen3:8b.** `update_world` recall of 100% only holds on `qwen3:8b`'s short
+  5-turn scenario; a new 22-turn `--long` mode on
+  `scripts/live_world_reliability_check.py` found qwen2.5:7b calls
+  `update_world` just 1/22 turns over a longer, less tightly-scripted
+  session, and never sets `world.summary` at all (see CHANGELOG). So:
+  `OLLAMA_WORLD_UPDATES` stays opt-in, not defaulted on, for qwen2.5:7b.
+  Still open: run the same `--long` scenario against `qwen3:8b` to see
+  whether the drop-off is qwen2.5-specific or a general long-session
+  phenomenon before reconsidering the default for any model.
 
 ### Features — later, lower priority
 
