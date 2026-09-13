@@ -22,6 +22,7 @@ export const EventType = {
   REQUEST_QUESTS: "request_quests",
   VOTE_QUEST: "vote_quest",
   GENERATE_PORTRAIT: "generate_portrait",
+  GENERATE_SCENE: "generate_scene",
 
   // protocol v2 (docs/protocol.md "Protocol v2 additions")
   CONTEXT_MANIFEST_REQUEST: "context_manifest_request",
@@ -47,6 +48,7 @@ export const EventType = {
   PRESENCE: "presence",
   QUEST_BOARD: "quest_board",
   PORTRAIT_PROGRESS: "portrait_progress",
+  SCENE_PROGRESS: "scene_progress",
 };
 
 export function makeEnvelope(type, sessionId, senderId, payload = {}) {

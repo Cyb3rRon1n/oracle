@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from server.portrait import build_portrait_prompt
-from server.state import CharacterSheet
+from server.portrait import build_portrait_prompt, build_scene_prompt
+from server.state import CharacterSheet, WorldState
 
 
 def _character(**overrides) -> CharacterSheet:
@@ -59,4 +59,35 @@ def test_build_portrait_prompt_falls_back_gracefully_for_blank_race_and_class():
 def test_build_portrait_prompt_always_has_style_suffix():
     character = _character(race="human", character_class="")
     prompt = build_portrait_prompt(character)
+    assert "digital painting" in prompt
+
+
+def test_build_scene_prompt_includes_location_and_mood():
+    world = WorldState(location="The Rusty Anchor tavern", mood="rowdy and crowded")
+    prompt = build_scene_prompt(world)
+    assert "The Rusty Anchor tavern" in prompt
+    assert "rowdy and crowded" in prompt
+
+
+def test_build_scene_prompt_falls_back_gracefully_for_unknown_location():
+    world = WorldState()
+    prompt = build_scene_prompt(world)
+    assert "a fantasy adventure setting" in prompt
+
+
+def test_build_scene_prompt_omits_mood_when_blank():
+    world = WorldState(location="a quiet library")
+    prompt = build_scene_prompt(world)
+    assert "a quiet library" in prompt
+
+
+def test_build_scene_prompt_uses_the_requested_style():
+    world = WorldState(location="a dark cave")
+    prompt = build_scene_prompt(world, style="comic")
+    assert "halftone shading" in prompt
+
+
+def test_build_scene_prompt_defaults_to_fantasy_style():
+    world = WorldState(location="a dark cave")
+    prompt = build_scene_prompt(world)
     assert "digital painting" in prompt

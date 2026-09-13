@@ -4,6 +4,7 @@ import CharacterSheetFull from "./CharacterSheetFull.jsx";
 import ExportButtons from "./ExportButtons.jsx";
 import MapPanel from "./MapPanel.jsx";
 import ScenePanel from "./ScenePanel.jsx";
+import SceneBanner from "./SceneBanner.jsx";
 import { LangFlags, useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
 
@@ -123,6 +124,7 @@ export default function GameScreen() {
       )}
 
       <main className="panel flex-1 min-h-[40vh] overflow-y-auto p-4 space-y-3">
+        <SceneBanner />
         {state.log.map((entry) => (
           <LogLine key={entry.id} entry={entry} />
         ))}

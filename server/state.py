@@ -540,6 +540,13 @@ class WorldState(BaseModel):
     location: str = "unknown"
     summary: str = ""
     mood: str = ""
+    # A generated establishing-shot banner for the current location, same
+    # data-URL shape as CharacterSheet.portrait - player-triggered only
+    # (generate_scene), never automatic, same "always asks first" cost/
+    # latency stance portrait generation already established. Cleared
+    # whenever `location` changes below, so a stale mismatched banner never
+    # lingers - regenerating is a fresh manual click, not automatic.
+    scene_image: str = ""
     flags: dict[str, bool] = Field(default_factory=dict)
     objectives: list[Objective] = Field(default_factory=list)
     # A real graph, not a 2D grid - ROADMAP.md item 8 scoped this as the
@@ -595,6 +602,10 @@ class WorldState(BaseModel):
         location = update.get("location")
         if location and location != self.location:
             self.location = location
+            # A generated banner is tied to the location it depicted -
+            # clearing rather than leaving a stale mismatched image up;
+            # regenerating for the new location is a fresh manual click.
+            self.scene_image = ""
             changes.append(f"location now '{location}'")
 
         summary = update.get("summary")

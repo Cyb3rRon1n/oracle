@@ -6,7 +6,7 @@ genuinely new content, not a duplicate of something already in the codebase."""
 
 from __future__ import annotations
 
-from .state import CharacterSheet
+from .state import CharacterSheet, WorldState
 
 _CLASS_VISUALS: dict[str, str] = {
     "fighter": "in battle-worn plate or chainmail, a sword at their hip, a soldier's bearing",
@@ -66,3 +66,22 @@ def build_portrait_prompt(character: CharacterSheet, style: str = DEFAULT_STYLE)
     if tags:
         return f"{base} — {tags}, {style_suffix}"
     return f"{base} — {style_suffix}"
+
+
+# Environment-art wording for the same 4 style keys build_portrait_prompt's
+# STYLE_PRESETS uses - "fantasy character portrait" wouldn't fit a wide
+# establishing shot of a tavern, so this is a sibling table, not a reuse.
+# Keep in sync with STYLE_OPTIONS in web/src/components/SceneBanner.jsx.
+SCENE_STYLE_PRESETS: dict[str, str] = {
+    "fantasy": "fantasy environment concept art, dramatic lighting, highly detailed digital painting",
+    "anime": "anime background art, cel-shaded, vibrant colors, clean line art",
+    "comic": "comic book splash page background, bold ink lines, halftone shading",
+    "realistic": "photorealistic establishing shot, natural lighting, high detail",
+}
+
+
+def build_scene_prompt(world: WorldState, style: str = DEFAULT_STYLE) -> str:
+    location = world.location if world.location and world.location != "unknown" else "a fantasy adventure setting"
+    detail = f"{location} — {world.mood}" if world.mood else location
+    style_suffix = SCENE_STYLE_PRESETS.get(style, SCENE_STYLE_PRESETS[DEFAULT_STYLE])
+    return f"A wide establishing shot of {detail}, {style_suffix}"

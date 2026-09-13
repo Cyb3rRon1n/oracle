@@ -6437,6 +6437,109 @@ async def test_generate_portrait_before_joining_warns_and_does_not_crash():
     assert not backend.prompts
 
 
+async def test_generate_scene_sets_data_url_and_broadcasts_world_update():
+    backend = FakeImageBackend(image_bytes=b"hello")
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.world.location = "The Rusty Anchor tavern"
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="generate_scene", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    assert session.world.scene_image == "data:image/png;base64,aGVsbG8="  # base64("hello")
+    assert backend.prompts and "Rusty Anchor" in backend.prompts[0]
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "world_update"]
+    assert updates and updates[-1][2]["scene_image"] == session.world.scene_image
+
+
+async def test_generate_scene_passes_the_requested_style_into_the_prompt():
+    backend = FakeImageBackend()
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await engine.handle(Envelope(
+        type="generate_scene", session_id="test-session", sender_id=player_id, payload={"style": "comic"},
+    ))
+
+    assert "comic" in backend.prompts[0]
+
+
+async def test_generate_scene_relays_progress_ticks_privately():
+    backend = FakeImageBackend(progress_ticks=[(4, 20), (20, 20)])
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="generate_scene", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    progress = [r for r in received if r[0] == "send_to" and r[2] == "scene_progress"]
+    assert [r[3] for r in progress] == [{"step": 4, "total": 20}, {"step": 20, "total": 20}]
+    assert all(r[1] == player_id for r in progress)
+    assert not any(r[0] == "broadcast" and r[1] == "scene_progress" for r in received)
+
+
+async def test_generate_scene_without_a_configured_backend_warns():
+    engine, session, received = make_engine(StubDM())  # no image_backend
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="generate_scene", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    assert session.world.scene_image == ""
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_generate_scene_backend_failure_warns_and_does_not_crash():
+    backend = FakeImageBackend(error=RuntimeError("comfyui unreachable"))
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    received.clear()
+
+    await engine.handle(Envelope(
+        type="generate_scene", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    assert session.world.scene_image == ""
+    warnings = [r for r in received if r[0] == "send_to" and r[3].get("level") == "warning"]
+    assert warnings
+    assert not any(r[0] == "broadcast" for r in received)
+
+
+async def test_generate_scene_does_not_require_the_sender_to_have_a_character():
+    # World-level art, not tied to one character - any joined player (or
+    # even a bare connection) can trigger it, unlike generate_portrait.
+    backend = FakeImageBackend(image_bytes=b"hello")
+    engine, session, received = make_engine(StubDM(), image_backend=backend)
+    player_id = str(uuid.uuid4())
+
+    await engine.handle(Envelope(
+        type="generate_scene", session_id="test-session", sender_id=player_id, payload={},
+    ))
+
+    assert session.world.scene_image == "data:image/png;base64,aGVsbG8="
+
+
+async def test_world_apply_update_location_change_clears_the_stale_scene_image():
+    engine, session, _ = make_engine(StubDM())
+    session.world.scene_image = "data:image/png;base64,c3RhbGU="
+    session.world.apply_update({"location": "a new place"})
+
+    assert session.world.scene_image == ""
+
+
 async def _death_save(engine, player_id):
     await engine.handle(Envelope(type="death_save", session_id="test-session", sender_id=player_id, payload={}))
 

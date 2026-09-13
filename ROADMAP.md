@@ -53,12 +53,15 @@ tool-call reliability harness. Full list: CHANGELOG.md.
   already generating a ComfyUI stack). See CHANGELOG.md and `docs/protocol.md`'s
   "Portrait generation" section. A hosted alternative for GPU-less users is also shipped
   (`IMAGE_BACKEND=openai`, `OpenAIImageBackend`) — an explicit selector alongside
-  `ComfyUIBackend`, same pattern as `DM_BACKEND`. **Still open**: scene generation off
-  narration beats (prompt-building off `WorldState.mood` + a protocol envelope — the
-  portrait half's `ImageBackend`/prompt-building pattern extends to this directly, not a
-  redesign), and real GPU verification of the ComfyUI workflow (LoRA/hi-res-fix/
-  face-detail) — this project currently has no GPU hardware to run one against; only
-  unit-tested against a fake client/websocket so far.
+  `ComfyUIBackend`, same pattern as `DM_BACKEND`. Scene banner generation (a static,
+  manually-triggered establishing-shot image for the party's current location) is also
+  shipped — reuses `ImageBackend`/`generate_portrait` directly with a scene prompt, see
+  `docs/protocol.md`'s "Scene banner generation" section. **Still open**: real GPU
+  verification of the ComfyUI workflow (LoRA/hi-res-fix/face-detail) — this project
+  currently has no GPU hardware to run one against; only unit-tested against a fake
+  client/websocket so far. Also open: automatic scene regeneration off narration beats
+  (deliberately rejected for the manual-only v1, see the scene-banner section) and a
+  per-location image cache/gallery.
 - **BG3-style tabletop feel, in progress.** Four-piece backlog: (1) dialogue
   choices with visible stakes — shipped (suggested-actions skill/DC badges).
   (2) Real action economy (action/bonus action/reaction/movement, tracked

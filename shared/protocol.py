@@ -25,6 +25,7 @@ EventType = Literal[
     "request_quests",
     "vote_quest",
     "generate_portrait",
+    "generate_scene",
 
     "state_sync",
     "log_entry",
@@ -43,6 +44,7 @@ EventType = Literal[
     "presence",
     "quest_board",
     "portrait_progress",
+    "scene_progress",
 
     # Protocol v2 (docs/protocol.md "Protocol v2 additions")
     "context_manifest_request",

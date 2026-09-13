@@ -9,8 +9,11 @@ import { useState } from "react";
 
 // Prompt-text-only style tags (server/portrait.py's STYLE_PRESETS) - kept
 // in sync by hand, small and fixed enough that a server-announces-styles
-// mechanism would be overkill for four entries.
-const STYLE_OPTIONS = [
+// mechanism would be overkill for four entries. Exported: SceneBanner.jsx
+// reuses the same four keys/labels for generate_scene's style picker
+// (server/portrait.py's SCENE_STYLE_PRESETS has the same keys, just
+// different wording per key for environment art instead of a portrait).
+export const STYLE_OPTIONS = [
   ["fantasy", "Fantasy painting"],
   ["anime", "Anime"],
   ["comic", "Comic book"],
