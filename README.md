@@ -159,8 +159,8 @@ Real captures of the live app with two real players sharing a session — join s
   <sub>Two players, one party — same session id, one browser tab each</sub>
 </p>
 <p align="center">
-  <img src="docs/images/screenshots/combat.png" alt="Oracle live combat with real DM narration, a tracked NPC in the Combatants roster with an HP bar and range badge, and the action-economy pips (Action, Bonus action, Reaction) alongside a scene-banner control" style="max-width: 100%; width: 900px;"><br>
-  <sub>Formal initiative in progress — the Combatants roster (NPC HP + abstract melee/near/far range band), per-turn action economy pips, and the scene-banner generator, all driven by a real Ollama turn</sub>
+  <img src="docs/images/screenshots/combat.png" alt="Oracle live combat with real DM narration, a per-turn Turn order strip, a Party panel showing every player's HP at a glance, and the action-economy pips (Action, Bonus action, Reaction)" style="max-width: 100%; width: 900px;"><br>
+  <sub>Formal initiative in progress — the Turn order tracker and Party HP panel (both new), per-turn action economy pips, all driven by a real Ollama turn. The Combatants roster (NPC HP + range band) renders the same way once the DM tracks a monster — not pictured here, since this run's DM never introduced one</sub>
 </p>
 
 ## The tool-call reliability investigation

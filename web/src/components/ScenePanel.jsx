@@ -5,6 +5,7 @@
 import { useLang } from "../i18n.jsx";
 import { useStore } from "../state/store.jsx";
 import { skillLabel } from "../lib/dnd5e.js";
+import Avatar from "./Avatar.jsx";
 
 const RANGE_LABELS = { melee: "Melee", near: "Near", far: "Far" };
 
@@ -19,10 +20,70 @@ export default function ScenePanel({ onSuggest }) {
   // own DM-facing NPC roster (_npc_roster) already uses.
   const npcs = Object.entries(state.npcs || {}).filter(([, npc]) => npc.hp > 0);
   const showCombatants = state.inCombat && npcs.length > 0;
-  if (!scene && clocks.length === 0 && !(state.world.objectives || []).length && !showCombatants) return null;
+  const players = Object.values(state.players || {});
+  const showTurnOrder = state.inCombat && state.turnOrder.length > 0;
+  if (!scene && clocks.length === 0 && !(state.world.objectives || []).length && !showCombatants && players.length === 0)
+    return null;
 
   return (
     <aside className="panel p-4 space-y-3 text-sm max-h-[60vh] overflow-y-auto">
+      {showTurnOrder && (
+        <Section title={t("Turn order")}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {state.turnOrder.map((pid, i) => {
+              const p = state.players[pid];
+              const active = pid === state.currentTurn;
+              return (
+                <span key={pid} className="flex items-center gap-1.5">
+                  {i > 0 && <span className="text-dungeon-ink/30">→</span>}
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-xs border ${
+                      active
+                        ? "border-dungeon-gold text-dungeon-gold bg-dungeon-gold/10"
+                        : "border-dungeon-edge text-dungeon-ink/60"
+                    }`}
+                  >
+                    {p?.name || pid}
+                    {pid === state.me && ` (${t("you")})`}
+                  </span>
+                </span>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      {players.length > 0 && (
+        <Section title={t("Party")}>
+          <div className="space-y-1.5">
+            {players.map((p) => (
+              <div key={p.player_id} className="flex items-center gap-2">
+                <Avatar sheet={p} compact />
+                <span className="flex-1 min-w-0 truncate">
+                  {p.name}
+                  {p.player_id === state.me && <span className="text-dungeon-ink/40"> ({t("you")})</span>}
+                </span>
+                {p.dead ? (
+                  <span className="text-[10px] text-dungeon-blood uppercase tracking-wide">{t("Slain")}</span>
+                ) : p.dying ? (
+                  <span className="text-[10px] text-dungeon-blood uppercase tracking-wide">{t("Dying")}</span>
+                ) : (
+                  <>
+                    {p.conditions?.length > 0 && (
+                      <span className="text-[9px] text-dungeon-ink/50">{p.conditions.join(", ")}</span>
+                    )}
+                    <HpBar hp={p.hp} max={p.max_hp} className="w-14" />
+                    <span className="text-[10px] text-dungeon-ink/50 w-14 text-right shrink-0">
+                      {p.hp}/{p.max_hp} {t("HP")}
+                    </span>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
       {(state.world.objectives || []).some((o) => o.status === "active") && (
         <Section title={t("Objectives")}>
           <ul className="list-disc pl-5 space-y-0.5">
@@ -49,28 +110,40 @@ export default function ScenePanel({ onSuggest }) {
 
       {showCombatants && (
         <Section title={t("Combatants")}>
-          <ul className="space-y-1.5">
+          <div className="grid grid-cols-2 gap-2">
             {npcs.map(([name, npc]) => (
-              <li key={name} className="flex items-center gap-2">
-                <span className="flex-1 truncate">{name}</span>
-                {npc.disposition && npc.disposition !== "neutral" && (
-                  <span className="text-[10px] text-dungeon-ink/50">{npc.disposition}</span>
-                )}
-                <NpcHpBar hp={npc.hp} max={npc.max_hp} />
-                <span className="shrink-0 text-[9px] uppercase tracking-wide text-dungeon-gold/70 border border-dungeon-gold/40 rounded px-1 py-0.5">
-                  {RANGE_LABELS[npc.range_band] || npc.range_band}
-                </span>
-                {npc.range_band === "melee" && (
-                  <button
-                    onClick={() => actions.editCharacter("shove", name)}
-                    className="text-[10px] px-1.5 py-0.5 rounded border border-dungeon-edge text-dungeon-ink/60 hover:text-dungeon-ink hover:border-dungeon-gold transition"
-                  >
-                    {t("shove")}
-                  </button>
-                )}
-              </li>
+              <div key={name} className="rounded border border-dungeon-edge p-2 space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Avatar sheet={{ name }} compact />
+                  <span className="flex-1 min-w-0 truncate">{name}</span>
+                  <span className="shrink-0 text-[9px] uppercase tracking-wide text-dungeon-gold/70 border border-dungeon-gold/40 rounded px-1 py-0.5">
+                    {RANGE_LABELS[npc.range_band] || npc.range_band}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <HpBar hp={npc.hp} max={npc.max_hp} className="flex-1" />
+                  <span className="text-[10px] text-dungeon-ink/50 shrink-0">
+                    {npc.hp}/{npc.max_hp}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2 min-h-[18px]">
+                  {npc.disposition && npc.disposition !== "neutral" ? (
+                    <span className="text-[10px] text-dungeon-ink/50">{npc.disposition}</span>
+                  ) : (
+                    <span />
+                  )}
+                  {npc.range_band === "melee" && (
+                    <button
+                      onClick={() => actions.editCharacter("shove", name)}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-dungeon-edge text-dungeon-ink/60 hover:text-dungeon-ink hover:border-dungeon-gold transition"
+                    >
+                      {t("shove")}
+                    </button>
+                  )}
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
         </Section>
       )}
 
@@ -134,11 +207,11 @@ export default function ScenePanel({ onSuggest }) {
   );
 }
 
-function NpcHpBar({ hp, max }) {
+function HpBar({ hp, max, className = "w-10" }) {
   const pct = max > 0 ? Math.max(0, Math.min(100, Math.round((hp / max) * 100))) : 0;
   const fill = pct > 50 ? "bg-emerald-600" : pct > 25 ? "bg-amber-500" : "bg-dungeon-blood";
   return (
-    <span className="w-10 h-1.5 bg-dungeon-bg rounded overflow-hidden border border-dungeon-edge shrink-0">
+    <span className={`${className} h-1.5 bg-dungeon-bg rounded overflow-hidden border border-dungeon-edge shrink-0`}>
       <span className={`block h-full ${fill}`} style={{ width: `${pct}%` }} />
     </span>
   );
