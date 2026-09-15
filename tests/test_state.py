@@ -890,3 +890,28 @@ def test_add_facts_caps_at_the_limit_dropping_oldest_first():
     assert len(session.fact_ledger) == 10
     assert session.fact_ledger[0] == "Fact number 2 about thing 2"
     assert session.fact_ledger[-1] == "Fact number 11 about thing 11"
+
+
+def test_character_sheet_is_companion_defaults_false():
+    sheet = CharacterSheet(player_id="p1", name="Thrain", hp=10, max_hp=10)
+    assert sheet.is_companion is False
+
+
+def test_companion_apply_update_ignores_hp_and_rest_changes():
+    # The single shared guard both engine.py NPC-update paths (a DM
+    # update_character call and a player's confirmed /apply proposal) route
+    # through - hp_delta/temp_hp/rest are the only keys apply_update uses to
+    # move hp, so a companion's hp must never move no matter which is sent.
+    sheet = CharacterSheet(player_id="tinder", name="Tinder", hp=100, max_hp=100, is_companion=True)
+
+    result = sheet.apply_update({"hp_delta": -999, "temp_hp": 5, "rest": "long"})
+
+    assert sheet.hp == 100
+    assert sheet.temp_hp == 0
+    assert "No changes applied" in result
+
+
+def test_session_companion_fields_default():
+    session = Session(session_id="s1")
+    assert session.companion_joined is False
+    assert session.turns_since_world_change == 0

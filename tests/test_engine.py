@@ -6,11 +6,15 @@ from unittest.mock import patch
 import pytest
 
 from server.engine import (
+    COMPANION_KEY,
     GameEngine,
+    STARTING_HP,
+    build_companion_sheet,
     build_starting_character,
     _apply_ability_score_improvements,
     _asi_announcement,
     _compute_ac,
+    _npc_view,
     _outcome_category,
     _owner_character_view,
     _public_character_view,
@@ -19,7 +23,8 @@ from server.engine import (
 )
 from server.lore import Guardian, Region, WhoWhatWhereWhenWhy, WorldBible
 from server.rules import RulesIndex
-from server.state import Objective, Session
+from server.state import CharacterSheet, Objective, Session
+from server.views import _companion_prompt_block, _npc_roster
 from shared.protocol import Envelope
 
 
@@ -306,6 +311,18 @@ def test_build_starting_character_gives_a_non_caster_no_spells():
     assert sheet.known_spells == []
     assert sheet.spell_slots == {}
     assert sheet.max_spell_slots == {}
+
+
+def test_build_companion_sheet_returns_tinders_preset():
+    companion = build_companion_sheet()
+
+    assert companion.name == "Tinder"
+    assert companion.is_companion is True
+    assert companion.hp == companion.max_hp == STARTING_HP
+    assert companion.personality
+    assert companion.ideals
+    assert companion.bonds
+    assert companion.flaws
 
 
 def test_expanded_monster_entries_resolve_to_real_xp_and_ac():
@@ -1211,6 +1228,30 @@ async def test_defeating_unmatched_npc_falls_back_to_default_xp():
     assert session.characters[player_id].xp == DEFAULT_NPC_XP
 
 
+async def test_update_character_cannot_damage_or_defeat_the_companion():
+    # Tinder is never damaged (docs/protocol.md, character_build.py's
+    # build_companion_sheet) - the DM's own update_character tool call is
+    # one of two paths that could otherwise reach an NPC's hp by casefolded
+    # name (server/engine.py's apply_update closure); this proves the
+    # CharacterSheet.apply_update guard actually stops it, hp and all.
+    dm = UpdateSequenceDM([{"target": "Tinder", "hp_delta": -999}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+    companion = session.npcs[COMPANION_KEY]
+    full_hp = companion.max_hp
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I dare Tinder to juggle knives"},
+    ))
+
+    assert companion.hp == full_hp
+    assert session.characters[player_id].xp == 0
+
+
 async def test_explicit_xp_override_takes_precedence_over_cr_lookup():
     # "goblin" would normally resolve to the SRD's 50 XP - an explicit xp
     # on the killing update should win anyway, the same override precedent
@@ -2091,6 +2132,47 @@ async def test_state_sync_includes_npcs_for_a_later_joining_player():
     ]
     assert syncs, "the second player should get a state_sync on join"
     assert syncs[-1][3]["npcs"]["goblin"]["hp"] == 3
+
+
+def test_npc_view_redacts_a_companion_like_a_public_character():
+    companion = build_companion_sheet()
+    companion.notes = "secret DM-only note"
+
+    view = _npc_view(companion)
+
+    assert view == {**_public_character_view(companion), "is_companion": True}
+    assert "notes" not in view
+    assert "personality" not in view
+
+
+def test_npc_view_returns_the_full_sheet_for_an_ordinary_npc():
+    npc = CharacterSheet(player_id="goblin", name="goblin", hp=7, max_hp=7, notes="a real note")
+
+    view = _npc_view(npc)
+
+    assert view == npc.model_dump()
+    assert view["notes"] == "a real note"
+
+
+async def test_state_sync_includes_companion_joined_for_a_later_joining_player():
+    # Matches this file's existing test_state_sync_includes_npcs_for_a_later_joining_player
+    # shape - a state_sync payload key needs to reach a client that wasn't
+    # connected when the underlying change happened, not just a live
+    # npc_update broadcast (which only reaches already-connected clients).
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.companion_joined = True  # set directly - _on_add_companion doesn't exist until Task 4
+
+    second_player_id = str(uuid.uuid4())
+    await join(engine, second_player_id, name="Rowan")
+
+    syncs = [
+        r for r in received
+        if r[0] == "send_to" and r[1] == second_player_id and r[2] == "state_sync"
+    ]
+    assert syncs, "the second player should get a state_sync on join"
+    assert syncs[-1][3]["companion_joined"] is True
 
 
 async def test_join_broadcasts_player_joined_with_public_view_only():
@@ -4977,6 +5059,135 @@ async def test_end_combat_is_idempotent():
     assert not any(r for r in received if r[0] == "broadcast" and r[1] == "system_message")
 
 
+async def _add_companion(engine, player_id):
+    await engine.handle(Envelope(type="add_companion", session_id="test-session", sender_id=player_id, payload={}))
+
+
+async def _remove_companion(engine, player_id):
+    await engine.handle(Envelope(type="remove_companion", session_id="test-session", sender_id=player_id, payload={}))
+
+
+async def test_add_companion_joins_tinder_and_broadcasts():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await _add_companion(engine, player_id)
+
+    assert session.companion_joined is True
+    assert COMPANION_KEY in session.npcs
+    assert session.npcs[COMPANION_KEY].name == "Tinder"
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert updates[-1][2]["joined"] is True
+    assert updates[-1][2]["name"] == "Tinder"
+
+
+async def test_add_companion_is_idempotent():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await _add_companion(engine, player_id)
+    before = len(received)
+    await _add_companion(engine, player_id)
+
+    assert len(received) == before  # no second broadcast
+
+
+async def test_remove_companion_leaves_and_broadcasts():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await _add_companion(engine, player_id)
+
+    await _remove_companion(engine, player_id)
+
+    assert session.companion_joined is False
+    updates = [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+    assert updates[-1][2]["joined"] is False
+
+
+async def test_remove_companion_is_idempotent_when_never_joined():
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+
+    await _remove_companion(engine, player_id)
+
+    assert session.companion_joined is False
+    assert not [r for r in received if r[0] == "broadcast" and r[1] == "npc_update"]
+
+
+async def test_add_companion_is_exempt_from_turn_order():
+    # Same shape as test_start_combat_is_exempt_from_turn_order: any joined
+    # player may send this regardless of whose turn it is.
+    engine, session, _ = make_engine(StubDM())
+    p1, p2 = str(uuid.uuid4()), str(uuid.uuid4())
+    await join(engine, p1)
+    await join(engine, p2)
+    assert session.current_turn == p1
+
+    await _add_companion(engine, p2)
+
+    assert session.companion_joined is True
+
+
+def test_companion_prompt_block_is_empty_when_not_joined():
+    session = Session(session_id="s1")
+    assert _companion_prompt_block(session) == ""
+
+
+def test_companion_prompt_block_includes_personality_when_joined():
+    session = Session(session_id="s1")
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+
+    block = _companion_prompt_block(session)
+
+    assert "Tinder" in block
+    assert "no HP" in block
+    assert build_companion_sheet().personality in block
+
+
+def test_companion_prompt_block_adds_a_pacing_nudge_when_the_world_is_stale():
+    session = Session(session_id="s1")
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+    session.turns_since_world_change = 6
+
+    block = _companion_prompt_block(session)
+
+    assert "6 turns" in block
+    assert "progress" in block
+
+
+def test_companion_prompt_block_has_no_pacing_nudge_when_the_world_is_fresh():
+    session = Session(session_id="s1")
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+    session.turns_since_world_change = 1
+
+    block = _companion_prompt_block(session)
+
+    assert "progress" not in block
+
+
+async def test_narrate_world_summary_includes_the_companion_block_when_joined():
+    dm = UpdateSequenceDM([{}])  # no-op update, just need a narrate() call
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await _add_companion(engine, player_id)
+    engine._dm = recorder = OpeningSceneDM()
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert "Tinder" in recorder.world_summaries[-1]
+
+
 async def test_advance_turn_cycles_through_initiative_order():
     engine, session, received = make_engine(StubDM())
     player1_id, player2_id = str(uuid.uuid4()), str(uuid.uuid4())
@@ -5536,6 +5747,37 @@ async def test_apply_proposed_change_applies_confirmed_self_proposal():
     char_updates = [r for r in received if r[0] == "send_to" and r[1] == player_id
                     and r[2] == "character_update"]
     assert char_updates
+
+
+async def test_apply_proposed_change_cannot_damage_or_defeat_the_companion():
+    # The second of the two casefolded-name-lookup paths (server/engine.py's
+    # _on_apply_proposed_change): a player-confirmed /apply proposal
+    # targeting "Tinder" must be just as much a no-op on hp/XP as a DM
+    # update_character call is - both route through the same
+    # CharacterSheet.apply_update guard.
+    dm = NarratesThenSelfCorrectsDM(
+        "Tinder takes a wild swing and somehow catches a blade.",
+        correction=None,
+        proposal={"target": "Tinder", "hp_delta": -999},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+    companion = session.npcs[COMPANION_KEY]
+    full_hp = companion.max_hp
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I let Tinder try the trap"},
+    ))
+    await engine.handle(Envelope(
+        type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
+    ))
+
+    assert companion.hp == full_hp
+    assert session.characters[player_id].xp == 0
 
 
 async def test_apply_proposed_change_with_nothing_pending_informs_player():
@@ -7006,3 +7248,61 @@ async def test_reconnect_recap_is_only_prepended_once():
     assert "Context:" not in dm.action_texts[1]
     assert dm.action_texts[1] == "I keep moving"
     assert session.pending_dm_recap == []
+
+
+async def test_start_combat_excludes_the_companion_from_the_announced_roll_too():
+    # Stricter than the existing ordinary-NPC exclusion test: Tinder isn't
+    # even named in the initiative announcement, unlike a real monster NPC
+    # (which is named but still excluded from turn_order - see
+    # test_start_combat_announces_npcs_but_excludes_them_from_turn_order).
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    await _add_companion(engine, player_id)
+
+    with patch("server.dice.random.randint", return_value=10):
+        await _start_combat(engine, player_id)
+
+    assert session.turn_order == [player_id]
+    announcements = [
+        r for r in received if r[0] == "broadcast" and r[1] == "system_message" and "Initiative" in r[2]["text"]
+    ]
+    assert "Tinder" not in announcements[0][2]["text"]
+
+
+def test_npc_roster_excludes_the_companion():
+    companion = build_companion_sheet()
+    session = Session(session_id="s1")
+    session.npcs[COMPANION_KEY] = companion
+
+    assert _npc_roster(session) == ""
+
+
+async def test_turns_since_world_change_resets_when_the_world_changes():
+    dm = UpdateWorldDM({"location": "Millbrook"})
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.turns_since_world_change = 3
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I arrive"},
+    ))
+
+    assert session.turns_since_world_change == 0
+
+
+async def test_turns_since_world_change_increments_when_nothing_changes():
+    dm = StubDM()  # never calls update_world
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    assert session.turns_since_world_change == 0
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I look around"},
+    ))
+
+    assert session.turns_since_world_change == 1

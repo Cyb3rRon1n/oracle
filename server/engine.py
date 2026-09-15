@@ -14,10 +14,13 @@ from . import dice
 from .character_build import (
     CLASS_SAVING_THROW_PROFICIENCIES,
     CLASS_SKILL_PROFICIENCIES,
+    COMPANION_KEY,  # noqa: F401 - re-exported for tests
+    STARTING_HP,  # noqa: F401 - re-exported for tests
     _apply_ability_score_improvements,
     _asi_announcement,
     _character_from_import,
     _hit_die_max,
+    build_companion_sheet,  # noqa: F401 - re-exported for tests
     build_starting_character,
 )
 from .lore import (
@@ -53,7 +56,9 @@ from .state import (
 )
 from .views import (
     _attack_lines,  # noqa: F401 - re-exported for tests
+    _companion_prompt_block,
     _npc_roster,
+    _npc_view,
     _outcome_category,
     _owner_character_view,
     _public_character_view,
@@ -664,6 +669,8 @@ class GameEngine:
             total, _, _ = dice.roll("1d20", extra_modifier=dex_mod)
             participants.append((character.name, total, dex_mod, player_id))
         for npc in self._session.npcs.values():
+            if npc.is_companion:
+                continue  # never rolled or announced - see docs/protocol.md "Companion NPC"
             dex_mod = npc.stat_modifiers.get("dex", 0)
             total, _, _ = dice.roll("1d20", extra_modifier=dex_mod)
             participants.append((npc.name, total, dex_mod, None))
@@ -703,6 +710,42 @@ class GameEngine:
         await self._broadcast(self._system_envelope("Combat ends.", level="info"))
         if self._session.current_turn is not None:
             await self._broadcast(self._turn_prompt_envelope())
+        await self._save()
+
+    async def _on_add_companion(self, envelope: Envelope) -> None:
+        """Tinder joins the party (docs/protocol.md "Companion NPC") - any
+        joined player may trigger this, same symmetric no-host-role shape as
+        start_combat/tavern_rest. Idempotent: a second add_companion while
+        already joined is a no-op. The sheet is created once and never
+        deleted (see Session.companion_joined's own comment) - a later
+        remove/add cycle reuses the same CharacterSheet instance, including
+        whatever player_id-visible history it's picked up, rather than
+        resetting Tinder to a blank slate each time."""
+        if self._session.companion_joined:
+            return
+        companion = self._session.npcs.get(COMPANION_KEY)
+        if companion is None:
+            companion = build_companion_sheet()
+            self._session.npcs[COMPANION_KEY] = companion
+        self._session.companion_joined = True
+        await self._broadcast(self._npc_update_envelope(companion.name, companion, joined=True))
+        await self._broadcast(self._system_envelope(f"{companion.name} joins the party.", level="info"))
+        await self._save()
+
+    async def _on_remove_companion(self, envelope: Envelope) -> None:
+        """Tinder leaves the party. Idempotent: a no-op if not currently
+        joined. The sheet stays in session.npcs (not deleted - this
+        codebase has no NPC-deletion mechanism); companion_joined is the
+        real membership flag other logic (initiative, the DM prompt block)
+        checks, not presence in npcs."""
+        if not self._session.companion_joined:
+            return
+        companion = self._session.npcs[COMPANION_KEY]
+        self._session.companion_joined = False
+        await self._broadcast(self._npc_update_envelope(companion.name, companion, joined=False))
+        await self._broadcast(
+            self._system_envelope(f"{companion.name} steps back and leaves the party for now.", level="info")
+        )
         await self._save()
 
     async def _on_end_adventure(self, envelope: Envelope) -> None:
@@ -1256,6 +1299,9 @@ class GameEngine:
         npc_roster = _npc_roster(self._session)
         if npc_roster:
             world_summary = f"{world_summary}\n{npc_roster}" if world_summary else npc_roster
+        companion_block = _companion_prompt_block(self._session)
+        if companion_block:
+            world_summary = f"{world_summary}\n\n{companion_block}" if world_summary else companion_block
         # Lorebook injection (docs/protocol.md "World context -> lorebook"):
         # keyword hits from the recent play window under a character budget.
         # Empty selection -> empty block.
@@ -1360,7 +1406,10 @@ class GameEngine:
             await self._broadcast(self._system_envelope(f"{character.name} is no longer dying.", level="info"))
 
         if world_changed:
+            self._session.turns_since_world_change = 0
             await self._broadcast(self._world_update_envelope())
+        else:
+            self._session.turns_since_world_change += 1
 
         if missed_change_corrected:
             # A real correction landed via check_missed_change - tell the player
@@ -2119,7 +2168,8 @@ class GameEngine:
                 # display, not the internal casefolded dict key - keeps a
                 # reconnecting client's status lines consistent with what
                 # npc_update broadcasts already show.
-                "npcs": {npc.name: npc.model_dump() for npc in self._session.npcs.values()},
+                "npcs": {npc.name: _npc_view(npc) for npc in self._session.npcs.values()},
+                "companion_joined": self._session.companion_joined,
                 "world_state": self._session.world.model_dump(),
                 "turn_order": self._session.turn_order,
                 "current_turn": self._session.current_turn,
@@ -2230,13 +2280,22 @@ class GameEngine:
             payload=self._public_view_with_lobby(character),
         )
 
-    def _npc_update_envelope(self, name: str, npc: CharacterSheet) -> Envelope:
+    def _npc_update_envelope(self, name: str, npc: CharacterSheet, *, joined: bool | None = None) -> Envelope:
         # Broadcast - an NPC's wounds/conditions are shared observable fiction.
+        # sheet_delta goes through _npc_view so the party companion gets the
+        # same redaction a real teammate would (see _npc_view's own comment);
+        # every other NPC is unaffected, same full dump as before. `joined`
+        # is None (omitted from the payload shape entirely, existing
+        # behavior) for every call except the companion add/remove path
+        # (Task 4), which sets it explicitly.
+        payload: dict = {"name": name, "sheet_delta": _npc_view(npc)}
+        if joined is not None:
+            payload["joined"] = joined
         return Envelope(
             type="npc_update",
             session_id=self._session.session_id,
             sender_id="server",
-            payload={"name": name, "sheet_delta": npc.model_dump()},
+            payload=payload,
         )
 
     def _world_update_envelope(self) -> Envelope:

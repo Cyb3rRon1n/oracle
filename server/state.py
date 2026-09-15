@@ -176,6 +176,13 @@ class CharacterSheet(BaseModel):
     # player character. "melee" default matches what Oracle already
     # implicitly assumes today (no distance concept at all).
     range_band: Literal["melee", "near", "far"] = "melee"
+    # The party's optional comic-relief companion (docs/protocol.md
+    # "Companion NPC") - same shared-model tradeoff as disposition/range_band:
+    # meaningful for the one NPC it's ever true on, unused on a player
+    # character or any other tracked NPC. Gates: exclusion from
+    # _on_start_combat's initiative roll, the _npc_view() visibility
+    # redaction, and the _npc_roster() DM status line.
+    is_companion: bool = False
     # Stored, not computed: spell_slots is spent/restored constantly and
     # max_spell_slots needs to persist "how many are spent" across a
     # save/reload independent of level. Empty for a non-caster.
@@ -277,6 +284,16 @@ class CharacterSheet(BaseModel):
         Returns a human-readable summary of what changed, for the tool_result
         the DM sees back."""
         changes: list[str] = []
+
+        # Tinder (is_companion) is never damaged and never defeated for XP
+        # (docs/protocol.md, server/character_build.py's build_companion_sheet)
+        # - hp_delta/temp_hp/rest are the only keys that can move hp, so
+        # dropping them here is the one guard point both a DM update_character
+        # call and a player's confirmed /apply proposal (server/engine.py,
+        # which both route NPC updates through this same method) go through,
+        # rather than duplicating an is_companion check in each caller.
+        if self.is_companion:
+            update = {k: v for k, v in update.items() if k not in ("hp_delta", "temp_hp", "rest")}
 
         # Temp HP - a separate buffer real 5e drains before real HP on
         # damage, and that healing never touches. Doesn't stack: a new
@@ -924,6 +941,17 @@ class Session(BaseModel):
     # session like every other DM-facing state.
     campaign_summary: str = ""
     turns_since_summary: int = 0
+    # Whether Tinder (docs/protocol.md "Companion NPC") is currently with
+    # the party. The companion's own CharacterSheet lives in `npcs` and is
+    # never deleted once created (this codebase has no NPC-deletion
+    # mechanism - dead monster NPCs already just stay in the dict); this
+    # bool, not presence in `npcs`, is the real membership source of truth.
+    companion_joined: bool = False
+    # Turns since GameEngine's own `world_changed` flag was last true (i.e.
+    # since update_world last actually changed something) - not reset on a
+    # fixed schedule like turns_since_summary. Feeds the companion's pacing
+    # nudge (see _companion_prompt_block); 0 means the world just changed.
+    turns_since_world_change: int = 0
 
     fact_ledger: list[str] = Field(default_factory=list)
 

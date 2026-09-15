@@ -126,6 +126,7 @@ git commit -m "feat: add companion protocol events and session/sheet fields"
 
 **Files:**
 - Modify: `server/character_build.py`
+- Modify: `server/engine.py` (re-export only — see Step 3b)
 - Test: `tests/test_engine.py` (imports re-exported names from `server.engine`, matching this file's existing convention)
 
 **Interfaces:**
@@ -199,15 +200,36 @@ def build_companion_sheet() -> CharacterSheet:
     )
 ```
 
-- [ ] **Step 4: Run the test, verify it passes**
+- [ ] **Step 4: Re-export from `server/engine.py`**
+
+`tests/test_engine.py` imports everything from `server.engine`, which re-exports names from `character_build.py`/`views.py` rather than each test file importing from the real source module directly (see this file's existing `from .character_build import (...)` block and its `# noqa: F401 - re-exported for tests` comments). Add `COMPANION_KEY`, `STARTING_HP`, and `build_companion_sheet` to that block in `server/engine.py`:
+
+```python
+from .character_build import (
+    CLASS_SAVING_THROW_PROFICIENCIES,
+    CLASS_SKILL_PROFICIENCIES,
+    COMPANION_KEY,  # noqa: F401 - re-exported for tests
+    STARTING_HP,  # noqa: F401 - re-exported for tests
+    _apply_ability_score_improvements,
+    _asi_announcement,
+    _character_from_import,
+    _hit_die_max,
+    build_companion_sheet,  # noqa: F401 - re-exported for tests
+    build_starting_character,
+)
+```
+
+(This subsumes what a later task might otherwise separately need — `COMPANION_KEY`/`build_companion_sheet` are fully available from `server.engine` starting here, not re-added piecemeal by a later task.)
+
+- [ ] **Step 5: Run the test, verify it passes**
 
 Run: `uv run --extra dev python3 -m pytest tests/test_engine.py -k test_build_companion_sheet -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add server/character_build.py tests/test_engine.py
+git add server/character_build.py server/engine.py tests/test_engine.py
 git commit -m "feat: add Tinder's preset companion sheet"
 ```
 
@@ -221,8 +243,8 @@ git commit -m "feat: add Tinder's preset companion sheet"
 - Test: `tests/test_engine.py`
 
 **Interfaces:**
-- Consumes: `_public_character_view(character) -> dict` (existing, `server/views.py`), `CharacterSheet.is_companion` (Task 1).
-- Produces: `_npc_view(npc: CharacterSheet) -> dict`. `_npc_update_envelope` gains a keyword-only `joined: bool | None = None` param (used starting Task 4; harmless/unused until then).
+- Consumes: `_public_character_view(character) -> dict` (existing, `server/views.py`), `CharacterSheet.is_companion`, `Session.companion_joined` (Task 1).
+- Produces: `_npc_view(npc: CharacterSheet) -> dict`. `_npc_update_envelope` gains a keyword-only `joined: bool | None = None` param (used starting Task 4; harmless/unused until then). `_state_sync_envelope`'s payload gains a `"companion_joined"` key (consumed by Task 8's client work).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -247,14 +269,35 @@ def test_npc_view_returns_the_full_sheet_for_an_ordinary_npc():
 
     assert view == npc.model_dump()
     assert view["notes"] == "a real note"
+
+
+async def test_state_sync_includes_companion_joined_for_a_later_joining_player():
+    # Matches this file's existing test_state_sync_includes_npcs_for_a_later_joining_player
+    # shape - a state_sync payload key needs to reach a client that wasn't
+    # connected when the underlying change happened, not just a live
+    # npc_update broadcast (which only reaches already-connected clients).
+    engine, session, received = make_engine(StubDM())
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.companion_joined = True  # set directly - _on_add_companion doesn't exist until Task 4
+
+    second_player_id = str(uuid.uuid4())
+    await join(engine, second_player_id, name="Rowan")
+
+    syncs = [
+        r for r in received
+        if r[0] == "send_to" and r[1] == second_player_id and r[2] == "state_sync"
+    ]
+    assert syncs, "the second player should get a state_sync on join"
+    assert syncs[-1][3]["companion_joined"] is True
 ```
 
 Add `_npc_view` and `CharacterSheet` (if not already imported) to the test file's import blocks.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `uv run --extra dev python3 -m pytest tests/test_engine.py -k test_npc_view -v`
-Expected: FAIL — `ImportError: cannot import name '_npc_view'`
+Run: `uv run --extra dev python3 -m pytest tests/test_engine.py -k "npc_view or companion_joined_for_a_later" -v`
+Expected: FAIL — the `_npc_view` tests fail with `ImportError: cannot import name '_npc_view'`; the `state_sync` test fails on `assert syncs[-1][3]["companion_joined"] is True` (`KeyError: 'companion_joined'`).
 
 - [ ] **Step 3: Implement `_npc_view` in `server/views.py`**
 
@@ -287,7 +330,10 @@ to:
 
 ```python
                 "npcs": {npc.name: _npc_view(npc) for npc in self._session.npcs.values()},
+                "companion_joined": self._session.companion_joined,
 ```
+
+(This second line is a genuinely new key on the `state_sync` payload, not part of the `_npc_view` redaction change — it's here because this is the one place `_state_sync_envelope` already touches in this task, and Task 8's client work needs this key to exist on `state_sync` for a reconnecting/late-joining client to learn companion membership, since a live `npc_update` broadcast alone only reaches clients already connected at the moment `add_companion`/`remove_companion` fires.)
 
 Change `_npc_update_envelope` from:
 
@@ -480,7 +526,7 @@ In `server/engine.py`, add right after `_on_end_combat` (so the two pairs of sym
         await self._save()
 ```
 
-Add `COMPANION_KEY` and `build_companion_sheet` to the existing `from .character_build import (...)` block at the top of `server/engine.py`.
+(`COMPANION_KEY` and `build_companion_sheet` are already imported into `server/engine.py` from Task 2's Step 4 — no import change needed here.)
 
 - [ ] **Step 4: Run the new tests, verify they pass**
 
@@ -623,7 +669,7 @@ Add to `tests/test_engine.py`:
 
 ```python
 async def test_turns_since_world_change_resets_when_the_world_changes():
-    dm = UpdateSequenceDM([{"location": "Millbrook"}])
+    dm = UpdateWorldDM({"location": "Millbrook"})
     engine, session, _ = make_engine(dm)
     player_id = str(uuid.uuid4())
     await join(engine, player_id)
@@ -652,7 +698,7 @@ async def test_turns_since_world_change_increments_when_nothing_changes():
     assert session.turns_since_world_change == 1
 ```
 
-Check `UpdateSequenceDM`'s existing constructor shape (`tests/test_engine.py`, already used by several tests above) — pass an `update_world`-shaped dict the same way `test_narrate_world_summary_includes_the_tracked_npc_roster` does, adjusting the key name if `UpdateSequenceDM` expects a different wrapping than `update_character`'s (check its `narrate()` body for how it decides which callback to invoke).
+`UpdateWorldDM` (already defined in `tests/test_engine.py`, near `UpdateSequenceDM`) is the DM double that actually invokes the `update_world` callback — `UpdateSequenceDM` calls `apply_update` (the character/NPC-level callback) instead, which would not set the engine's own `world_changed` flag at all. Add `UpdateWorldDM` to the test file's `from server.engine import (...)` block if it isn't already imported there (it's defined in the test file itself, not `server.engine` — no import needed, just confirm it's not accidentally shadowed).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
