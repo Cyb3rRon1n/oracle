@@ -16,8 +16,13 @@ export default function ScenePanel({ onSuggest }) {
   // A defeated NPC drops out - gone from active play. hp <= 0, not `dead`:
   // an NPC has no death-save/dead concept at all (that's player-only, see
   // server/state.py's grant_death_save), the same check server/views.py's
-  // own DM-facing NPC roster (_npc_roster) already uses.
-  const npcs = Object.entries(state.npcs || {}).filter(([, npc]) => npc.hp > 0);
+  // own DM-facing NPC roster (_npc_roster) already uses. The companion
+  // (is_companion, set by server/views.py's _npc_view) is excluded too -
+  // Tinder never has HP/combat/a turn, so never belongs in this list, and
+  // dropping them by flag (not just hp>0) also clears a dismissed
+  // companion's stale combatant card the moment remove_companion resets
+  // companion_joined, instead of it lingering forever.
+  const npcs = Object.entries(state.npcs || {}).filter(([, npc]) => npc.hp > 0 && !npc.is_companion);
   const showCombatants = state.inCombat && npcs.length > 0;
   if (!scene && clocks.length === 0 && !(state.world.objectives || []).length && !showCombatants) return null;
 

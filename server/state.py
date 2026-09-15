@@ -285,6 +285,16 @@ class CharacterSheet(BaseModel):
         the DM sees back."""
         changes: list[str] = []
 
+        # Tinder (is_companion) is never damaged and never defeated for XP
+        # (docs/protocol.md, server/character_build.py's build_companion_sheet)
+        # - hp_delta/temp_hp/rest are the only keys that can move hp, so
+        # dropping them here is the one guard point both a DM update_character
+        # call and a player's confirmed /apply proposal (server/engine.py,
+        # which both route NPC updates through this same method) go through,
+        # rather than duplicating an is_companion check in each caller.
+        if self.is_companion:
+            update = {k: v for k, v in update.items() if k not in ("hp_delta", "temp_hp", "rest")}
+
         # Temp HP - a separate buffer real 5e drains before real HP on
         # damage, and that healing never touches. Doesn't stack: a new
         # source takes the higher of the two, not the sum.

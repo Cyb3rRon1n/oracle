@@ -897,6 +897,20 @@ def test_character_sheet_is_companion_defaults_false():
     assert sheet.is_companion is False
 
 
+def test_companion_apply_update_ignores_hp_and_rest_changes():
+    # The single shared guard both engine.py NPC-update paths (a DM
+    # update_character call and a player's confirmed /apply proposal) route
+    # through - hp_delta/temp_hp/rest are the only keys apply_update uses to
+    # move hp, so a companion's hp must never move no matter which is sent.
+    sheet = CharacterSheet(player_id="tinder", name="Tinder", hp=100, max_hp=100, is_companion=True)
+
+    result = sheet.apply_update({"hp_delta": -999, "temp_hp": 5, "rest": "long"})
+
+    assert sheet.hp == 100
+    assert sheet.temp_hp == 0
+    assert "No changes applied" in result
+
+
 def test_session_companion_fields_default():
     session = Session(session_id="s1")
     assert session.companion_joined is False

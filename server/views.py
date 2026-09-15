@@ -53,8 +53,15 @@ def _npc_view(npc: CharacterSheet) -> dict:
     another player, not an open monster sheet, so it gets the same
     redacted _public_character_view every real player already gets of
     every other player - the same owner-only boundary (personality/notes/
-    inventory/stats hidden), just extended to cover this one NPC."""
-    return _public_character_view(npc) if npc.is_companion else npc.model_dump()
+    inventory/stats hidden), just extended to cover this one NPC. Also
+    carries `is_companion` (absent from _public_character_view itself,
+    which has no reason to say that about a real player) so the client can
+    tell Tinder apart from an ordinary combatant - never render an HP bar
+    for them, never keep them around as a stale combatant card after
+    remove_companion (web/src/components/ScenePanel.jsx)."""
+    if npc.is_companion:
+        return {**_public_character_view(npc), "is_companion": True}
+    return npc.model_dump()
 
 
 def _class_features_for(class_entry: dict | None, level: int) -> list[str]:

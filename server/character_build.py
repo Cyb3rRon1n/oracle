@@ -299,9 +299,12 @@ def build_starting_character(
 
 def build_companion_sheet() -> CharacterSheet:
     """Tinder's fixed preset sheet - one companion, not a roster (see the
-    design spec). No HP/combat participation is enforced at the engine
-    layer (never rolled into initiative, never damaged), not by this sheet
-    alone; hp/max_hp are set to the same flat STARTING_HP every player gets
+    design spec). Never rolled into initiative (kept off the turn-order/
+    combat machinery entirely), and never damaged: CharacterSheet.apply_update
+    (server/state.py) drops hp_delta/temp_hp/rest for any is_companion sheet,
+    so neither a DM update_character call nor a player's confirmed /apply
+    proposal can move Tinder's hp or trigger the defeated/XP-award branch.
+    hp/max_hp are still set to the same flat STARTING_HP every player gets,
     purely so shared view code (_public_character_view etc.) never needs a
     companion-specific branch for a field every CharacterSheet already has.
 

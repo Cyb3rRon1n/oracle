@@ -1228,6 +1228,30 @@ async def test_defeating_unmatched_npc_falls_back_to_default_xp():
     assert session.characters[player_id].xp == DEFAULT_NPC_XP
 
 
+async def test_update_character_cannot_damage_or_defeat_the_companion():
+    # Tinder is never damaged (docs/protocol.md, character_build.py's
+    # build_companion_sheet) - the DM's own update_character tool call is
+    # one of two paths that could otherwise reach an NPC's hp by casefolded
+    # name (server/engine.py's apply_update closure); this proves the
+    # CharacterSheet.apply_update guard actually stops it, hp and all.
+    dm = UpdateSequenceDM([{"target": "Tinder", "hp_delta": -999}])
+    engine, session, _ = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+    companion = session.npcs[COMPANION_KEY]
+    full_hp = companion.max_hp
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I dare Tinder to juggle knives"},
+    ))
+
+    assert companion.hp == full_hp
+    assert session.characters[player_id].xp == 0
+
+
 async def test_explicit_xp_override_takes_precedence_over_cr_lookup():
     # "goblin" would normally resolve to the SRD's 50 XP - an explicit xp
     # on the killing update should win anyway, the same override precedent
@@ -2116,7 +2140,7 @@ def test_npc_view_redacts_a_companion_like_a_public_character():
 
     view = _npc_view(companion)
 
-    assert view == _public_character_view(companion)
+    assert view == {**_public_character_view(companion), "is_companion": True}
     assert "notes" not in view
     assert "personality" not in view
 
@@ -5723,6 +5747,37 @@ async def test_apply_proposed_change_applies_confirmed_self_proposal():
     char_updates = [r for r in received if r[0] == "send_to" and r[1] == player_id
                     and r[2] == "character_update"]
     assert char_updates
+
+
+async def test_apply_proposed_change_cannot_damage_or_defeat_the_companion():
+    # The second of the two casefolded-name-lookup paths (server/engine.py's
+    # _on_apply_proposed_change): a player-confirmed /apply proposal
+    # targeting "Tinder" must be just as much a no-op on hp/XP as a DM
+    # update_character call is - both route through the same
+    # CharacterSheet.apply_update guard.
+    dm = NarratesThenSelfCorrectsDM(
+        "Tinder takes a wild swing and somehow catches a blade.",
+        correction=None,
+        proposal={"target": "Tinder", "hp_delta": -999},
+    )
+    engine, session, received = make_engine(dm)
+    player_id = str(uuid.uuid4())
+    await join(engine, player_id)
+    session.npcs[COMPANION_KEY] = build_companion_sheet()
+    session.companion_joined = True
+    companion = session.npcs[COMPANION_KEY]
+    full_hp = companion.max_hp
+
+    await engine.handle(Envelope(
+        type="player_action", session_id="test-session", sender_id=player_id,
+        payload={"text": "I let Tinder try the trap"},
+    ))
+    await engine.handle(Envelope(
+        type="apply_proposed_change", session_id="test-session", sender_id=player_id, payload={}
+    ))
+
+    assert companion.hp == full_hp
+    assert session.characters[player_id].xp == 0
 
 
 async def test_apply_proposed_change_with_nothing_pending_informs_player():
