@@ -144,23 +144,27 @@ Container Toolkit on the host — without it Ollama silently runs on CPU).
 
 ## Screenshots
 
-Real captures of the live app with two real players sharing a session — join screen, a live character sheet with real computed stats (starting HP is a flat 100 for every character, a deliberate house rule), the tavern lobby with both party members, and a real fight with real DM dialogue (local Ollama backend).
+Real captures of the live app with two real players sharing a session — join screen, a live character sheet with a real AI-generated portrait (local Ollama + ComfyUI backends, generated on a real GPU), the tavern lobby with both party members, and a real fight with real DM dialogue.
 
 <p align="center">
   <img src="docs/images/screenshots/join.png" alt="Oracle join screen: character name, session id, class/race pickers" style="max-width: 100%; width: 900px;"><br>
   <sub>Join screen — pick a class/race or import a character, share the session id to play together</sub>
 </p>
 <p align="center">
-  <img src="docs/images/screenshots/character-sheet.png" alt="Oracle character sheet with real computed AC, saves, skills, and attacks, an avatar with a style picker, and the Equipped/Inventory split" style="max-width: 100%; width: 900px;"><br>
-  <sub>Every number on the sheet is computed by the server, not the model — the avatar, style picker, and Equipped/Inventory split are all live</sub>
+  <img src="docs/images/screenshots/portrait-generating.png" alt="Oracle character sheet mid-portrait-generation, showing the progress bar and Generating... label over a placeholder avatar" style="max-width: 100%; width: 900px;"><br>
+  <sub>Portrait generation in progress — real per-step progress from a real local ComfyUI instance, not a fake spinner</sub>
+</p>
+<p align="center">
+  <img src="docs/images/screenshots/character-sheet.png" alt="Oracle character sheet with real computed AC, saves, skills, and attacks, a real ComfyUI-generated avatar with a style picker, and the Equipped/Inventory split" style="max-width: 100%; width: 900px;"><br>
+  <sub>Every number on the sheet is computed by the server, not the model. The avatar is a real ComfyUI generation (first real-GPU verification of this backend), with the style picker, and Equipped/Inventory split all live</sub>
 </p>
 <p align="center">
   <img src="docs/images/screenshots/session.png" alt="Oracle tavern lobby with two real players in the same party, ready to start the adventure together" style="max-width: 100%; width: 900px;"><br>
   <sub>Two players, one party — same session id, one browser tab each</sub>
 </p>
 <p align="center">
-  <img src="docs/images/screenshots/combat.png" alt="Oracle live combat with real DM narration, a per-turn Turn order strip, a Party panel showing every player's HP at a glance, and the action-economy pips (Action, Bonus action, Reaction)" style="max-width: 100%; width: 900px;"><br>
-  <sub>Formal initiative in progress — the Turn order tracker and Party HP panel (both new), per-turn action economy pips, all driven by a real Ollama turn. The Combatants roster (NPC HP + range band) renders the same way once the DM tracks a monster — not pictured here, since this run's DM never introduced one</sub>
+  <img src="docs/images/screenshots/combat.png" alt="Oracle live combat with real DM narration, the Tinder companion NPC joined and dismissible, a per-turn Turn order strip, a Party panel showing every player's HP at a glance, and the action-economy pips (Action, Bonus action, Reaction)" style="max-width: 100%; width: 900px;"><br>
+  <sub>Formal initiative in progress — the Turn order tracker and Party HP panel, per-turn action economy pips, and the optional Tinder companion NPC (joined via the header button, redacted like a real teammate), all driven by a real Ollama turn. The Combatants roster (NPC HP + range band) renders the same way once the DM tracks a monster — not pictured here, since this run's DM never introduced one</sub>
 </p>
 
 ## The tool-call reliability investigation
