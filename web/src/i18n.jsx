@@ -120,6 +120,7 @@ const FR = {
   "unequip": "retirer",
   "use": "utiliser",
   "drop": "jeter",
+  "equipped": "équipé",
   "weapon": "arme",
   "armor": "armure",
   "shield": "bouclier",

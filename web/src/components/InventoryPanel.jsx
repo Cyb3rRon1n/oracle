@@ -52,7 +52,13 @@ export default function InventoryPanel({ sheet, edit, t }) {
                 <Mini onClick={() => edit("equip", it.name)}>{t("equip")}</Mini>
               )}
               {it.usable && <Mini onClick={() => edit("use_item", it.name)}>{t("use")}</Mini>}
-              <Mini danger onClick={() => edit("remove_item", it.name)}>{t("drop")}</Mini>
+              {isEquipped(it.name) ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-dungeon-edge text-dungeon-ink/40">
+                  {t("equipped")}
+                </span>
+              ) : (
+                <Mini danger onClick={() => edit("remove_item", it.name)}>{t("drop")}</Mini>
+              )}
             </span>
           </li>
         ))}
