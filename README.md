@@ -155,8 +155,12 @@ Real captures of the live app with two real players sharing a session — join s
   <sub>Portrait generation in progress — real per-step progress from a real local ComfyUI instance, not a fake spinner</sub>
 </p>
 <p align="center">
-  <img src="docs/images/screenshots/character-sheet.png" alt="Oracle character sheet with real computed AC, saves, skills, and attacks, a real ComfyUI-generated avatar with a style picker, and the Equipped/Inventory split" style="max-width: 100%; width: 900px;"><br>
-  <sub>Every number on the sheet is computed by the server, not the model. The avatar is a real ComfyUI generation (first real-GPU verification of this backend), with the style picker, and Equipped/Inventory split all live</sub>
+  <img src="docs/images/screenshots/character-sheet.png" alt="Oracle character sheet with real computed AC, saves, skills, and attacks, a real ComfyUI-generated avatar with a style picker, and the Inventory list showing equipped items marked read-only rather than droppable" style="max-width: 100%; width: 900px;"><br>
+  <sub>Every number on the sheet is computed by the server, not the model. The avatar is a real ComfyUI generation (first real-GPU verification of this backend). Inventory rows for currently-equipped gear show a plain "equipped" label instead of a drop button — dropping worn gear now requires unequipping it first, rather than a second row silently pointing at the same item</sub>
+</p>
+<p align="center">
+  <img src="docs/images/screenshots/scene-banner.png" alt="Oracle in-session view with a real ComfyUI-generated establishing-shot scene banner above the transcript, concept-art style" style="max-width: 100%; width: 900px;"><br>
+  <sub>A location establishing shot, generated on demand from the party's current scene — same real ComfyUI backend as the portrait, same first-time real-GPU verification</sub>
 </p>
 <p align="center">
   <img src="docs/images/screenshots/session.png" alt="Oracle tavern lobby with two real players in the same party, ready to start the adventure together" style="max-width: 100%; width: 900px;"><br>
